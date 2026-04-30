@@ -1,0 +1,15 @@
+# Railway deployment configuration. See DEPLOY.md for setup walkthrough.
+# https://docs.railway.app/reference/config-as-code
+
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "Dockerfile"
+
+[deploy]
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 5
+healthcheckPath = "/api/stats"
+healthcheckTimeout = 10
+# Railway sets PORT; the binary picks it up automatically (see src/main.rs).
+# A persistent volume must be attached at /data for the SQLite database to
+# survive redeploys; create it via `railway volume add --mount-path /data`.

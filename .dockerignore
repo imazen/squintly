@@ -1,0 +1,14 @@
+target/
+.jj/
+.git/
+.workongoing
+.env
+.env.local
+*.db
+*.db-shm
+*.db-wal
+web/node_modules/
+web/dist/
+**/.DS_Store
+*.log
+/tmp/

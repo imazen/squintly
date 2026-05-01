@@ -131,6 +131,11 @@ pub fn pick_trial(
             })
         };
         let try_pair = || -> Option<TrialPlan> {
+            // CID22 §Selection of stimuli — drop trivial pairs whose answer
+            // is foregone. Adjacent quality steps within a codec are always
+            // good candidates; cross-codec pairs need a bytes-ratio sanity
+            // check (see is_trivial_pair). v0.1 picks adjacent same-codec
+            // pairs only, which are by construction non-trivial.
             let (_, codec_encs) = by_codec
                 .iter()
                 .filter(|(_, v)| v.len() >= 2)
@@ -143,12 +148,22 @@ pub fn pick_trial(
                     .unwrap()
             });
             let mut r2 = rng();
-            let i = r2.random_range(0..sorted.len() - 1);
-            Some(TrialPlan::Pair {
-                source: (*src).clone(),
-                a: sorted[i].clone(),
-                b: sorted[i + 1].clone(),
-            })
+            // Try a few times to find a non-trivial adjacent pair; with
+            // small grids (<3 entries) every pair is trivially adjacent
+            // by definition.
+            for _ in 0..8 {
+                let i = r2.random_range(0..sorted.len() - 1);
+                let a = sorted[i];
+                let b = sorted[i + 1];
+                if !is_trivial_pair(a, b) {
+                    return Some(TrialPlan::Pair {
+                        source: (*src).clone(),
+                        a: a.clone(),
+                        b: b.clone(),
+                    });
+                }
+            }
+            None
         };
         let plan = if prefer_single {
             try_single().or_else(try_pair)
@@ -160,6 +175,31 @@ pub fn pick_trial(
         }
     }
     None
+}
+
+/// CID22-style trivial-triplet filter. A pair is trivial when its outcome is
+/// foregone — answering it eats opinions without moving the BT posterior.
+///
+/// Heuristic: cross-codec pairs whose encoded-bytes ratio exceeds 4× are
+/// trivial (the bigger one almost certainly looks better). Same-codec pairs
+/// at non-adjacent quality steps with > 30 grid units between them are
+/// trivial. Adjacent same-codec pairs are never trivial — that's the
+/// information-bearing measurement.
+pub fn is_trivial_pair(a: &EncodingMeta, b: &EncodingMeta) -> bool {
+    if a.codec == b.codec {
+        // Same codec: trivial only at far-apart quality steps.
+        if let (Some(qa), Some(qb)) = (a.quality, b.quality) {
+            return (qa - qb).abs() > 30.0;
+        }
+        return false;
+    }
+    // Cross-codec: trivial when bytes are very different.
+    let lo = a.bytes.min(b.bytes) as f64;
+    let hi = a.bytes.max(b.bytes) as f64;
+    if lo == 0.0 {
+        return false;
+    }
+    hi / lo > 4.0
 }
 
 fn pick_staircase_target(r: &mut impl rand::Rng) -> &'static str {
@@ -202,6 +242,59 @@ mod tests {
         assert!(!codec_allowed("rav1e", Some(&allowed)));
         // None means no filter at all.
         assert!(codec_allowed("zenjxl", None));
+    }
+
+    #[test]
+    fn trivial_pair_filter_recognises_far_quality_gaps() {
+        let lo = EncodingMeta {
+            id: "lo".into(),
+            source_hash: "h".into(),
+            codec: "mozjpeg".into(),
+            quality: Some(20.0),
+            effort: None,
+            bytes: 5_000,
+        };
+        let mid_low = EncodingMeta {
+            id: "ml".into(),
+            source_hash: "h".into(),
+            codec: "mozjpeg".into(),
+            quality: Some(30.0),
+            effort: None,
+            bytes: 8_000,
+        };
+        let hi = EncodingMeta {
+            id: "hi".into(),
+            source_hash: "h".into(),
+            codec: "mozjpeg".into(),
+            quality: Some(95.0),
+            effort: None,
+            bytes: 50_000,
+        };
+        assert!(
+            !is_trivial_pair(&lo, &mid_low),
+            "adjacent same-codec is informative"
+        );
+        assert!(is_trivial_pair(&lo, &hi), "75-quality gap is trivial");
+        let small_jpeg = EncodingMeta {
+            id: "sj".into(),
+            source_hash: "h".into(),
+            codec: "mozjpeg".into(),
+            quality: Some(40.0),
+            effort: None,
+            bytes: 1_000,
+        };
+        let big_avif = EncodingMeta {
+            id: "ba".into(),
+            source_hash: "h".into(),
+            codec: "zenavif".into(),
+            quality: Some(40.0),
+            effort: None,
+            bytes: 20_000,
+        };
+        assert!(
+            is_trivial_pair(&small_jpeg, &big_avif),
+            "20x bytes ratio is trivial"
+        );
     }
 
     #[test]

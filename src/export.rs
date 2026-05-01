@@ -4,7 +4,7 @@ use anyhow::Result;
 use sqlx::Row;
 use sqlx::SqlitePool;
 
-use crate::bt::{Comparison, Outcome, beta_to_quality, fit};
+use crate::bt::{Comparison, Outcome, beta_to_quality, fit, with_monotonicity};
 
 fn size_bucket(w: i64, h: i64) -> &'static str {
     let m = w.max(h);
@@ -151,7 +151,32 @@ pub async fn pareto_tsv(pool: &SqlitePool) -> Result<String> {
         if b.comparisons.is_empty() || b.encoding_ids.len() < 2 {
             continue;
         }
-        let f = fit(b.encoding_ids.len(), &b.comparisons, 0, 1.5);
+        // Inject CID22-style monotonicity dummies before the fit. For every
+        // pair of same-codec encodings within this bucket, the higher quality
+        // setting must score >= the lower one. Without this constraint, CID22
+        // reported KRCC dropping from 0.99 to 0.56 — see docs/methodology.md.
+        let monotone_pairs: Vec<(usize, usize)> = {
+            let mut pairs = Vec::new();
+            for i in 0..b.encoding_ids.len() {
+                let (codec_i, q_i, _) = b.meta.get(&b.encoding_ids[i]).cloned().unwrap_or_default();
+                let q_i = q_i.unwrap_or(0.0);
+                for j in 0..b.encoding_ids.len() {
+                    if i == j {
+                        continue;
+                    }
+                    let (codec_j, q_j, _) =
+                        b.meta.get(&b.encoding_ids[j]).cloned().unwrap_or_default();
+                    let q_j = q_j.unwrap_or(0.0);
+                    if codec_i == codec_j && q_j > q_i {
+                        // (lo, hi) — j is hi, i is lo.
+                        pairs.push((i, j));
+                    }
+                }
+            }
+            pairs
+        };
+        let comparisons = with_monotonicity(&b.comparisons, &monotone_pairs, 200);
+        let f = fit(b.encoding_ids.len(), &comparisons, 0, 1.5);
         let quality = beta_to_quality(&f.beta, 0);
         let n_trials = b.comparisons.len();
         for (i, eid) in b.encoding_ids.iter().enumerate() {

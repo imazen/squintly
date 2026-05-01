@@ -3,6 +3,21 @@
 ## [Unreleased]
 
 ### Added
+- `docs/methodology.md` — codifies every methodology choice (stimulus
+  presentation, sampling, outlier detection, score construction, scale
+  alignment, CIs, sample sizes) with the rationale behind each parameter,
+  cited to CID22 / pwcmp / KonIQ / BT.500 / Levitt / Pérez-Ortiz / Meade
+  & Craig. Every magic number in the codebase is now a contract here.
+- **Monotonicity constraint** in BT pareto export (CID22 §Monotonicity).
+  Same-codec pairs get 200 dummy "higher-q wins" opinions injected before
+  the BT-Davidson fit. CID22 measured this as the single highest-leverage
+  rigor lever — KRCC dropped 0.99 → 0.56 in their dataset without it.
+  `bt::with_monotonicity()`, plus an explicit unit test that proves the
+  fit pins the ordering against contradictory raw votes.
+- **Trivial-triplet filter** in the sampler (CID22 §Selection of stimuli):
+  same-codec pairs with quality gap > 30 are foregone; cross-codec pairs
+  with byte-ratio > 4× are foregone. Pair sampling skips trivial outcomes
+  rather than burning observer attention on them.
 - Optional email magic-link sign-in (pattern adapted from Weaver
   `convex/auth.ts`): `migrations/0005_auth.sql` adds `auth_tokens` +
   `observer_aliases`. `src/auth.rs` generates 32-byte cryptographic tokens,

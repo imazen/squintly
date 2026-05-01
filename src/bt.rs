@@ -69,6 +69,29 @@ fn derive_grad(bi: f32, bj: f32, eta: f32, outcome: Outcome) -> (f32, f32, f32, 
     (loss_term, dl_dba, dl_dbb, dl_deta)
 }
 
+/// Inject CID22-style monotonicity dummy opinions: for each ordered pair
+/// `(low, high)` in `monotone_pairs`, append `n_dummy` synthetic comparisons
+/// where `high` beats `low`. Per CID22 §Monotonicity (Sneyers et al. 2023),
+/// this is the single highest-leverage rigor lever — KRCC dropped 0.99 → 0.56
+/// in their dataset when omitted.
+pub fn with_monotonicity(
+    base: &[Comparison],
+    monotone_pairs: &[(usize, usize)],
+    n_dummy: u32,
+) -> Vec<Comparison> {
+    let mut out = base.to_vec();
+    for &(lo, hi) in monotone_pairs {
+        for _ in 0..n_dummy {
+            out.push(Comparison {
+                a: hi,
+                b: lo,
+                outcome: Outcome::AWins,
+            });
+        }
+    }
+    out
+}
+
 pub fn fit(n_items: usize, comparisons: &[Comparison], anchor: usize, prior_sigma: f32) -> Fit {
     let mut beta = vec![0.0f32; n_items];
     let mut eta = 0.0f32;
@@ -163,6 +186,42 @@ mod tests {
         let fit = fit(3, &comps, 0, 2.0);
         assert!(fit.beta[0] >= fit.beta[1] - 1e-3);
         assert!(fit.beta[1] > fit.beta[2]);
+    }
+
+    #[test]
+    fn monotonicity_dummies_pin_ordering_against_noise() {
+        // Two same-codec items 0 (low q) and 1 (high q). Real opinions are
+        // noisy/contradictory: 5 say low wins, 5 say high wins, 5 ties.
+        let mut comps: Vec<Comparison> = Vec::new();
+        for _ in 0..5 {
+            comps.push(Comparison {
+                a: 0,
+                b: 1,
+                outcome: Outcome::AWins,
+            });
+            comps.push(Comparison {
+                a: 0,
+                b: 1,
+                outcome: Outcome::BWins,
+            });
+            comps.push(Comparison {
+                a: 0,
+                b: 1,
+                outcome: Outcome::Tie,
+            });
+        }
+        let raw = fit(2, &comps, 0, 1.5);
+        // Without monotonicity, fit is ~symmetric.
+        assert!((raw.beta[0] - raw.beta[1]).abs() < 0.5);
+
+        // With CID22-style 200 dummies pinning hi > lo:
+        let with_mono = with_monotonicity(&comps, &[(0, 1)], 200);
+        let pinned = fit(2, &with_mono, 0, 1.5);
+        assert!(
+            pinned.beta[1] > pinned.beta[0] + 1.0,
+            "monotonicity should make β[1]≫β[0]; got {:?}",
+            pinned.beta
+        );
     }
 
     #[test]

@@ -55,13 +55,17 @@ fn resolve_bind(cli_bind: SocketAddr) -> SocketAddr {
 async fn main() -> Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
-            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info,squintly=debug")),
+            EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| EnvFilter::new("info,squintly=debug")),
         )
         .init();
 
     let cli = Cli::parse();
 
-    let coeff: CoefficientSource = match (cli.coefficient_http.as_deref(), cli.coefficient_path.as_deref()) {
+    let coeff: CoefficientSource = match (
+        cli.coefficient_http.as_deref(),
+        cli.coefficient_path.as_deref(),
+    ) {
         (Some(url), _) => CoefficientSource::Http(HttpCoefficient::new(url)?),
         (None, Some(path)) => CoefficientSource::Fs(FsCoefficient::new(path.to_path_buf())),
         (None, None) => {

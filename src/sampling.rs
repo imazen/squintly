@@ -16,7 +16,11 @@ pub fn codec_browser_family(codec: &str) -> &'static str {
     let lc = codec.to_lowercase();
     if lc.contains("jxl") {
         "jxl"
-    } else if lc.contains("avif") || lc.contains("av1") || lc.contains("rav1e") || lc.contains("aom") {
+    } else if lc.contains("avif")
+        || lc.contains("av1")
+        || lc.contains("rav1e")
+        || lc.contains("aom")
+    {
         "avif"
     } else if lc.contains("webp") {
         "webp"
@@ -127,7 +131,10 @@ pub fn pick_trial(
             })
         };
         let try_pair = || -> Option<TrialPlan> {
-            let (_, codec_encs) = by_codec.iter().filter(|(_, v)| v.len() >= 2).max_by_key(|(_, v)| v.len())?;
+            let (_, codec_encs) = by_codec
+                .iter()
+                .filter(|(_, v)| v.len() >= 2)
+                .max_by_key(|(_, v)| v.len())?;
             let mut sorted: Vec<&EncodingMeta> = codec_encs.to_vec();
             sorted.sort_by(|a, b| {
                 a.quality
@@ -210,10 +217,38 @@ mod tests {
                 filename: None,
             }],
             encodings: vec![
-                EncodingMeta { id: "a".into(), source_hash: "h".into(), codec: "zenjxl".into(),  quality: Some(40.0), effort: None, bytes: 100 },
-                EncodingMeta { id: "b".into(), source_hash: "h".into(), codec: "zenjxl".into(),  quality: Some(60.0), effort: None, bytes: 200 },
-                EncodingMeta { id: "c".into(), source_hash: "h".into(), codec: "mozjpeg".into(), quality: Some(40.0), effort: None, bytes: 100 },
-                EncodingMeta { id: "d".into(), source_hash: "h".into(), codec: "mozjpeg".into(), quality: Some(60.0), effort: None, bytes: 200 },
+                EncodingMeta {
+                    id: "a".into(),
+                    source_hash: "h".into(),
+                    codec: "zenjxl".into(),
+                    quality: Some(40.0),
+                    effort: None,
+                    bytes: 100,
+                },
+                EncodingMeta {
+                    id: "b".into(),
+                    source_hash: "h".into(),
+                    codec: "zenjxl".into(),
+                    quality: Some(60.0),
+                    effort: None,
+                    bytes: 200,
+                },
+                EncodingMeta {
+                    id: "c".into(),
+                    source_hash: "h".into(),
+                    codec: "mozjpeg".into(),
+                    quality: Some(40.0),
+                    effort: None,
+                    bytes: 100,
+                },
+                EncodingMeta {
+                    id: "d".into(),
+                    source_hash: "h".into(),
+                    codec: "mozjpeg".into(),
+                    quality: Some(60.0),
+                    effort: None,
+                    bytes: 200,
+                },
             ],
         };
         let mut allowed = HashSet::new();

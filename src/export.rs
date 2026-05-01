@@ -1,8 +1,8 @@
 //! TSV exports in zenanalyze/zentrain-compatible schemas.
 
 use anyhow::Result;
-use sqlx::SqlitePool;
 use sqlx::Row;
+use sqlx::SqlitePool;
 
 use crate::bt::{Comparison, Outcome, beta_to_quality, fit};
 
@@ -19,8 +19,19 @@ fn size_bucket(w: i64, h: i64) -> &'static str {
     }
 }
 
-fn condition_bucket(dpr: f64, viewing_distance_cm: Option<i64>, ambient: Option<&str>, gamut: Option<&str>) -> String {
-    let dpr_b = if dpr < 1.5 { 1 } else if dpr < 2.5 { 2 } else { 3 };
+fn condition_bucket(
+    dpr: f64,
+    viewing_distance_cm: Option<i64>,
+    ambient: Option<&str>,
+    gamut: Option<&str>,
+) -> String {
+    let dpr_b = if dpr < 1.5 {
+        1
+    } else if dpr < 2.5 {
+        2
+    } else {
+        3
+    };
     let dist_b = match viewing_distance_cm.unwrap_or(-1) {
         d if d <= 0 => "any".to_string(),
         d if d <= 25 => "20".to_string(),
@@ -107,7 +118,10 @@ pub async fn pareto_tsv(pool: &SqlitePool) -> Result<String> {
             (&a_id, &a_codec, a_quality, a_bytes),
             (&b_id, &b_codec, b_quality, b_bytes),
         ] {
-            entry.meta.entry(id.clone()).or_insert_with(|| (codec.clone(), q, bytes));
+            entry
+                .meta
+                .entry(id.clone())
+                .or_insert_with(|| (codec.clone(), q, bytes));
         }
         let idx = |id: &str, encs: &mut Vec<String>| -> usize {
             if let Some(p) = encs.iter().position(|s| s == id) {
@@ -332,18 +346,22 @@ pub async fn responses_tsv(pool: &SqlitePool) -> Result<String> {
             if i > 0 {
                 out.push('\t');
             }
-            let v: Option<String> = row.try_get::<Option<String>, _>(i).ok().flatten().or_else(|| {
-                row.try_get::<Option<i64>, _>(i)
+            let v: Option<String> =
+                row.try_get::<Option<String>, _>(i)
                     .ok()
                     .flatten()
-                    .map(|v| v.to_string())
                     .or_else(|| {
-                        row.try_get::<Option<f64>, _>(i)
+                        row.try_get::<Option<i64>, _>(i)
                             .ok()
                             .flatten()
                             .map(|v| v.to_string())
-                    })
-            });
+                            .or_else(|| {
+                                row.try_get::<Option<f64>, _>(i)
+                                    .ok()
+                                    .flatten()
+                                    .map(|v| v.to_string())
+                            })
+                    });
             out.push_str(v.as_deref().unwrap_or(""));
         }
         out.push('\n');

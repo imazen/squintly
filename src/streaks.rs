@@ -97,11 +97,8 @@ pub const TRIAL_MILESTONES: &[(u32, &str)] = &[
     (1000, "first_1000"),
 ];
 
-pub const STREAK_MILESTONES: &[(u32, &str)] = &[
-    (3, "streak_3"),
-    (7, "streak_7"),
-    (30, "streak_30"),
-];
+pub const STREAK_MILESTONES: &[(u32, &str)] =
+    &[(3, "streak_3"), (7, "streak_7"), (30, "streak_30")];
 
 /// Returns the highest crossed milestone slug given prev/new totals.
 pub fn crossed_trial_milestone(prev_total: u32, new_total: u32) -> Option<&'static str> {

@@ -84,9 +84,15 @@ async fn smoke_full_loop() -> Result<()> {
     // Build the same router as main, then exercise it via reqwest in a spawned server.
     let api = Router::new()
         .route("/session", axum::routing::post(handlers::create_session))
-        .route("/session/{id}/end", axum::routing::post(handlers::end_session))
+        .route(
+            "/session/{id}/end",
+            axum::routing::post(handlers::end_session),
+        )
         .route("/trial/next", get(handlers::next_trial))
-        .route("/trial/{id}/response", axum::routing::post(handlers::record_response))
+        .route(
+            "/trial/{id}/response",
+            axum::routing::post(handlers::record_response),
+        )
         .route("/observer/{id}/profile", get(handlers::observer_profile))
         .route("/export/pareto.tsv", get(handlers::export_pareto))
         .route("/export/thresholds.tsv", get(handlers::export_thresholds))
@@ -174,7 +180,12 @@ async fn smoke_full_loop() -> Result<()> {
     assert!(pair_seen, "should see pair trials");
 
     // 3. stats
-    let stats: serde_json::Value = client.get(format!("{base}/api/stats")).send().await?.json().await?;
+    let stats: serde_json::Value = client
+        .get(format!("{base}/api/stats"))
+        .send()
+        .await?
+        .json()
+        .await?;
     assert_eq!(stats["sessions"], 1);
     assert_eq!(stats["responses"], 30);
 
@@ -188,7 +199,10 @@ async fn smoke_full_loop() -> Result<()> {
     assert_eq!(profile["streak_days"], 1);
     assert_eq!(profile["total_trials"], 30);
     let badges = profile["badges"].as_array().expect("badges array");
-    assert!(badges.iter().any(|b| b["slug"] == "first_10"), "should award first_10");
+    assert!(
+        badges.iter().any(|b| b["slug"] == "first_10"),
+        "should award first_10"
+    );
     let themes = profile["themes"].as_array().expect("themes array");
     assert!(themes.iter().any(|t| t["slug"] == "nature"));
 
@@ -199,7 +213,10 @@ async fn smoke_full_loop() -> Result<()> {
         .await?
         .text()
         .await?;
-    assert!(pareto.starts_with("image_id\tsize\tconfig_name"), "pareto header: {pareto}");
+    assert!(
+        pareto.starts_with("image_id\tsize\tconfig_name"),
+        "pareto header: {pareto}"
+    );
 
     let thresholds = client
         .get(format!("{base}/api/export/thresholds.tsv"))
@@ -217,7 +234,10 @@ async fn smoke_full_loop() -> Result<()> {
         .await?;
     assert!(responses.starts_with("trial_id\tsession_id\tobserver_id"));
     let response_lines = responses.lines().count();
-    assert!(response_lines >= 31, "expected header + 30 rows, got {response_lines}");
+    assert!(
+        response_lines >= 31,
+        "expected header + 30 rows, got {response_lines}"
+    );
 
     Ok(())
 }

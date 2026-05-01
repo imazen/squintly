@@ -216,7 +216,11 @@ mod tests {
         sc.target_reversals = 6;
         for _ in 0..200 {
             let q = sc.current_q();
-            let rating = if q < 50.0 { Rating::Notice } else { Rating::Imperceptible };
+            let rating = if q < 50.0 {
+                Rating::Notice
+            } else {
+                Rating::Imperceptible
+            };
             if sc.step(rating).is_none() {
                 break;
             }

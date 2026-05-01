@@ -105,7 +105,9 @@ pub async fn create_session(
     // Streak advance, if the client supplied its local date. Lenient v0.1 rule:
     // streak advances on session creation, not on first response. Stricter rule
     // (Duolingo-style "complete a lesson") is a v0.2 backlog item.
-    let (streak_days, streak_outcome, freezes_remaining) = if let Some(date_str) = req.local_date.as_deref() {
+    let (streak_days, streak_outcome, freezes_remaining) = if let Some(date_str) =
+        req.local_date.as_deref()
+    {
         if let Ok(today) = NaiveDate::parse_from_str(date_str, "%Y-%m-%d") {
             let row: Option<(i64, i64, Option<String>)> = sqlx::query_as(
                 "SELECT streak_days, freezes_remaining, streak_last_date FROM observers WHERE id = ?",
@@ -157,10 +159,12 @@ pub async fn create_session(
         (0, "skipped", 0)
     };
 
-    let supported_codecs_csv = req
-        .supported_codecs
-        .as_ref()
-        .map(|v| v.iter().map(|s| s.to_lowercase()).collect::<Vec<_>>().join(","));
+    let supported_codecs_csv = req.supported_codecs.as_ref().map(|v| {
+        v.iter()
+            .map(|s| s.to_lowercase())
+            .collect::<Vec<_>>()
+            .join(",")
+    });
 
     sqlx::query(
         "INSERT INTO sessions (id, observer_id, started_at, device_pixel_ratio, \
@@ -190,11 +194,10 @@ pub async fn create_session(
     .execute(&state.pool)
     .await?;
 
-    let total_trials: (i64,) =
-        sqlx::query_as("SELECT total_trials FROM observers WHERE id = ?")
-            .bind(&observer_id)
-            .fetch_one(&state.pool)
-            .await?;
+    let total_trials: (i64,) = sqlx::query_as("SELECT total_trials FROM observers WHERE id = ?")
+        .bind(&observer_id)
+        .fetch_one(&state.pool)
+        .await?;
 
     Ok(Json(CreateSessionResp {
         observer_id,
@@ -418,10 +421,11 @@ pub async fn record_response(
     .bind(&trial_id)
     .fetch_optional(&state.pool)
     .await?;
-    let (kind, is_golden, expected_choice, intrinsic_w): (String, i64, Option<String>, i64) = match row {
-        Some(r) => (r.get(0), r.get(1), r.get(2), r.get(3)),
-        None => return Err(AppError::NotFound(format!("trial {trial_id}"))),
-    };
+    let (kind, is_golden, expected_choice, intrinsic_w): (String, i64, Option<String>, i64) =
+        match row {
+            Some(r) => (r.get(0), r.get(1), r.get(2), r.get(3)),
+            None => return Err(AppError::NotFound(format!("trial {trial_id}"))),
+        };
     // Heuristic for dpr at trial time: image_displayed_w_css * dpr ≈ on-screen device px.
     // We don't carry dpr in the response payload; pull from the session.
     let dpr_row: (f64,) = sqlx::query_as(
@@ -505,7 +509,10 @@ pub async fn proxy_source(
     let (bytes, mime) = state.coefficient.fetch_source_png(&hash).await?;
     let mut headers = HeaderMap::new();
     headers.insert(header::CONTENT_TYPE, HeaderValue::from_str(&mime)?);
-    headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("public, max-age=86400"));
+    headers.insert(
+        header::CACHE_CONTROL,
+        HeaderValue::from_static("public, max-age=86400"),
+    );
     Ok((StatusCode::OK, headers, Bytes::from(bytes)).into_response())
 }
 
@@ -516,7 +523,10 @@ pub async fn proxy_encoding(
     let (bytes, mime) = state.coefficient.fetch_encoding_blob(&id).await?;
     let mut headers = HeaderMap::new();
     headers.insert(header::CONTENT_TYPE, HeaderValue::from_str(&mime)?);
-    headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("public, max-age=86400"));
+    headers.insert(
+        header::CACHE_CONTROL,
+        HeaderValue::from_static("public, max-age=86400"),
+    );
     Ok((StatusCode::OK, headers, Bytes::from(bytes)).into_response())
 }
 
@@ -525,21 +535,30 @@ pub async fn proxy_encoding(
 pub async fn export_pareto(State(state): State<SharedState>) -> Result<Response, AppError> {
     let body = crate::export::pareto_tsv(&state.pool).await?;
     let mut headers = HeaderMap::new();
-    headers.insert(header::CONTENT_TYPE, HeaderValue::from_static("text/tab-separated-values"));
+    headers.insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("text/tab-separated-values"),
+    );
     Ok((StatusCode::OK, headers, body).into_response())
 }
 
 pub async fn export_thresholds(State(state): State<SharedState>) -> Result<Response, AppError> {
     let body = crate::export::thresholds_tsv(&state.pool).await?;
     let mut headers = HeaderMap::new();
-    headers.insert(header::CONTENT_TYPE, HeaderValue::from_static("text/tab-separated-values"));
+    headers.insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("text/tab-separated-values"),
+    );
     Ok((StatusCode::OK, headers, body).into_response())
 }
 
 pub async fn export_responses(State(state): State<SharedState>) -> Result<Response, AppError> {
     let body = crate::export::responses_tsv(&state.pool).await?;
     let mut headers = HeaderMap::new();
-    headers.insert(header::CONTENT_TYPE, HeaderValue::from_static("text/tab-separated-values"));
+    headers.insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("text/tab-separated-values"),
+    );
     Ok((StatusCode::OK, headers, body).into_response())
 }
 
@@ -586,10 +605,11 @@ pub async fn observer_profile(
     .bind(&id)
     .fetch_optional(&state.pool)
     .await?;
-    let (streak_days, streak_last_date, freezes_remaining, total_trials, skill_score, comp_mode) = match row {
-        Some(r) => (r.0, r.1, r.2, r.3, r.4, r.5),
-        None => return Err(AppError::NotFound(format!("observer {id}"))),
-    };
+    let (streak_days, streak_last_date, freezes_remaining, total_trials, skill_score, comp_mode) =
+        match row {
+            Some(r) => (r.0, r.1, r.2, r.3, r.4, r.5),
+            None => return Err(AppError::NotFound(format!("observer {id}"))),
+        };
 
     let badges = sqlx::query(
         "SELECT b.slug, b.display_name, ob.awarded_at FROM observer_badges ob \
@@ -680,7 +700,8 @@ pub async fn serve_static<E: RustEmbed>(uri: axum::http::Uri) -> Response {
             let mut headers = HeaderMap::new();
             headers.insert(
                 header::CONTENT_TYPE,
-                HeaderValue::from_str(mime.as_ref()).unwrap_or(HeaderValue::from_static("application/octet-stream")),
+                HeaderValue::from_str(mime.as_ref())
+                    .unwrap_or(HeaderValue::from_static("application/octet-stream")),
             );
             (StatusCode::OK, headers, Bytes::from(file.data.into_owned())).into_response()
         }

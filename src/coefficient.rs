@@ -37,7 +37,10 @@ pub struct Manifest {
 
 impl Manifest {
     pub fn encodings_for(&self, source_hash: &str) -> Vec<&EncodingMeta> {
-        self.encodings.iter().filter(|e| e.source_hash == source_hash).collect()
+        self.encodings
+            .iter()
+            .filter(|e| e.source_hash == source_hash)
+            .collect()
     }
 
     pub fn source(&self, hash: &str) -> Option<&SourceMeta> {
@@ -71,8 +74,14 @@ impl CoefficientSource {
     }
     pub async fn fetch_source_png(&self, hash: &str) -> Result<(Vec<u8>, String)> {
         match self {
-            Self::Http(c) => c.fetch_source_png(hash).await.map(|(b, m)| (b, m.to_string())),
-            Self::Fs(c) => c.fetch_source_png(hash).await.map(|(b, m)| (b, m.to_string())),
+            Self::Http(c) => c
+                .fetch_source_png(hash)
+                .await
+                .map(|(b, m)| (b, m.to_string())),
+            Self::Fs(c) => c
+                .fetch_source_png(hash)
+                .await
+                .map(|(b, m)| (b, m.to_string())),
         }
     }
     pub async fn fetch_encoding_blob(&self, id: &str) -> Result<(Vec<u8>, String)> {
@@ -148,7 +157,10 @@ fn parse_manifest_json(v: serde_json::Value) -> Manifest {
                     height: s.get("height").and_then(|x| x.as_u64()).unwrap_or(0) as u32,
                     size_bytes: s.get("size_bytes").and_then(|x| x.as_u64()).unwrap_or(0),
                     corpus: s.get("corpus").and_then(|x| x.as_str()).map(str::to_string),
-                    filename: s.get("filename").and_then(|x| x.as_str()).map(str::to_string),
+                    filename: s
+                        .get("filename")
+                        .and_then(|x| x.as_str())
+                        .map(str::to_string),
                 });
             }
         }
@@ -156,7 +168,10 @@ fn parse_manifest_json(v: serde_json::Value) -> Manifest {
     if let Some(arr) = v.get("encodings").and_then(|x| x.as_array()) {
         for e in arr {
             let id = e.get("id").and_then(|x| x.as_str()).map(str::to_string);
-            let source_hash = e.get("source_hash").and_then(|x| x.as_str()).map(str::to_string);
+            let source_hash = e
+                .get("source_hash")
+                .and_then(|x| x.as_str())
+                .map(str::to_string);
             if let (Some(id), Some(source_hash)) = (id, source_hash) {
                 m.encodings.push(EncodingMeta {
                     id,
@@ -240,7 +255,11 @@ impl Coefficient for FsCoefficient {
                 if let Some(id) = v.get("id").and_then(|x| x.as_str()) {
                     m.encodings.push(EncodingMeta {
                         id: id.to_string(),
-                        source_hash: v.get("source_hash").and_then(|x| x.as_str()).unwrap_or("").to_string(),
+                        source_hash: v
+                            .get("source_hash")
+                            .and_then(|x| x.as_str())
+                            .unwrap_or("")
+                            .to_string(),
                         codec: v
                             .get("codec_name")
                             .or_else(|| v.get("codec"))
@@ -263,7 +282,10 @@ impl Coefficient for FsCoefficient {
                     height: v.get("height").and_then(|x| x.as_u64()).unwrap_or(0) as u32,
                     size_bytes: v.get("size_bytes").and_then(|x| x.as_u64()).unwrap_or(0),
                     corpus: v.get("corpus").and_then(|x| x.as_str()).map(str::to_string),
-                    filename: v.get("filename").and_then(|x| x.as_str()).map(str::to_string),
+                    filename: v
+                        .get("filename")
+                        .and_then(|x| x.as_str())
+                        .map(str::to_string),
                 });
             }
         }
@@ -279,7 +301,10 @@ impl Coefficient for FsCoefficient {
             direct
         } else {
             // 2-char prefix sharding fallback
-            let sharded = blobs.join("sources").join(&hash[..2]).join(format!("{hash}.png"));
+            let sharded = blobs
+                .join("sources")
+                .join(&hash[..2])
+                .join(format!("{hash}.png"));
             if sharded.exists() {
                 sharded
             } else {

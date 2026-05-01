@@ -17,8 +17,8 @@
 use std::collections::HashMap;
 
 use anyhow::Result;
-use sqlx::SqlitePool;
 use sqlx::Row;
+use sqlx::SqlitePool;
 
 use crate::db::now_ms;
 
@@ -191,8 +191,17 @@ pub async fn grade_session(pool: &SqlitePool, session_id: &str) -> Result<Sessio
     // Even-odd Spearman on 4-tier choices (proxy: Pearson r since the tiers are
     // already an ordinal scale of 1..4).
     if single_choices.len() >= 8 {
-        let evens: Vec<f64> = single_choices.iter().step_by(2).map(|&v| v as f64).collect();
-        let odds: Vec<f64> = single_choices.iter().skip(1).step_by(2).map(|&v| v as f64).collect();
+        let evens: Vec<f64> = single_choices
+            .iter()
+            .step_by(2)
+            .map(|&v| v as f64)
+            .collect();
+        let odds: Vec<f64> = single_choices
+            .iter()
+            .skip(1)
+            .step_by(2)
+            .map(|&v| v as f64)
+            .collect();
         let n = evens.len().min(odds.len());
         let r = pearson(&evens[..n], &odds[..n]);
         g.even_odd_r = r.map(|r| r as f32);

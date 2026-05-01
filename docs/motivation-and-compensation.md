@@ -142,8 +142,10 @@ Three deployable modes, observer-selectable at signup, configured per-instance.
 
 ### Mode A — Volunteer (DEFAULT in v0.2)
 
-No payment. Frame as: "help train an open-source perceptual metric used by
-Wikipedia, Imageflow, and the JPEG XL ecosystem." Surface impact in real time.
+No payment. Frame as: "help train an open-source perceptual quality metric
+for image codec optimization." Surface impact in real time. **Don't claim
+adopters that don't exist** — pre-launch we have no third-party deployments
+beyond imazen's own stack; copy must say what's actually true.
 
 - **Quality:** highest per-trial. AAAI volunteer-vs-paid +14 pp accuracy.
 - **Volume:** lowest per-recruit. Plan for the 90-9-1 split.

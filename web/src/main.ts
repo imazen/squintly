@@ -29,7 +29,7 @@ async function welcome(): Promise<void> {
   root.innerHTML = `
     <div class="screen center">
       <h1>Image Discrimination Study</h1>
-      <p>You'll help train an open-source perceptual quality metric used by Wikipedia, Imageflow, and the JPEG XL ecosystem. We need ratings from real phones, in real lighting, at real viewing distances — that's the data the existing public datasets don't have.</p>
+      <p>You'll help train <strong>zensim</strong>, an open-source perceptual quality metric, by rating how compressed images compare to their originals. We especially need ratings from real phones, in real lighting, at real viewing distances — that's the data existing public IQA datasets don't capture.</p>
       <p>You'll see a series of images and rate how each one compares to its original. ~5 minutes; the more you do, the more it helps.</p>
       <p class="muted">No login, no personal info. Only screen and rating data are recorded.</p>
       ${banner}

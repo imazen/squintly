@@ -15,14 +15,11 @@ RUN apt-get update \
  && apt-get install -y --no-install-recommends pkg-config libssl-dev \
  && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
-# Cache deps separately so iterative builds don't recompile the world.
+# Plain cargo build. Earlier we tried a stub-lib dep-cache trick; it raced
+# cargo's incremental fingerprints in some environments (Railway's builder)
+# and produced "could not find module" failures even after the real src/ was
+# copied in. The honest, slow-but-correct path is the default.
 COPY Cargo.toml Cargo.lock ./
-RUN mkdir -p src tests web/dist \
- && echo "fn main() {}" > src/main.rs \
- && echo "" > src/lib.rs \
- && echo "<!doctype html>" > web/dist/index.html \
- && cargo build --release --bin squintly || true \
- && rm -rf src tests
 COPY src/ ./src/
 COPY migrations/ ./migrations/
 COPY tests/ ./tests/

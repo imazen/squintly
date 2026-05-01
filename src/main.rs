@@ -120,6 +120,8 @@ async fn main() -> Result<()> {
         .route("/proxy/source/{hash}", get(handlers::proxy_source))
         .route("/proxy/encoding/{id}", get(handlers::proxy_encoding))
         .route("/observer/{id}/profile", get(handlers::observer_profile))
+        .route("/auth/start", post(handlers::auth_start))
+        .route("/auth/verify", get(handlers::auth_verify))
         .route("/export/pareto.tsv", get(handlers::export_pareto))
         .route("/export/thresholds.tsv", get(handlers::export_thresholds))
         .route("/export/responses.tsv", get(handlers::export_responses))

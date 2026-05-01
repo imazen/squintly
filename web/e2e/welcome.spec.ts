@@ -3,11 +3,12 @@ import { expect, test } from '@playwright/test';
 import { gotoFresh } from './helpers';
 
 test.describe('welcome screen', () => {
-  test('renders research-impact framing copy', async ({ page }) => {
+  test('renders the make-the-web-faster framing copy', async ({ page }) => {
     await gotoFresh(page);
     await expect(page.getByRole('heading', { name: /Image Discrimination Study/ })).toBeVisible();
+    await expect(page.getByText(/make the web faster/i)).toBeVisible();
     await expect(page.getByText(/perceptual quality metric/i)).toBeVisible();
-    await expect(page.getByText(/No login, no personal info/i)).toBeVisible();
+    await expect(page.getByText(/No login required/i)).toBeVisible();
     await expect(page.getByRole('button', { name: /^Begin$/ })).toBeEnabled();
   });
 

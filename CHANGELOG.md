@@ -3,6 +3,27 @@
 ## [Unreleased]
 
 ### Added
+- Optional email magic-link sign-in (pattern adapted from Weaver
+  `convex/auth.ts`): `migrations/0005_auth.sql` adds `auth_tokens` +
+  `observer_aliases`. `src/auth.rs` generates 32-byte cryptographic tokens,
+  hex-encodes them, persists only the BLAKE3 hash, 15-min TTL, single use.
+  `POST /api/auth/start` calls Resend (`RESEND_API_KEY`,
+  `RESEND_FROM_EMAIL` envs); `GET /api/auth/verify?token=…` returns a tiny
+  HTML page that writes the resolved observer_id into localStorage and
+  redirects. Cross-device sign-in merges via `observer_aliases` so a
+  returning observer's existing record always wins. Without
+  `RESEND_API_KEY`, `/api/auth/start` returns a 503 with a clear hint —
+  anonymous use is unaffected. Frontend: opt-in modal from the welcome
+  screen. 4 new e2e tests.
+- Welcome copy now leads with "make the web faster"; zensim is the
+  mechanism, not the headline.
+
+### Fixed
+- Welcome copy + motivation doc had a fabricated "used by Wikipedia" claim.
+  Replaced with honest framing; the doc now warns explicitly against
+  claiming adopters that don't exist.
+
+### Added (earlier)
 - Initial scaffolding: SPEC, README, CLAUDE.md
 - Cargo manifest with axum + sqlx + rust-embed + reqwest stack
 - Railway deployment: Dockerfile (3-stage Node→Rust→debian:slim),

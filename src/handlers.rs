@@ -15,6 +15,10 @@ use uuid::Uuid;
 
 use chrono::NaiveDate;
 
+use crate::auth::{
+    EmailMessage, ResendConfig, TOKEN_TTL_MS, generate_token, hash_token, looks_like_email,
+    send_magic_link,
+};
 use crate::coefficient::{CoefficientSource, Manifest};
 use crate::db::now_ms;
 use crate::grading::{InlineGradeInput, compute_response_flags, grade_session};
@@ -562,6 +566,257 @@ pub async fn export_responses(State(state): State<SharedState>) -> Result<Respon
     Ok((StatusCode::OK, headers, body).into_response())
 }
 
+// ---------- optional email magic-link auth ----------
+
+#[derive(Debug, Deserialize)]
+pub struct AuthStartReq {
+    pub email: String,
+    pub observer_id: Option<String>,
+    /// Where the magic link should land. Provided by the client so that
+    /// the server doesn't need to know its public URL (Railway-friendly).
+    pub origin: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct AuthStartResp {
+    pub ok: bool,
+    pub message: String,
+}
+
+pub async fn auth_start(
+    State(state): State<SharedState>,
+    Json(req): Json<AuthStartReq>,
+) -> Result<Json<AuthStartResp>, AppError> {
+    let email = req.email.trim().to_lowercase();
+    if !looks_like_email(&email) {
+        return Err(AppError::BadRequest("invalid email".into()));
+    }
+
+    // We require an observer_id if one is on the device; new-device sign-ins can
+    // pass null and the verify endpoint will give them a fresh observer.
+    if let Some(id) = req.observer_id.as_deref() {
+        if Uuid::parse_str(id).is_err() {
+            return Err(AppError::BadRequest("invalid observer_id".into()));
+        }
+    }
+
+    // Reject if the origin scheme/host shape is suspicious. The verify URL we
+    // build from this string is what's mailed to the user.
+    if let Err(e) = url::Url::parse(&req.origin) {
+        return Err(AppError::BadRequest(format!("invalid origin: {e}")));
+    }
+
+    let cfg = ResendConfig::from_env().ok_or_else(|| {
+        AppError::ServiceUnavailable(
+            "Email login is not configured on this deployment (RESEND_API_KEY missing). \
+             Anonymous use is unaffected."
+                .into(),
+        )
+    })?;
+
+    let token = generate_token();
+    let token_hash = hash_token(&token);
+    let now = now_ms();
+    let expires_at = now + TOKEN_TTL_MS;
+
+    sqlx::query(
+        "INSERT INTO auth_tokens (token_hash, email, requesting_observer_id, expires_at, \
+         consumed_at, created_at) VALUES (?, ?, ?, ?, NULL, ?)",
+    )
+    .bind(&token_hash)
+    .bind(&email)
+    .bind(req.observer_id.as_deref())
+    .bind(expires_at)
+    .bind(now)
+    .execute(&state.pool)
+    .await?;
+
+    let link = format!(
+        "{}/api/auth/verify?token={}",
+        req.origin.trim_end_matches('/'),
+        token
+    );
+    send_magic_link(
+        &cfg,
+        EmailMessage {
+            to: &email,
+            link_url: &link,
+        },
+    )
+    .await?;
+
+    Ok(Json(AuthStartResp {
+        ok: true,
+        message: format!(
+            "If an account is associated with {email}, a sign-in link has been sent. \
+             It expires in 15 minutes."
+        ),
+    }))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct AuthVerifyQuery {
+    pub token: String,
+}
+
+/// GET /api/auth/verify?token=...
+///
+/// Returns a tiny self-contained HTML page that:
+///   1. Shows a success/failure message.
+///   2. On success, writes the resolved `observer_id` into localStorage and
+///      redirects to `/`. Cross-tab sync is intentionally not used; a single
+///      tab opens, succeeds, redirects.
+pub async fn auth_verify(
+    State(state): State<SharedState>,
+    Query(q): Query<AuthVerifyQuery>,
+) -> Result<Response, AppError> {
+    if q.token.len() != 64 || !q.token.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Ok(verify_page(
+            VerifyOutcome::Invalid("That link looks malformed."),
+            None,
+        ));
+    }
+
+    let token_hash = hash_token(&q.token);
+    let row: Option<(String, Option<String>, i64, Option<i64>)> = sqlx::query_as(
+        "SELECT email, requesting_observer_id, expires_at, consumed_at \
+         FROM auth_tokens WHERE token_hash = ?",
+    )
+    .bind(&token_hash)
+    .fetch_optional(&state.pool)
+    .await?;
+    let Some((email, requesting_observer_id, expires_at, consumed_at)) = row else {
+        return Ok(verify_page(
+            VerifyOutcome::Invalid("That link wasn't recognised. Try requesting a new one."),
+            None,
+        ));
+    };
+
+    let now = now_ms();
+    if let Some(used) = consumed_at {
+        let _ = used;
+        return Ok(verify_page(
+            VerifyOutcome::Invalid(
+                "That link was already used. Request a new one if you need to sign in again.",
+            ),
+            None,
+        ));
+    }
+    if expires_at < now {
+        return Ok(verify_page(
+            VerifyOutcome::Invalid("That link has expired. Request a new one."),
+            None,
+        ));
+    }
+
+    // Resolve the canonical observer for this email.
+    let canonical: Option<(String,)> = sqlx::query_as(
+        "SELECT id FROM observers WHERE LOWER(email) = ? AND id NOT IN \
+         (SELECT alias_id FROM observer_aliases) LIMIT 1",
+    )
+    .bind(&email)
+    .fetch_optional(&state.pool)
+    .await?;
+
+    let resolved_observer_id = match (canonical, requesting_observer_id.as_deref()) {
+        (Some((canonical_id,)), Some(req_id)) if canonical_id != req_id => {
+            // Merge: the requesting observer is now an alias of the canonical one.
+            sqlx::query(
+                "INSERT OR REPLACE INTO observer_aliases (alias_id, canonical_id, merged_at) \
+                 VALUES (?, ?, ?)",
+            )
+            .bind(req_id)
+            .bind(&canonical_id)
+            .bind(now)
+            .execute(&state.pool)
+            .await?;
+            canonical_id
+        }
+        (Some((canonical_id,)), _) => canonical_id,
+        (None, Some(req_id)) => {
+            // First sign-in for this email — bind the email to the requesting observer.
+            sqlx::query(
+                "UPDATE observers SET email = ?, email_verified_at = ?, account_tier = MAX(account_tier, 1) WHERE id = ?",
+            )
+            .bind(&email)
+            .bind(now)
+            .bind(req_id)
+            .execute(&state.pool)
+            .await?;
+            req_id.to_string()
+        }
+        (None, None) => {
+            // Cross-device first time — no observer record exists; create one.
+            let new_id = Uuid::new_v4().to_string();
+            sqlx::query(
+                "INSERT INTO observers (id, created_at, email, email_verified_at, account_tier) \
+                 VALUES (?, ?, ?, ?, 1)",
+            )
+            .bind(&new_id)
+            .bind(now)
+            .bind(&email)
+            .bind(now)
+            .execute(&state.pool)
+            .await?;
+            new_id
+        }
+    };
+
+    sqlx::query("UPDATE auth_tokens SET consumed_at = ? WHERE token_hash = ?")
+        .bind(now)
+        .bind(&token_hash)
+        .execute(&state.pool)
+        .await?;
+
+    Ok(verify_page(
+        VerifyOutcome::Success { email },
+        Some(resolved_observer_id),
+    ))
+}
+
+enum VerifyOutcome {
+    Success { email: String },
+    Invalid(&'static str),
+}
+
+fn verify_page(outcome: VerifyOutcome, observer_id: Option<String>) -> Response {
+    let (title, msg, status) = match &outcome {
+        VerifyOutcome::Success { email } => (
+            "Signed in",
+            format!("Signed in as {email}. Redirecting to Squintly…"),
+            StatusCode::OK,
+        ),
+        VerifyOutcome::Invalid(m) => ("Sign-in failed", m.to_string(), StatusCode::OK),
+    };
+    let observer_js = observer_id
+        .map(|id| {
+            format!(
+                "try {{ localStorage.setItem('squintly:observer_id', {js}); }} catch (e) {{}}\n",
+                js = serde_json::to_string(&id).unwrap_or_else(|_| "''".into())
+            )
+        })
+        .unwrap_or_default();
+    let redirect_js = if matches!(outcome, VerifyOutcome::Success { .. }) {
+        "setTimeout(() => { location.href = '/'; }, 1200);"
+    } else {
+        ""
+    };
+    let html = format!(
+        "<!doctype html><html><head><meta charset=utf-8><meta name=viewport content=\"width=device-width,initial-scale=1\">\
+         <title>{title} — Squintly</title>\
+         <style>html,body{{margin:0;padding:0;background:#0a0a0c;color:#f0f0f2;font-family:-apple-system,BlinkMacSystemFont,system-ui,sans-serif;min-height:100dvh;display:flex;align-items:center;justify-content:center}} .card{{max-width:420px;padding:24px;text-align:center;line-height:1.5}} h1{{margin:0 0 8px;font-size:1.25rem}} p{{margin:8px 0;color:#cfcfd6}}</style>\
+         </head><body><div class=card><h1>{title}</h1><p>{msg}</p></div>\
+         <script>{observer_js}{redirect_js}</script></body></html>"
+    );
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("text/html; charset=utf-8"),
+    );
+    headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    (status, headers, html).into_response()
+}
+
 // ---------- observer profile ----------
 
 #[derive(Debug, Serialize)]
@@ -727,6 +982,10 @@ pub enum AppError {
     Conflict(String),
     #[error("not found: {0}")]
     NotFound(String),
+    #[error("bad request: {0}")]
+    BadRequest(String),
+    #[error("service unavailable: {0}")]
+    ServiceUnavailable(String),
 }
 
 impl IntoResponse for AppError {
@@ -734,6 +993,8 @@ impl IntoResponse for AppError {
         let (code, msg) = match &self {
             AppError::NotFound(s) => (StatusCode::NOT_FOUND, s.clone()),
             AppError::Conflict(s) => (StatusCode::CONFLICT, s.clone()),
+            AppError::BadRequest(s) => (StatusCode::BAD_REQUEST, s.clone()),
+            AppError::ServiceUnavailable(s) => (StatusCode::SERVICE_UNAVAILABLE, s.clone()),
             _ => (StatusCode::INTERNAL_SERVER_ERROR, self.to_string()),
         };
         tracing::warn!(?code, %msg, "request failed");

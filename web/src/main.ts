@@ -1,6 +1,7 @@
 // Squintly entrypoint. Routes between welcome → calibration → profile → trials.
 
 import { createSession } from './api';
+import { openSignInModal } from './auth-modal';
 import { renderCalibration } from './calibration';
 import { detectCodecs, jxlEnableHint } from './codec-probe';
 import {
@@ -29,14 +30,22 @@ async function welcome(): Promise<void> {
   root.innerHTML = `
     <div class="screen center">
       <h1>Image Discrimination Study</h1>
-      <p>You'll help train <strong>zensim</strong>, an open-source perceptual quality metric, by rating how compressed images compare to their originals. We especially need ratings from real phones, in real lighting, at real viewing distances — that's the data existing public IQA datasets don't capture.</p>
-      <p>You'll see a series of images and rate how each one compares to its original. ~5 minutes; the more you do, the more it helps.</p>
-      <p class="muted">No login, no personal info. Only screen and rating data are recorded.</p>
+      <p>You'll help <strong>make the web faster</strong>. By rating how compressed images compare to their originals, you tell us which artifacts people actually see — letting CDNs ship smaller images without anyone noticing the difference.</p>
+      <p>The data trains <strong>zensim</strong>, an open-source perceptual quality metric. We especially need ratings from real phones, in real lighting, at real viewing distances — the data existing public IQA datasets don't capture.</p>
+      <p>~5 minutes; the more you do, the more bytes everyone saves.</p>
+      <p class="muted">No login required. We record only screen and rating data.</p>
       ${banner}
       <button id="begin" class="primary">Begin</button>
+      <p class="muted" style="margin-top:8px;">
+        <a id="signin-link" href="#" style="color:inherit;text-decoration:underline;">Already have an email-linked account? Sign in.</a>
+      </p>
       <p class="muted">Best on phones, but any browser works.</p>
     </div>
   `;
+  root.querySelector<HTMLAnchorElement>('#signin-link')!.addEventListener('click', (e) => {
+    e.preventDefault();
+    openSignInModal();
+  });
   root.querySelector<HTMLButtonElement>('#begin')!.addEventListener('click', () => {
     const calib = loadCalibration();
     if (calib.css_px_per_mm == null) {

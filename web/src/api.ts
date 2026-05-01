@@ -96,3 +96,27 @@ export async function recordResponse(trial_id: string, body: ResponseReq): Promi
 export async function endSession(session_id: string): Promise<void> {
   await fetch(`/api/session/${encodeURIComponent(session_id)}/end`, { method: 'POST' });
 }
+
+export interface AuthStartReq {
+  email: string;
+  observer_id: string | null;
+  origin: string;
+}
+
+export interface AuthStartResp {
+  ok: boolean;
+  message: string;
+}
+
+export async function authStart(body: AuthStartReq): Promise<AuthStartResp> {
+  const r = await fetch('/api/auth/start', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!r.ok) {
+    const text = await r.text();
+    throw new Error(text || `authStart ${r.status}`);
+  }
+  return r.json();
+}

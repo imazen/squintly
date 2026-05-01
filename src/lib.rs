@@ -9,6 +9,7 @@
 //! 4. Responses persist to SQLite via [`db`].
 //! 5. [`bt`] fits Bradley–Terry-Davidson scores; [`export`] writes zenanalyze TSVs.
 
+pub mod auth;
 pub mod bt;
 pub mod coefficient;
 pub mod db;

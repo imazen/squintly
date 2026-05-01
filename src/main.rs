@@ -69,9 +69,12 @@ async fn main() -> Result<()> {
         (Some(url), _) => CoefficientSource::Http(HttpCoefficient::new(url)?),
         (None, Some(path)) => CoefficientSource::Fs(FsCoefficient::new(path.to_path_buf())),
         (None, None) => {
-            anyhow::bail!(
-                "no coefficient source configured: pass --coefficient-http URL or --coefficient-path PATH"
+            tracing::warn!(
+                "no coefficient source configured; running with an empty manifest. \
+                 Set SQUINTLY_COEFFICIENT_HTTP or SQUINTLY_COEFFICIENT_PATH and \
+                 POST /api/manifest/refresh to wire one in."
             );
+            CoefficientSource::Disabled
         }
     };
 

@@ -60,9 +60,13 @@ pub trait Coefficient: Send + Sync {
 }
 
 /// Concrete enum so we don't need `dyn Coefficient` in shared state.
+/// `Disabled` ships an always-empty manifest and rejects fetches — the server
+/// still boots cleanly on Railway / wherever, and `POST /api/manifest/refresh`
+/// + a swap of `SQUINTLY_COEFFICIENT_HTTP` can wire it up later.
 pub enum CoefficientSource {
     Http(HttpCoefficient),
     Fs(FsCoefficient),
+    Disabled,
 }
 
 impl CoefficientSource {
@@ -70,6 +74,7 @@ impl CoefficientSource {
         match self {
             Self::Http(c) => c.refresh_manifest().await,
             Self::Fs(c) => c.refresh_manifest().await,
+            Self::Disabled => Ok(Manifest::default()),
         }
     }
     pub async fn fetch_source_png(&self, hash: &str) -> Result<(Vec<u8>, String)> {
@@ -82,12 +87,14 @@ impl CoefficientSource {
                 .fetch_source_png(hash)
                 .await
                 .map(|(b, m)| (b, m.to_string())),
+            Self::Disabled => anyhow::bail!("coefficient is disabled; no source for {hash}"),
         }
     }
     pub async fn fetch_encoding_blob(&self, id: &str) -> Result<(Vec<u8>, String)> {
         match self {
             Self::Http(c) => c.fetch_encoding_blob(id).await,
             Self::Fs(c) => c.fetch_encoding_blob(id).await,
+            Self::Disabled => anyhow::bail!("coefficient is disabled; no encoding for {id}"),
         }
     }
 }

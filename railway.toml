@@ -9,7 +9,10 @@ dockerfilePath = "Dockerfile"
 restartPolicyType = "ON_FAILURE"
 restartPolicyMaxRetries = 5
 healthcheckPath = "/api/stats"
-healthcheckTimeout = 10
+# Per-attempt timeout. Boot takes a few seconds (sqlite migrate + bind), and
+# coefficient is allowed to be unreachable on first start, so the floor is
+# generous.
+healthcheckTimeout = 60
 # Railway sets PORT; the binary picks it up automatically (see src/main.rs).
 # A persistent volume must be attached at /data for the SQLite database to
 # survive redeploys; create it via `railway volume add --mount-path /data`.

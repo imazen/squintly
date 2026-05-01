@@ -3,6 +3,7 @@
 import { createSession } from './api';
 import { openSignInModal } from './auth-modal';
 import { renderCalibration } from './calibration';
+import { runCalibration } from './calibration-onboarding';
 import { detectCodecs, jxlEnableHint } from './codec-probe';
 import {
   captureSession,
@@ -146,6 +147,11 @@ async function beginSession(
       codec_probe_cached: support.cached,
     });
     setObserverId(resp.observer_id);
+    // Run calibration before real trials. Soft-fail allowed — even on a low
+    // score we let them rate. See docs/methodology.md §3.7.
+    await new Promise<void>((res) => {
+      runCalibration(root, { session_id: resp.session_id, observer_id: resp.observer_id }, () => res());
+    });
     const ctrl = startTrials(root, resp.session_id);
     await ctrl.start();
     window.addEventListener('beforeunload', () => {

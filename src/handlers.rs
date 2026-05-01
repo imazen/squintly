@@ -22,7 +22,9 @@ use crate::auth::{
 use crate::coefficient::{CoefficientSource, Manifest};
 use crate::db::now_ms;
 use crate::grading::{InlineGradeInput, compute_response_flags, grade_session};
-use crate::sampling::{SamplerConfig, TrialPlan, pick_trial};
+use crate::sampling::{
+    AnchorEntry, AnchorPool, SamplerConfig, SourceFlagMap, TrialPlan, pick_trial,
+};
 use crate::streaks::{
     StreakState, advance_streak, crossed_streak_milestone, crossed_trial_milestone,
 };
@@ -31,9 +33,53 @@ pub struct AppState {
     pub pool: SqlitePool,
     pub coefficient: CoefficientSource,
     pub manifest: tokio::sync::RwLock<Manifest>,
+    pub anchors: tokio::sync::RwLock<AnchorPool>,
+    pub source_flags: tokio::sync::RwLock<SourceFlagMap>,
 }
 
 pub type SharedState = Arc<AppState>;
+
+/// Load `corpus_anchors` from the database, classifying entries by `role`.
+pub async fn load_anchor_pool(pool: &SqlitePool) -> Result<AnchorPool, sqlx::Error> {
+    let rows = sqlx::query(
+        "SELECT source_hash, encoding_id, codec, quality, role, expected_choice \
+         FROM corpus_anchors",
+    )
+    .fetch_all(pool)
+    .await?;
+    let mut p = AnchorPool::default();
+    for row in rows {
+        let entry = AnchorEntry {
+            source_hash: row.get(0),
+            encoding_id: row.get(1),
+            codec: row.get(2),
+            quality: row.get::<f64, _>(3) as f32,
+            expected_choice: row.get(5),
+        };
+        let role: String = row.get(4);
+        match role.as_str() {
+            "honeypot" => p.honeypots.push(entry),
+            _ => p.anchors.push(entry),
+        }
+    }
+    Ok(p)
+}
+
+/// Load `source_flags` (held-out validation set, codec-version metadata).
+pub async fn load_source_flags(pool: &SqlitePool) -> Result<SourceFlagMap, sqlx::Error> {
+    let rows = sqlx::query("SELECT source_hash, held_out FROM source_flags")
+        .fetch_all(pool)
+        .await?;
+    let mut m = SourceFlagMap::default();
+    for row in rows {
+        let h: String = row.get(0);
+        let held_out: i64 = row.get(1);
+        if held_out != 0 {
+            m.held_out.insert(h);
+        }
+    }
+    Ok(m)
+}
 
 // ---------- session ----------
 
@@ -288,8 +334,16 @@ pub async fn next_trial(
         .map(|s| s.split(',').map(str::trim).map(str::to_lowercase).collect());
 
     let manifest = state.manifest.read().await;
-    let plan = pick_trial(&manifest, &SamplerConfig::default(), allowed.as_ref())
-        .ok_or_else(|| AppError::Conflict("no trials available — empty manifest or no encodings match this session's supported codecs".into()))?;
+    let anchors = state.anchors.read().await;
+    let flags = state.source_flags.read().await;
+    let plan = pick_trial(
+        &manifest,
+        &SamplerConfig::default(),
+        allowed.as_ref(),
+        Some(&*anchors),
+        Some(&*flags),
+    )
+    .ok_or_else(|| AppError::Conflict("no trials available — empty manifest or no encodings match this session's supported codecs".into()))?;
     let trial_id = Uuid::new_v4().to_string();
     let served_at = now_ms();
 
@@ -298,11 +352,15 @@ pub async fn next_trial(
             source,
             encoding,
             staircase_target,
+            is_golden,
+            expected_choice,
+            held_out,
         } => {
             sqlx::query(
                 "INSERT INTO trials (id, session_id, kind, source_hash, a_encoding_id, a_codec, \
-                 a_quality, a_bytes, intrinsic_w, intrinsic_h, staircase_target, served_at) \
-                 VALUES (?, ?, 'single', ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                 a_quality, a_bytes, intrinsic_w, intrinsic_h, staircase_target, is_golden, \
+                 expected_choice, held_out, served_at) \
+                 VALUES (?, ?, 'single', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             )
             .bind(&trial_id)
             .bind(&q.session_id)
@@ -314,6 +372,9 @@ pub async fn next_trial(
             .bind(source.width as i64)
             .bind(source.height as i64)
             .bind(staircase_target)
+            .bind(is_golden as i64)
+            .bind(expected_choice.as_deref())
+            .bind(held_out as i64)
             .bind(served_at)
             .execute(&state.pool)
             .await?;
@@ -336,12 +397,19 @@ pub async fn next_trial(
                 staircase_target: staircase_target.map(str::to_string),
             }
         }
-        TrialPlan::Pair { source, a, b } => {
+        TrialPlan::Pair {
+            source,
+            a,
+            b,
+            is_golden,
+            expected_choice,
+            held_out,
+        } => {
             sqlx::query(
                 "INSERT INTO trials (id, session_id, kind, source_hash, a_encoding_id, a_codec, \
                  a_quality, a_bytes, b_encoding_id, b_codec, b_quality, b_bytes, intrinsic_w, \
-                 intrinsic_h, served_at) \
-                 VALUES (?, ?, 'pair', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                 intrinsic_h, is_golden, expected_choice, held_out, served_at) \
+                 VALUES (?, ?, 'pair', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             )
             .bind(&trial_id)
             .bind(&q.session_id)
@@ -356,6 +424,9 @@ pub async fn next_trial(
             .bind(b.bytes as i64)
             .bind(source.width as i64)
             .bind(source.height as i64)
+            .bind(is_golden as i64)
+            .bind(expected_choice.as_deref())
+            .bind(held_out as i64)
             .bind(served_at)
             .execute(&state.pool)
             .await?;
@@ -558,6 +629,16 @@ pub async fn export_thresholds(State(state): State<SharedState>) -> Result<Respo
 
 pub async fn export_responses(State(state): State<SharedState>) -> Result<Response, AppError> {
     let body = crate::export::responses_tsv(&state.pool).await?;
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("text/tab-separated-values"),
+    );
+    Ok((StatusCode::OK, headers, body).into_response())
+}
+
+pub async fn export_unified(State(state): State<SharedState>) -> Result<Response, AppError> {
+    let body = crate::export::unified_tsv(&state.pool).await?;
     let mut headers = HeaderMap::new();
     headers.insert(
         header::CONTENT_TYPE,
@@ -817,6 +898,163 @@ fn verify_page(outcome: VerifyOutcome, observer_id: Option<String>) -> Response 
     (status, headers, html).into_response()
 }
 
+// ---------- onboarding calibration ----------
+//
+// Per docs/methodology.md §3.7: every session starts with up to 5 calibration
+// trials with known answers and immediate feedback. Below 60% on calibration
+// → observers.calibrated=0 (soft-fail; data is filtered at training time,
+// not at session time).
+
+#[derive(Debug, Serialize)]
+pub struct CalibrationItem {
+    pub id: String,
+    pub kind: String,
+    pub description: String,
+    pub source_url: Option<String>,
+    pub a_url: Option<String>,
+    pub b_url: Option<String>,
+    pub a_codec: Option<String>,
+    pub b_codec: Option<String>,
+    pub a_quality: Option<f32>,
+    pub b_quality: Option<f32>,
+    pub intrinsic_w: Option<i64>,
+    pub intrinsic_h: Option<i64>,
+    pub feedback_text: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct CalibrationListResp {
+    pub items: Vec<CalibrationItem>,
+}
+
+pub async fn calibration_list(
+    State(state): State<SharedState>,
+) -> Result<Json<CalibrationListResp>, AppError> {
+    let rows = sqlx::query(
+        "SELECT id, kind, description, source_url, a_url, b_url, a_codec, b_codec, \
+                a_quality, b_quality, intrinsic_w, intrinsic_h, feedback_text \
+         FROM calibration_pool ORDER BY order_hint, id LIMIT 5",
+    )
+    .fetch_all(&state.pool)
+    .await?;
+    let items = rows
+        .into_iter()
+        .map(|r| CalibrationItem {
+            id: r.get(0),
+            kind: r.get(1),
+            description: r.get(2),
+            source_url: r.get(3),
+            a_url: r.get(4),
+            b_url: r.get(5),
+            a_codec: r.get(6),
+            b_codec: r.get(7),
+            a_quality: r.get::<Option<f64>, _>(8).map(|v| v as f32),
+            b_quality: r.get::<Option<f64>, _>(9).map(|v| v as f32),
+            intrinsic_w: r.get(10),
+            intrinsic_h: r.get(11),
+            feedback_text: r.get(12),
+        })
+        .collect();
+    Ok(Json(CalibrationListResp { items }))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CalibrationResponseReq {
+    pub session_id: String,
+    pub observer_id: String,
+    pub pool_id: String,
+    pub choice: String,
+    pub dwell_ms: i64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct CalibrationResponseAck {
+    pub correct: bool,
+    pub expected_choice: String,
+    pub feedback_text: Option<String>,
+}
+
+pub async fn calibration_response(
+    State(state): State<SharedState>,
+    Json(req): Json<CalibrationResponseReq>,
+) -> Result<Json<CalibrationResponseAck>, AppError> {
+    let row: Option<(String, Option<String>)> =
+        sqlx::query_as("SELECT expected_choice, feedback_text FROM calibration_pool WHERE id = ?")
+            .bind(&req.pool_id)
+            .fetch_optional(&state.pool)
+            .await?;
+    let Some((expected_choice, feedback_text)) = row else {
+        return Err(AppError::NotFound(format!(
+            "calibration item {}",
+            req.pool_id
+        )));
+    };
+    let correct = expected_choice == req.choice;
+    let now = now_ms();
+    sqlx::query(
+        "INSERT INTO calibration_responses (id, observer_id, session_id, pool_id, choice, \
+         correct, dwell_ms, served_at, responded_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind(Uuid::new_v4().to_string())
+    .bind(&req.observer_id)
+    .bind(&req.session_id)
+    .bind(&req.pool_id)
+    .bind(&req.choice)
+    .bind(correct as i64)
+    .bind(req.dwell_ms)
+    .bind(now)
+    .bind(now)
+    .execute(&state.pool)
+    .await?;
+    Ok(Json(CalibrationResponseAck {
+        correct,
+        expected_choice,
+        feedback_text,
+    }))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CalibrationFinalizeReq {
+    pub observer_id: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct CalibrationFinalizeResp {
+    pub calibrated: bool,
+    pub score: f32,
+}
+
+pub async fn calibration_finalize(
+    State(state): State<SharedState>,
+    Json(req): Json<CalibrationFinalizeReq>,
+) -> Result<Json<CalibrationFinalizeResp>, AppError> {
+    let row: (i64, i64) = sqlx::query_as(
+        "SELECT COUNT(*), COALESCE(SUM(correct), 0) FROM calibration_responses \
+         WHERE observer_id = ?",
+    )
+    .bind(&req.observer_id)
+    .fetch_one(&state.pool)
+    .await?;
+    let (total, correct) = (row.0, row.1);
+    let score = if total > 0 {
+        correct as f32 / total as f32
+    } else {
+        0.0
+    };
+    let calibrated = score >= 0.60;
+    sqlx::query(
+        "UPDATE observers SET calibrated = ?, calibration_score = ?, calibrated_at = ? \
+         WHERE id = ?",
+    )
+    .bind(calibrated as i64)
+    .bind(score)
+    .bind(now_ms())
+    .bind(&req.observer_id)
+    .execute(&state.pool)
+    .await?;
+    Ok(Json(CalibrationFinalizeResp { calibrated, score }))
+}
+
 // ---------- observer profile ----------
 
 #[derive(Debug, Serialize)]
@@ -941,6 +1179,14 @@ pub async fn stats(State(state): State<SharedState>) -> Result<Json<Stats>, AppE
 pub async fn refresh_manifest(State(state): State<SharedState>) -> Result<Json<Stats>, AppError> {
     let new_manifest = state.coefficient.refresh_manifest().await?;
     *state.manifest.write().await = new_manifest;
+    // Also refresh anchors and source-flags — operators may have populated
+    // them since startup.
+    if let Ok(p) = load_anchor_pool(&state.pool).await {
+        *state.anchors.write().await = p;
+    }
+    if let Ok(f) = load_source_flags(&state.pool).await {
+        *state.source_flags.write().await = f;
+    }
     stats(State(state)).await
 }
 

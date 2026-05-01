@@ -79,6 +79,8 @@ async fn smoke_full_loop() -> Result<()> {
         pool,
         coefficient: CoefficientSource::Http(coeff),
         manifest: tokio::sync::RwLock::new(manifest),
+        anchors: tokio::sync::RwLock::new(Default::default()),
+        source_flags: tokio::sync::RwLock::new(Default::default()),
     });
 
     // Build the same router as main, then exercise it via reqwest in a spawned server.

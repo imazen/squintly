@@ -60,7 +60,7 @@ half of the quality grid 60% of the time. **Source:** the
 source-informing-sweep rule in CLAUDE.md — web codecs ship at q5–q40 where
 RD curves are hardest and existing IQA datasets undersample.
 
-### 3.4 Trivial-triplet filter (NEW, matches CID22)
+### 3.4 Trivial-triplet filter (IMPLEMENTED, matches CID22)
 
 We never sample pairs whose answer is foregone:
 
@@ -79,7 +79,7 @@ The session's `supported_codecs` set (from the client probe) hard-filters
 the sampler. We never serve a codec the browser can't natively decode —
 transcoding to PNG would compromise the perceptual measurement.
 
-### 3.6 Anchor reservation (NEW)
+### 3.6 Anchor reservation (IMPLEMENTED in v0.2)
 
 If a source has anchor stimuli registered (`corpus_anchors`), we
 **reserve at least 30% of session slots** for them. Anchors are sampled
@@ -90,7 +90,7 @@ distributed across the session.
 to interpolate between, and the bias-correction step has no reference
 distribution to normalize against.
 
-### 3.7 Onboarding calibration (NEW)
+### 3.7 Onboarding calibration (IMPLEMENTED in v0.2)
 
 Every session starts with **5 calibration trials** with known answers,
 showing each answer immediately. They cover:
@@ -113,7 +113,7 @@ the *exposure* effect is real; we keep the exposure, soften the gate.
 
 Always discarded from analysis. `weight=0` at export. Rows stay in the DB.
 
-### 3.9 Honeypots (NEW)
+### 3.9 Honeypots (IMPLEMENTED in v0.2)
 
 1 in 12 trials is a honeypot. The sampler picks an anchor where the
 expected outcome is unanimous (reference vs ~q5 mozjpeg, or reference
@@ -204,25 +204,41 @@ Per (source, codec, condition_bucket):
   `P(rating ≥ k | q, c) = Φ((q - μ_k(c)) / σ_k(c))` per condition vector
   c. Bootstrap CI 200 iterations.
 
-### 5.4 Per-session bias correction (v0.2, planned)
+### 5.4 Per-session bias correction (IMPLEMENTED in v0.2)
 
-Per CID22: each session gets an additive offset `c_session` chosen so the
-mean normalized difference (across all stimuli in that session vs. the
-group mean for those stimuli) is zero. Adjusted scores clamp to [0, 100].
+Per CID22 §Bias Correction: each session gets an additive offset
+`c_session` chosen so the mean normalized difference (z-score vs the
+group mean+std per stimulus) across that session's observations is zero.
+Adjusted ratings clamp to [1, 4] for the 4-tier ACR.
 
-### 5.5 Unified pairwise+rating scale (v0.2, planned)
+Implementation: `stats::session_bias_offsets()`, applied in `thresholds_tsv`
+before the per-q histogram is built.
+
+### 5.5 Unified pairwise+rating scale (IMPLEMENTED in v0.2)
 
 Pérez-Ortiz et al. 2019 model: `π_ik = m_i + δ_k + ξ_ik` where m_i is
 latent stimulus quality, δ_k is per-observer bias, ξ_ik is observer-noise
-N(0, σ_k²). Per-protocol scaling factor c (eq. 8) handles the mixed
-pairwise+rating data; trains directly on Squintly's interleaved
-observations to produce one MCOS-equivalent.
+N(0, σ_k²). 4-tier ACR uses an ordinal cumulative-link likelihood with
+shared category thresholds τ_1 < τ_2 < τ_3. Pair likelihood is Thurstone
+Case V: P(i > j) = Φ((m_i - m_j) / (√2 σ)).
 
-### 5.6 Disagreement mitigation between protocols (v0.2, planned)
+Joint fit by gradient descent with Gaussian priors (σ_β = 1.5 on m,
+σ_δ = 0.5 on δ, log-σ_o ~ N(0, 0.5²)). Anchored at m_reference = 0.
+Implementation: `unified::fit_unified()`, exported as `unified.tsv` per
+(source, condition_bucket).
 
-If a (source, encoding) has both threshold-derived quality and BT-derived
-quality and the 90% CIs don't overlap: add dummy pairwise opinions
-proportional to the gap (CID22 §MCOS disagreement mitigation, up to 20).
+### 5.6 Disagreement mitigation between protocols (IMPLEMENTED in v0.2)
+
+`stats::disagreement_dummy_count()` and `stats::overlap_tie_count()`
+implement CID22's two-sided rule:
+- If 90% CIs disjoint: add `multiplier × gap` "B-better-than-A" dummies
+  (CID22 used multiplier=20).
+- If 90% CIs overlap: add `multiplier × overlap_size / span` "I can't
+  choose" ties (CID22 used multiplier=200).
+
+The hooks are available to the v0.3 batch grader; v0.2 ships the unified
+fit which encodes equivalent disagreement information natively via the
+joint likelihood.
 
 ## 6. Quality-scale alignment
 
@@ -247,8 +263,11 @@ Bootstrap with replacement, 200 iterations (CID22 verbatim). Re-run the
 *entire* pipeline (BT fit + monotonicity injection + threshold logistic)
 per iteration. Reported CIs are 5th and 95th percentiles.
 
-For exports v0.1: per-row sample-count `n_observers` and `n_trials` are
-reported; bootstrap CIs are v0.2 batch work.
+**v0.2 IMPLEMENTED.** `stats::bootstrap()` resamples observations 200
+times and re-runs the full BT-Davidson fit (with monotonicity injection)
+or threshold logistic interpolation. `pareto.tsv` and `thresholds.tsv`
+both carry per-quantity 5th and 95th percentile columns; `unified.tsv`
+does the same for the joint Pérez-Ortiz fit.
 
 ## 8. Sample-size targets
 
@@ -274,13 +293,26 @@ The full session/trial/response history is preserved in SQLite and
 exportable raw via `responses.tsv`. Raw data > derived scores: anyone can
 re-fit with their own model.
 
-## 10. Held-out validation discipline (planned, v0.3)
+## 10. Held-out validation discipline (IMPLEMENTED in v0.2)
 
-20% of source images are reserved as a held-out evaluation set. They will
-appear in trials (we still need data on them) but `responses.tsv` will
-mark them `held_out = 1`. Only the trained metric's *final* benchmark
-report uses them; they never feed training, parameter selection, or
-threshold calibration.
+20% of source images can be marked `held_out=1` in `source_flags`. The
+sampler propagates this onto every trial (`trials.held_out`) and all
+exports carry the flag as a column. Held-out rows still feed the *raw*
+data store but downstream training pipelines must filter `held_out=1` from
+training, parameter selection, and threshold calibration — they're for
+final-metric evaluation only.
+
+## 11. Active sampling (IMPLEMENTED in v0.2 as `asap` module; not yet wired into the runtime sampler)
+
+ASAP — Active Sampling for Pairwise (Mikhailiuk 2020). For each candidate
+pair, EIG ≈ binary entropy of the predicted outcome under the current
+MAP estimate, maximized at p=0.5 (least-decided pair). 30-50% sample
+reduction vs random in published results.
+
+`asap::pick_max_eig()` is the API; integration into `pick_trial` is a
+v0.3 wiring task because it requires maintaining the per-(source, bucket)
+β posterior in memory and updating after every response. v0.2 ships the
+algorithm + tests.
 
 ## Citations
 

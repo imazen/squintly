@@ -50,22 +50,83 @@ pub enum TrialPlan {
         source: SourceMeta,
         encoding: EncodingMeta,
         staircase_target: Option<&'static str>,
+        is_golden: bool,
+        expected_choice: Option<String>,
+        held_out: bool,
     },
     Pair {
         source: SourceMeta,
         a: EncodingMeta,
         b: EncodingMeta,
+        is_golden: bool,
+        expected_choice: Option<String>,
+        held_out: bool,
     },
 }
 
 pub struct SamplerConfig {
     /// Probability of sampling a Single (threshold) trial. Default 0.65.
     pub p_single: f32,
+    /// Probability of overriding the random pick with a honeypot trial. CID22
+    /// uses 2 of 30 = 0.067; we use 1 in 12 ≈ 0.083 because phone sessions
+    /// are shorter and we want denser anchor coverage.
+    pub p_honeypot: f32,
+    /// Probability of overriding with an anchor (non-golden) trial when the
+    /// source has registered anchors. CID22 ≈ 30% of session slots reserved.
+    pub p_anchor: f32,
 }
 
 impl Default for SamplerConfig {
     fn default() -> Self {
-        Self { p_single: 0.65 }
+        Self {
+            p_single: 0.65,
+            p_honeypot: 0.083,
+            p_anchor: 0.30,
+        }
+    }
+}
+
+/// In-memory pool of anchor/honeypot trials, loaded from `corpus_anchors`
+/// at server start (and refreshed alongside the manifest).
+#[derive(Debug, Clone, Default)]
+pub struct AnchorPool {
+    pub anchors: Vec<AnchorEntry>,
+    pub honeypots: Vec<AnchorEntry>,
+}
+
+#[derive(Debug, Clone)]
+pub struct AnchorEntry {
+    pub source_hash: String,
+    pub encoding_id: String,
+    pub codec: String,
+    pub quality: f32,
+    pub expected_choice: Option<String>,
+}
+
+impl AnchorPool {
+    pub fn anchors_for(&self, source_hash: &str) -> Vec<&AnchorEntry> {
+        self.anchors
+            .iter()
+            .filter(|a| a.source_hash == source_hash)
+            .collect()
+    }
+    pub fn honeypots_for(&self, source_hash: &str) -> Vec<&AnchorEntry> {
+        self.honeypots
+            .iter()
+            .filter(|h| h.source_hash == source_hash)
+            .collect()
+    }
+}
+
+/// Source-flag lookup for the held-out validation set discipline.
+#[derive(Debug, Clone, Default)]
+pub struct SourceFlagMap {
+    pub held_out: std::collections::HashSet<String>,
+}
+
+impl SourceFlagMap {
+    pub fn is_held_out(&self, source_hash: &str) -> bool {
+        self.held_out.contains(source_hash)
     }
 }
 
@@ -76,15 +137,40 @@ impl Default for SamplerConfig {
 ///
 /// `allowed_codecs` filters encodings to those the observer can natively decode.
 /// `None` disables the filter (server-side smoke tests, FsCoefficient direct mode).
+///
+/// `anchors` and `flags` are optional; when present, the sampler will mix in
+/// anchor and honeypot trials per `cfg.p_anchor` / `cfg.p_honeypot`.
 pub fn pick_trial(
     manifest: &Manifest,
     cfg: &SamplerConfig,
     allowed_codecs: Option<&HashSet<String>>,
+    anchors: Option<&AnchorPool>,
+    flags: Option<&SourceFlagMap>,
 ) -> Option<TrialPlan> {
     if manifest.sources.is_empty() {
         return None;
     }
     let mut r = rng();
+
+    // First chance: honeypot. If the dice roll says so AND we have honeypots
+    // for some manifest source, return one immediately.
+    if let Some(pool) = anchors {
+        if !pool.honeypots.is_empty() && r.random::<f32>() < cfg.p_honeypot {
+            if let Some(plan) = pick_honeypot(manifest, pool, allowed_codecs, flags, &mut r) {
+                return Some(plan);
+            }
+        }
+    }
+
+    // Second chance: anchor (non-golden). Same idea, lower probability.
+    if let Some(pool) = anchors {
+        if !pool.anchors.is_empty() && r.random::<f32>() < cfg.p_anchor {
+            if let Some(plan) = pick_anchor(manifest, pool, allowed_codecs, flags, &mut r) {
+                return Some(plan);
+            }
+        }
+    }
+
     let mut order: Vec<&SourceMeta> = manifest.sources.iter().collect();
     order.shuffle(&mut r);
     let prefer_single = r.random::<f32>() < cfg.p_single;
@@ -104,6 +190,7 @@ pub fn pick_trial(
         if by_codec.is_empty() {
             continue;
         }
+        let held_out_src = flags.map(|f| f.is_held_out(&src.hash)).unwrap_or(false);
         let try_single = || -> Option<TrialPlan> {
             let (_, codec_encs) = by_codec.iter().max_by_key(|(_, v)| v.len())?;
             if codec_encs.is_empty() {
@@ -128,6 +215,9 @@ pub fn pick_trial(
                 source: (*src).clone(),
                 encoding: pick.clone(),
                 staircase_target: Some(target),
+                is_golden: false,
+                expected_choice: None,
+                held_out: held_out_src,
             })
         };
         let try_pair = || -> Option<TrialPlan> {
@@ -160,6 +250,9 @@ pub fn pick_trial(
                         source: (*src).clone(),
                         a: a.clone(),
                         b: b.clone(),
+                        is_golden: false,
+                        expected_choice: None,
+                        held_out: held_out_src,
                     });
                 }
             }
@@ -175,6 +268,75 @@ pub fn pick_trial(
         }
     }
     None
+}
+
+/// Build a honeypot trial: a single-stimulus trial whose `expected_choice`
+/// is known (typically reference rated `1` imperceptible, or ~q5 mozjpeg
+/// rated `4` hate).
+fn pick_honeypot<R: Rng + ?Sized>(
+    manifest: &Manifest,
+    pool: &AnchorPool,
+    allowed_codecs: Option<&HashSet<String>>,
+    flags: Option<&SourceFlagMap>,
+    r: &mut R,
+) -> Option<TrialPlan> {
+    let candidates: Vec<&AnchorEntry> = pool
+        .honeypots
+        .iter()
+        .filter(|h| codec_allowed(&h.codec, allowed_codecs))
+        .collect();
+    if candidates.is_empty() {
+        return None;
+    }
+    let pick = candidates[r.random_range(0..candidates.len())];
+    let source = manifest.source(&pick.source_hash)?.clone();
+    let encoding = manifest.encoding(&pick.encoding_id)?.clone();
+    let held_out = flags
+        .map(|f| f.is_held_out(&pick.source_hash))
+        .unwrap_or(false);
+    Some(TrialPlan::Single {
+        source,
+        encoding,
+        staircase_target: None,
+        is_golden: true,
+        expected_choice: pick.expected_choice.clone(),
+        held_out,
+    })
+}
+
+/// Build an anchor (non-golden) single trial against one of the source's
+/// canonical (codec, quality) anchors. Anchors are drawn from
+/// `corpus_anchors` with role='anchor' and serve as scale-calibration
+/// reference points for the offline pipeline.
+fn pick_anchor<R: Rng + ?Sized>(
+    manifest: &Manifest,
+    pool: &AnchorPool,
+    allowed_codecs: Option<&HashSet<String>>,
+    flags: Option<&SourceFlagMap>,
+    r: &mut R,
+) -> Option<TrialPlan> {
+    let candidates: Vec<&AnchorEntry> = pool
+        .anchors
+        .iter()
+        .filter(|a| codec_allowed(&a.codec, allowed_codecs))
+        .collect();
+    if candidates.is_empty() {
+        return None;
+    }
+    let pick = candidates[r.random_range(0..candidates.len())];
+    let source = manifest.source(&pick.source_hash)?.clone();
+    let encoding = manifest.encoding(&pick.encoding_id)?.clone();
+    let held_out = flags
+        .map(|f| f.is_held_out(&pick.source_hash))
+        .unwrap_or(false);
+    Some(TrialPlan::Single {
+        source,
+        encoding,
+        staircase_target: None,
+        is_golden: false,
+        expected_choice: None,
+        held_out,
+    })
 }
 
 /// CID22-style trivial-triplet filter. A pair is trivial when its outcome is
@@ -349,7 +511,13 @@ mod tests {
         allowed.insert("png".into());
         // Run 50 trials; none should select a JXL encoding.
         for _ in 0..50 {
-            if let Some(plan) = pick_trial(&manifest, &SamplerConfig::default(), Some(&allowed)) {
+            if let Some(plan) = pick_trial(
+                &manifest,
+                &SamplerConfig::default(),
+                Some(&allowed),
+                None,
+                None,
+            ) {
                 match plan {
                     TrialPlan::Single { encoding, .. } => {
                         assert_ne!(codec_browser_family(&encoding.codec), "jxl");

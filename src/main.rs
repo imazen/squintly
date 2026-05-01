@@ -106,10 +106,27 @@ async fn main() -> Result<()> {
         }
     };
 
+    // Load anchors + source-flags from the v0.2 schema. Empty until
+    // operators populate them; the sampler degrades to plain manifest mode.
+    let anchors = squintly::handlers::load_anchor_pool(&pool)
+        .await
+        .unwrap_or_default();
+    let source_flags = squintly::handlers::load_source_flags(&pool)
+        .await
+        .unwrap_or_default();
+    tracing::info!(
+        anchors = anchors.anchors.len(),
+        honeypots = anchors.honeypots.len(),
+        held_out = source_flags.held_out.len(),
+        "loaded anchor pool + source flags"
+    );
+
     let state = Arc::new(AppState {
         pool,
         coefficient: coeff,
         manifest: tokio::sync::RwLock::new(manifest),
+        anchors: tokio::sync::RwLock::new(anchors),
+        source_flags: tokio::sync::RwLock::new(source_flags),
     });
 
     let api = Router::new()
@@ -122,9 +139,19 @@ async fn main() -> Result<()> {
         .route("/observer/{id}/profile", get(handlers::observer_profile))
         .route("/auth/start", post(handlers::auth_start))
         .route("/auth/verify", get(handlers::auth_verify))
+        .route("/calibration", get(handlers::calibration_list))
+        .route(
+            "/calibration/response",
+            post(handlers::calibration_response),
+        )
+        .route(
+            "/calibration/finalize",
+            post(handlers::calibration_finalize),
+        )
         .route("/export/pareto.tsv", get(handlers::export_pareto))
         .route("/export/thresholds.tsv", get(handlers::export_thresholds))
         .route("/export/responses.tsv", get(handlers::export_responses))
+        .route("/export/unified.tsv", get(handlers::export_unified))
         .route("/stats", get(handlers::stats))
         .route("/manifest/refresh", post(handlers::refresh_manifest));
 

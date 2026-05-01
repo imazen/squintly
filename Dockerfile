@@ -40,5 +40,7 @@ ENV SQUINTLY_BIND=0.0.0.0:3030 \
     SQUINTLY_DB=/data/squintly.db \
     RUST_LOG=info,squintly=debug
 EXPOSE 3030
-VOLUME ["/data"]
+# NOTE: do not declare VOLUME — Railway rejects it in favour of its own volume
+# attachment (`railway volume add --mount-path /data`). For local docker-run
+# tests, mount with `-v /tmp/squintly-docker:/data`.
 ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/squintly"]

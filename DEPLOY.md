@@ -1,8 +1,13 @@
 # Deploy Squintly to Railway
 
+> **Live deployment (2026-05-04)**: https://squintly-production.up.railway.app
+> on Railway Hobby plan, ~$7-9/month with 5GB volume. Currently configured
+> with `SQUINTLY_COEFFICIENT_HTTP=https://coefficient.example.com` (placeholder).
+> Set the real coefficient URL when coefficient itself is deployed.
+
 Single Rust service + persistent volume for the SQLite DB. Modeled on
-[interleaved's deployment flow](../interleaved/DEPLOY.md). Coefficient must be
-reachable from Railway — either run it on Railway too (and use the private
+[interleaved's deployment flow](../interleaved/DEPLOY.md). Coefficient should be
+reachable from Railway for the app to serve trials — either run it on Railway too (and use the private
 network) or expose it publicly.
 
 ## Prerequisites
@@ -150,7 +155,7 @@ The volume is shared across deployments, so a roll-back doesn't lose data.
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
-| Healthcheck fails after deploy | `SQUINTLY_COEFFICIENT_HTTP` unreachable | The binary bails on startup if `refresh_manifest` fails. Set it to a reachable URL or temporarily point at a fake one. |
+| Healthcheck fails after deploy | `SQUINTLY_COEFFICIENT_HTTP` not set, OR DB volume issue | The binary boots and serves `/api/stats` even when coefficient is unreachable (logs the failure but doesn't crash, see `src/main.rs:90-105`). Most likely the env var is unset entirely — set it to any URL (a fake one is fine until coefficient is deployed): `railway variables --set "SQUINTLY_COEFFICIENT_HTTP=https://coefficient.example.com"`. |
 | 500 on `/api/trial/next` | Empty manifest | Coefficient has no sources — check coefficient itself. |
 | DB resets between deploys | Volume not mounted | Run `railway volume add --mount-path /data` and redeploy. |
 | Cargo build OOM | Default Railway builder memory cap | Bump build resources in the Railway dashboard or pre-build locally and push the image. |

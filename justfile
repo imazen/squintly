@@ -40,6 +40,14 @@ e2e-prep:
 e2e:
     cd web && npx playwright test
 
+# Run the e2e suite on Galaxy Z Fold 7 cover + inner viewports.
+e2e-zfold:
+    cd web && npx playwright test --project=zfold7-cover --project=zfold7-inner
+
+# Run the curator-mode e2e suite plus the live R2 fixture.
+e2e-curator-live:
+    cd web && CURATOR_R2_LIVE=1 npx playwright test e2e/curator.spec.ts e2e/curator-r2-live.spec.ts
+
 # Smoke-run the docker image (binds to localhost:3030; uses an in-memory store at /tmp/squintly-docker).
 docker-run:
     mkdir -p /tmp/squintly-docker

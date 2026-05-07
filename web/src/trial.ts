@@ -48,10 +48,14 @@ export function startTrials(root: HTMLElement, sessionId: string): TrialControll
     };
 
     const isPair = trial.kind === 'pair';
+    const corpus = trial.source_corpus ?? 'unknown';
+    const licId = trial.source_license_id;
+    const licLabel = trial.source_license_label;
     root.innerHTML = `
       <div class="trial" data-trial-id="${trial.trial_id}">
         <div class="progress">
           <span>Trial ${trialCount + 1}</span>
+          <span class="trial-license" data-corpus="${escapeAttr(corpus)}" data-license-id="${escapeAttr(licId)}" title="${escapeAttr(licLabel)}">${escapeHtml(corpus)} · ${escapeHtml(licLabel)}</span>
           <button class="menu-btn" id="menu">menu</button>
         </div>
         <div class="viewport" id="viewport">
@@ -256,4 +260,12 @@ export function startTrials(root: HTMLElement, sessionId: string): TrialControll
       renderDone();
     },
   };
+}
+
+function escapeHtml(s: string): string {
+  return s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
+}
+
+function escapeAttr(s: string): string {
+  return escapeHtml(s);
 }

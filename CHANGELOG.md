@@ -3,6 +3,42 @@
 ## [Unreleased]
 
 ### Added
+- **Curator mode** (`docs/CORPUS_CURATOR_SPEC.md`). New `/api/curator/*` HTTP
+  surface for corpus development: `stream/next`, `decision`, `threshold`,
+  `progress`, `manifest`, `licenses`, `export.tsv`. Migration
+  `0007_curator.sql` adds `curator_candidates`, `curator_decisions`,
+  `curator_size_variants`, `curator_thresholds`. Frontend ships three screens
+  (Stream / Curate / Threshold) reachable from the welcome tab bar; the
+  threshold slider pre-encodes at q ∈ {30, 50, 70, 85, 95} and JIT-encodes
+  intermediate values via `OffscreenCanvas.convertToBlob` (encoder identity
+  recorded as `encoder_label = 'browser-canvas-jpeg'` until WASM jpegli
+  ships). `src/curator.rs` parses both corpus-builder TSV
+  (`curated_manifest_*.tsv`) and the unified R2 JSONL manifest emitted by
+  `scripts/upload_all.py`. Auto-downscale rule masks size chips against
+  detected source-q so a JPEG already at q=70 cannot oversample its baked-in
+  quantization. Three integration tests + five Playwright specs covering
+  stream → curate → threshold → export round-trip. An opt-in spec
+  (`CURATOR_R2_LIVE=1`) hits the live R2 manifest at
+  `pub-7c5c57fd3e0842f0b147946928891d40.r2.dev` to validate the production
+  data path.
+- **License surfacing**. New `src/licensing.rs` registry with seven
+  per-corpus policies (Unsplash, Wikimedia, CommonCrawl, Flickr, GitHub
+  issues, generated/built, mixed-research fallback). Welcome screen has a
+  collapsible "Image sources & licensing" credits panel listing every
+  policy's terms URL, redistribution posture, and commercial-training
+  posture. Every curator stream/curate screen shows a license badge with
+  a deep-link to the canonical terms page. Trial UI displays the corpus
+  name + license label inline at the top of every rated trial. Curator
+  `export.tsv` carries five license columns (id, label, terms_url,
+  attribution_url, redistribute, commercial_training). `TrialPayload`
+  carries `source_corpus`, `source_license_id`, `source_license_label`.
+- **Galaxy Z Fold 7 layouts**. New `zfold7-cover` (304×772 CSS px portrait,
+  DPR 3) and `zfold7-inner` (749×832 CSS px portrait, DPR 2.625) Playwright
+  device descriptors. Curator CSS picks up a side-by-side preview layout
+  via `@media (min-width: 720px) and (orientation: portrait)` for the inner
+  display, and stays single-column on the cover. The threshold split panel
+  switches to top/bottom orientation at `min-width: 1600px` for tablet-class
+  unfolded screens. Two regression tests assert the layouts.
 - `docs/methodology.md` — codifies every methodology choice (stimulus
   presentation, sampling, outlier detection, score construction, scale
   alignment, CIs, sample sizes) with the rationale behind each parameter,

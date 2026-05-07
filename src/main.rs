@@ -13,6 +13,7 @@ use tower_http::trace::TraceLayer;
 use tracing_subscriber::EnvFilter;
 
 use squintly::coefficient::{CoefficientSource, FsCoefficient, HttpCoefficient};
+use squintly::curator;
 use squintly::handlers::{self, AppState};
 
 #[derive(RustEmbed)]
@@ -153,7 +154,15 @@ async fn main() -> Result<()> {
         .route("/export/responses.tsv", get(handlers::export_responses))
         .route("/export/unified.tsv", get(handlers::export_unified))
         .route("/stats", get(handlers::stats))
-        .route("/manifest/refresh", post(handlers::refresh_manifest));
+        .route("/manifest/refresh", post(handlers::refresh_manifest))
+        // Curator mode (corpus development).
+        .route("/curator/stream/next", get(curator::stream_next))
+        .route("/curator/decision", post(curator::decision))
+        .route("/curator/threshold", post(curator::threshold))
+        .route("/curator/progress", get(curator::progress))
+        .route("/curator/manifest", post(curator::load_manifest))
+        .route("/curator/licenses", get(curator::license_registry))
+        .route("/curator/export.tsv", get(curator::export_tsv));
 
     let app = Router::new()
         .nest("/api", api)

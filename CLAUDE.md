@@ -31,8 +31,40 @@ web component from `~/work/efficient-ui/`. No framework.
 - `src/sampling.rs` — trial pair selection
 - `src/bt.rs` — Bradley–Terry-with-ties fit (Davidson 1970)
 - `src/export.rs` — TSV streaming in zenanalyze schema
+- `src/curator.rs` — corpus curator backend (`/api/curator/*`)
+- `src/licensing.rs` — per-corpus license registry surfaced in UI + exports
+- `web/src/curator.ts` — curator Stream/Curate/Threshold screens
+- `web/src/curator-encoder.ts` — browser-canvas JPEG encoder for the slider
 - `web/src/conditions.ts` — browser-side viewing-condition capture
 - `web/src/calibration.ts` — credit-card mm-per-px calibration
+
+## Curator data flow
+
+1. Operator POSTs a candidate manifest to `/api/curator/manifest`. Either
+   corpus-builder TSV (e.g. `/mnt/v/output/corpus-builder/curated_manifest_2026-04-16.tsv`)
+   or the unified R2 JSONL at
+   `https://pub-7c5c57fd3e0842f0b147946928891d40.r2.dev/manifest.jsonl`.
+   Inserted into `curator_candidates` with per-corpus license attribution
+   from `src/licensing.rs`.
+2. The browser fetches `/api/curator/stream/next?curator_id=<uuid>` to get
+   the next undecided candidate plus a default-on suggestion (groups + size
+   chips) computed from the source's detected q (when available).
+3. Curator swipes left/right or taps Skip/Take. `Take` advances to the
+   Curate screen for group selection + size-chip toggling. `Find threshold`
+   opens the slider with both 1:1-device-px and 1:1-CSS-px split panels.
+4. `POST /api/curator/threshold` saves `q_imperceptible` along with the
+   measurement DPR, distance, and encoder identity. `GET
+   /api/curator/export.tsv?curator_id=…` joins everything into one TSV
+   carrying the license columns downstream consumers need.
+
+## License posture
+
+Squintly never claims to know per-image licenses unless the manifest
+provides them. The `licensing` registry maps **corpus** to policy. The
+welcome screen shows a credits panel; the curator screens show inline
+badges; trial cards show a corpus + license label. When the live R2
+manifest grows per-image `license_url` fields, the existing
+`curator_candidates.license_url` column carries them through to exports.
 
 ## Running locally
 

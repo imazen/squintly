@@ -85,6 +85,16 @@ p, label { line-height: 1.4; color: var(--fg); }
   padding: 4px 12px;
   font-size: 0.85rem;
 }
+.trial-license {
+  flex: 1;
+  text-align: center;
+  font-size: 0.7rem;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  padding: 0 8px;
+}
 .viewport {
   position: relative;
   background: #000;
@@ -181,4 +191,289 @@ p, label { line-height: 1.4; color: var(--fg); }
 input[type="range"] {
   width: 100%;
   margin: 12px 0;
+}
+
+/* ---------- Tab bar (welcome screen) ---------- */
+.squintly-tabs {
+  display: flex;
+  gap: 6px;
+  width: 100%;
+  max-width: 480px;
+  margin: 0 auto 8px;
+}
+.squintly-tabs button {
+  flex: 1;
+  padding: 8px 12px;
+  font-size: 0.85rem;
+  border-radius: 999px;
+  background: transparent;
+}
+.squintly-tabs button.on {
+  background: var(--accent);
+  color: #00191f;
+  border-color: var(--accent);
+  font-weight: 600;
+}
+
+/* ---------- License credits panel ---------- */
+.credits {
+  width: 100%;
+  max-width: 600px;
+  margin: 16px auto 0;
+  text-align: left;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 8px 12px;
+}
+.credits summary {
+  cursor: pointer;
+  padding: 6px 4px;
+  font-size: 0.9rem;
+}
+.credits-body {
+  padding: 8px 0 0;
+  font-size: 0.85rem;
+}
+.credits-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.8rem;
+}
+.credits-table th, .credits-table td {
+  text-align: left;
+  vertical-align: top;
+  padding: 6px 4px;
+  border-bottom: 1px solid var(--border);
+}
+.credits-table a { color: var(--accent); }
+
+/* ---------- Curator UI ---------- */
+.curator-screen {
+  display: grid;
+  grid-template-rows: auto auto auto auto auto auto auto auto;
+  gap: 8px;
+  min-height: 100dvh;
+  padding: max(8px, env(safe-area-inset-top)) 8px max(8px, env(safe-area-inset-bottom));
+}
+.curator-stream { grid-template-rows: auto 1fr auto auto; }
+.curator-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 0.95rem;
+}
+.curator-title { font-weight: 600; }
+.curator-exit {
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  font-size: 1.1rem;
+  line-height: 1;
+}
+.curator-viewport {
+  background: #000;
+  border-radius: 12px;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 50vh;
+}
+.curator-viewport .curator-img {
+  display: block;
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+}
+.curator-meta {
+  font-size: 0.8rem;
+}
+.curator-meta-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 8px 10px;
+}
+.curator-corpus {
+  font-weight: 600;
+  color: var(--accent);
+}
+.curator-fmt { color: var(--muted); }
+.curator-license-badge {
+  background: rgba(123,229,138,0.15);
+  border: 1px solid rgba(123,229,138,0.5);
+  color: var(--good);
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  text-decoration: none;
+}
+.curator-license-badge:hover { text-decoration: underline; }
+.curator-attribution-link {
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+.curator-progress { margin-left: auto; color: var(--muted); }
+.curator-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+.curator-actions button {
+  padding: 18px 12px;
+  font-size: 1rem;
+}
+.curator-skip { border-color: var(--danger); color: var(--danger); }
+.curator-take { /* primary */ }
+.curator-section {
+  font-size: 0.95rem;
+  margin: 8px 0 4px;
+}
+.curator-groups {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+}
+.curator-group-btn {
+  padding: 14px 8px;
+  font-size: 0.85rem;
+  border-radius: 10px;
+  text-align: center;
+}
+.curator-group-btn.on {
+  background: var(--accent);
+  color: #00191f;
+  border-color: var(--accent);
+  font-weight: 600;
+}
+.curator-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.curator-chip {
+  padding: 8px 12px;
+  font-size: 0.85rem;
+  border-radius: 999px;
+}
+.curator-chip[disabled] {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+.curator-chip.on {
+  background: var(--accent);
+  color: #00191f;
+  border-color: var(--accent);
+  font-weight: 600;
+}
+.curator-action-row {
+  display: grid;
+  grid-template-columns: auto 1fr 1fr;
+  gap: 8px;
+}
+.curator-preview {
+  background: #000;
+  border-radius: 12px;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 35vh;
+  max-height: 50vh;
+}
+.curator-preview img {
+  max-width: 100%;
+  max-height: 100%;
+  display: block;
+  object-fit: contain;
+}
+.curator-empty {
+  text-align: center;
+  padding: 32px;
+  color: var(--muted);
+}
+
+/* Threshold split panels */
+.curator-threshold-info {
+  font-size: 0.8rem;
+  color: var(--muted);
+  text-align: center;
+}
+.curator-split {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+  background: #000;
+  border-radius: 12px;
+  padding: 4px;
+  min-height: 40vh;
+}
+.curator-split canvas {
+  width: 100%;
+  height: 100%;
+  background: #000;
+  display: block;
+}
+.curator-slider {
+  display: grid;
+  grid-template-rows: auto auto;
+  gap: 4px;
+}
+.curator-slider input[type="range"] { margin: 0; }
+.curator-q-readout {
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
+/* ---------- Z Fold 7 layouts ----------
+   Cover display (folded): ~904 CSS px wide, 2316 tall. Same layout as a phone.
+   Inner display (unfolded): ~1968 CSS px wide × 2184 tall. Use a side-by-side
+   layout for curate (image left, controls right) since width is generous.
+   The breakpoint at 720px catches mid-size foldables in portrait too. */
+@media (min-width: 720px) and (orientation: portrait) {
+  .curator-curate {
+    grid-template-columns: 1fr 1fr;
+    grid-template-rows: auto 1fr auto auto auto;
+    gap: 12px;
+  }
+  .curator-curate .curator-header,
+  .curator-curate .curator-action-row { grid-column: 1 / -1; }
+  .curator-curate .curator-preview { grid-row: 2 / 5; max-height: 70vh; }
+  .curator-curate .curator-meta,
+  .curator-curate .curator-section,
+  .curator-curate .curator-groups,
+  .curator-curate .curator-chips { grid-column: 2 / 3; }
+  .curator-groups { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .credits-table { font-size: 0.9rem; }
+}
+
+@media (min-width: 1200px) {
+  .curator-stream {
+    max-width: 960px;
+    margin: 0 auto;
+  }
+  .curator-actions {
+    max-width: 640px;
+    margin: 0 auto;
+  }
+  .curator-split { min-height: 60vh; }
+}
+
+/* Inner Z Fold 7 (1968 CSS px) — extra tall, use vertical split for threshold */
+@media (min-width: 1600px) and (orientation: portrait) {
+  .curator-split {
+    grid-template-columns: 1fr;
+    grid-template-rows: 1fr 1fr;
+    min-height: 70vh;
+  }
 }

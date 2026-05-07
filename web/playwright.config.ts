@@ -29,6 +29,32 @@ export default defineConfig({
       name: 'chromium-desktop',
       use: { ...devices['Desktop Chrome'] },
     },
+    // Galaxy Z Fold 7 cover display — folded portrait (tall narrow phone).
+    // Physical: 904×2316 device px, DPR ~3 → CSS-px viewport ≈ 304×772.
+    // The curator UI must work one-handed-thumb here.
+    {
+      name: 'zfold7-cover',
+      use: {
+        ...devices['Pixel 7'],
+        viewport: { width: 304, height: 772 },
+        deviceScaleFactor: 3,
+        isMobile: true,
+        hasTouch: true,
+      },
+    },
+    // Galaxy Z Fold 7 inner display — unfolded portrait (small tablet).
+    // Physical: 2184×1968 device px, DPR ~2.625 → CSS-px viewport ≈ 749×832.
+    // Square-ish: curator layout uses the >720px side-by-side breakpoint here.
+    {
+      name: 'zfold7-inner',
+      use: {
+        ...devices['Pixel 7'],
+        viewport: { width: 749, height: 832 },
+        deviceScaleFactor: 2.625,
+        isMobile: true,
+        hasTouch: true,
+      },
+    },
     // Optional iOS Safari project — only useful if WebKit is installed locally
     // (`npx playwright install webkit`). Tests do skip cleanly when WebKit is
     // missing because this project will simply fail to launch and we report it

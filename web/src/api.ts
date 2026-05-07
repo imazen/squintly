@@ -57,6 +57,9 @@ export interface TrialPayload {
   source_url: string;
   source_w: number;
   source_h: number;
+  source_corpus: string | null;
+  source_license_id: string;
+  source_license_label: string;
   a: TrialEncoding;
   b: TrialEncoding | null;
   staircase_target: string | null;

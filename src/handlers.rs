@@ -305,6 +305,15 @@ pub struct TrialPayload {
     pub source_url: String,
     pub source_w: u32,
     pub source_h: u32,
+    /// Corpus name from the manifest (`SourceMeta::corpus`). Used by the
+    /// frontend to render a license badge on the trial.
+    pub source_corpus: Option<String>,
+    /// License-policy id for the source's corpus (e.g. "unsplash",
+    /// "mixed-research"). The frontend looks up the full policy via
+    /// `/api/curator/licenses` once and caches it.
+    pub source_license_id: String,
+    /// Human-readable license label for inline display.
+    pub source_license_label: &'static str,
     pub a: TrialEncoding,
     pub b: Option<TrialEncoding>,
     pub staircase_target: Option<String>,
@@ -379,6 +388,7 @@ pub async fn next_trial(
             .execute(&state.pool)
             .await?;
 
+            let policy = crate::licensing::lookup(source.corpus.as_deref().unwrap_or(""));
             TrialPayload {
                 trial_id,
                 kind: "single",
@@ -386,6 +396,9 @@ pub async fn next_trial(
                 source_url: format!("/api/proxy/source/{}", source.hash),
                 source_w: source.width,
                 source_h: source.height,
+                source_corpus: source.corpus.clone(),
+                source_license_id: policy.id.to_string(),
+                source_license_label: policy.label,
                 a: TrialEncoding {
                     url: format!("/api/proxy/encoding/{}", encoding.id),
                     encoding_id: encoding.id.clone(),
@@ -431,6 +444,7 @@ pub async fn next_trial(
             .execute(&state.pool)
             .await?;
 
+            let policy = crate::licensing::lookup(source.corpus.as_deref().unwrap_or(""));
             TrialPayload {
                 trial_id,
                 kind: "pair",
@@ -438,6 +452,9 @@ pub async fn next_trial(
                 source_url: format!("/api/proxy/source/{}", source.hash),
                 source_w: source.width,
                 source_h: source.height,
+                source_corpus: source.corpus.clone(),
+                source_license_id: policy.id.to_string(),
+                source_license_label: policy.label,
                 a: TrialEncoding {
                     url: format!("/api/proxy/encoding/{}", a.id),
                     encoding_id: a.id.clone(),

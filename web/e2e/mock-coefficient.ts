@@ -81,6 +81,26 @@ function blobForCodec(codec: string): { buf: Buffer; mime: string } {
   return { buf: ONE_BY_ONE.jpeg, mime: 'image/jpeg' };
 }
 
+// Curator-mode test fixtures. Two-byte 1×1 PNGs used as stand-in candidate
+// images, content-addressed under R2-shaped paths so a JSONL manifest pointed
+// at this mock with `blob_url_base = http://127.0.0.1:<port>` resolves to
+// real bytes. The fixture sha256 values are the canonical R2 layout
+// (`/blobs/xx/yy/{sha}`) and match `web/e2e/curator-fixture.jsonl`.
+const CURATOR_FIXTURE_BLOBS: Record<string, { buf: Buffer; mime: string }> = {
+  // sha256 of "unsplash sample" (placeholder — manifest matches by string).
+  'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa': { buf: ONE_BY_ONE.png, mime: 'image/png' },
+  'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb': { buf: ONE_BY_ONE.jpeg, mime: 'image/jpeg' },
+  'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc': { buf: ONE_BY_ONE.webp, mime: 'image/webp' },
+};
+
+function blobByPathSegments(p: string): { buf: Buffer; mime: string } | null {
+  // Match either /blobs/xx/yy/{sha} (R2 layout) or /blobs/{sha} flat.
+  const m = p.match(/^\/blobs\/(?:[0-9a-f]{2}\/[0-9a-f]{2}\/)?([0-9a-f]{32,})$/i);
+  if (!m) return null;
+  const sha = m[1].toLowerCase();
+  return CURATOR_FIXTURE_BLOBS[sha] ?? { buf: ONE_BY_ONE.png, mime: 'image/png' };
+}
+
 const server = createServer((req: IncomingMessage, res: ServerResponse) => {
   const url = new URL(req.url ?? '/', `http://127.0.0.1:${PORT}`);
   if (url.pathname === '/api/manifest') {
@@ -98,6 +118,12 @@ const server = createServer((req: IncomingMessage, res: ServerResponse) => {
     const codec = id.split('__')[1] ?? 'mozjpeg';
     const { buf, mime } = blobForCodec(codec);
     send(res, 200, buf, mime);
+    return;
+  }
+  // Content-addressed blob URLs for the curator manifest.
+  const blob = blobByPathSegments(url.pathname);
+  if (blob) {
+    send(res, 200, blob.buf, blob.mime);
     return;
   }
   if (url.pathname === '/health') {

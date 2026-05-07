@@ -40,6 +40,7 @@ hex = "0.4"
 url = "2"
 csv = "1"
 rusty-s3 = "0.9.1"
+imagesize = "0.14.0"
 
 [dev-dependencies]
 tempfile = "3"

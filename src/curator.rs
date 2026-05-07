@@ -1141,6 +1141,139 @@ pub async fn load_r2_public(
     }))
 }
 
+/// `POST /api/curator/backfill-dims` — admin-gated. Walks `curator_candidates`
+/// rows with NULL width or height, fetches a Range-bounded prefix of each
+/// `blob_url`, parses the image header via `imagesize`, and updates the row.
+/// Designed for one-shot recovery: the R2 JSONL doesn't always include
+/// dimensions (zcimg enrichment was opt-in upstream), so wide-gamut/non-srgb
+/// entries land with `width=null` and the bpp gate degrades to Unknown.
+///
+/// Concurrency is bounded (default 16 in-flight). `limit` caps the row count
+/// per call so we can chunk a 1000-row backfill across several invocations.
+#[derive(Debug, Deserialize)]
+pub struct BackfillDimsReq {
+    pub admin_token: String,
+    pub limit: Option<i64>,
+    /// Bytes to range-fetch per blob (default 262_144 = 256 KB; jpeg/png/webp/
+    /// avif headers fit comfortably in the first few KB but some progressive
+    /// JPEGs need more). Hard ceiling 4 MB.
+    pub fetch_bytes: Option<usize>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct BackfillDimsResp {
+    pub considered: usize,
+    pub fetched_ok: usize,
+    pub parsed_ok: usize,
+    pub updated: usize,
+    pub failures: usize,
+}
+
+pub async fn backfill_dims(
+    State(state): State<SharedState>,
+    Json(req): Json<BackfillDimsReq>,
+) -> Result<Json<BackfillDimsResp>, AppError> {
+    require_curator_admin(&Some(req.admin_token.clone()))?;
+    let limit = req.limit.unwrap_or(500).clamp(1, 5000);
+    let fetch_bytes = req
+        .fetch_bytes
+        .unwrap_or(262_144)
+        .clamp(1024, 4 * 1024 * 1024);
+    let rows = sqlx::query("SELECT sha256, blob_url FROM curator_candidates WHERE width IS NULL OR height IS NULL OR width = 0 OR height = 0 ORDER BY order_hint LIMIT ?")
+        .bind(limit)
+        .fetch_all(&state.pool)
+        .await?;
+    let candidates: Vec<(String, String)> = rows
+        .into_iter()
+        .map(|r| (r.get::<String, _>(0), r.get::<String, _>(1)))
+        .collect();
+    let considered = candidates.len();
+    if considered == 0 {
+        return Ok(Json(BackfillDimsResp {
+            considered: 0,
+            fetched_ok: 0,
+            parsed_ok: 0,
+            updated: 0,
+            failures: 0,
+        }));
+    }
+    let http = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(20))
+        .build()
+        .map_err(|e| AppError::Anyhow(anyhow::anyhow!("http client: {e}")))?;
+
+    let semaphore = std::sync::Arc::new(tokio::sync::Semaphore::new(16));
+    let mut tasks = tokio::task::JoinSet::new();
+    for (sha, url) in candidates {
+        let sem = semaphore.clone();
+        let http = http.clone();
+        tasks.spawn(async move {
+            let _permit = sem.acquire_owned().await.expect("semaphore");
+            let resp = http
+                .get(&url)
+                .header("range", format!("bytes=0-{}", fetch_bytes - 1))
+                .send()
+                .await;
+            let resp = match resp {
+                Ok(r) if r.status().is_success() || r.status().as_u16() == 206 => r,
+                Ok(r) => return (sha, None, format!("HTTP {}", r.status())),
+                Err(e) => return (sha, None, format!("{e}")),
+            };
+            let bytes = match resp.bytes().await {
+                Ok(b) => b,
+                Err(e) => return (sha, None, format!("read body: {e}")),
+            };
+            match imagesize::blob_size(&bytes) {
+                Ok(d) => (sha, Some((d.width as i64, d.height as i64)), String::new()),
+                Err(e) => (sha, None, format!("parse: {e}")),
+            }
+        });
+    }
+    let mut fetched_ok = 0usize;
+    let mut parsed_ok = 0usize;
+    let mut updated = 0usize;
+    let mut failures = 0usize;
+    while let Some(joined) = tasks.join_next().await {
+        let (sha, dims, err) = match joined {
+            Ok(t) => t,
+            Err(e) => {
+                tracing::warn!(error = %e, "backfill task panicked");
+                failures += 1;
+                continue;
+            }
+        };
+        if let Some((w, h)) = dims {
+            fetched_ok += 1;
+            parsed_ok += 1;
+            let res =
+                sqlx::query("UPDATE curator_candidates SET width = ?, height = ? WHERE sha256 = ?")
+                    .bind(w)
+                    .bind(h)
+                    .bind(&sha)
+                    .execute(&state.pool)
+                    .await;
+            match res {
+                Ok(r) if r.rows_affected() > 0 => updated += 1,
+                Ok(_) => {}
+                Err(e) => {
+                    failures += 1;
+                    tracing::warn!(sha, error = %e, "update failed");
+                }
+            }
+        } else {
+            failures += 1;
+            tracing::debug!(sha, err, "backfill could not parse dims");
+        }
+    }
+    Ok(Json(BackfillDimsResp {
+        considered,
+        fetched_ok,
+        parsed_ok,
+        updated,
+        failures,
+    }))
+}
+
 /// Curator-side admin gate. Reuses `SQUINTLY_SUGGESTION_ADMIN_TOKEN` so
 /// operators only need to set one secret. When unset, returns 503.
 fn require_curator_admin(provided: &Option<String>) -> Result<(), AppError> {

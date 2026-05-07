@@ -32,7 +32,11 @@ async fn boot_app() -> Result<(SocketAddr, sqlx::SqlitePool, std::path::PathBuf)
     // mutations here don't conflict with other tests.
     unsafe {
         std::env::set_var("SQUINTLY_SUGGESTION_ADMIN_TOKEN", "test-admin-token");
+        // Make sure no email backend is configured so the notify path takes
+        // the no-op branch (assertions on `notification_attempted == false`).
         std::env::remove_var("RESEND_API_KEY");
+        std::env::remove_var("POSTMARK_SERVER_TOKEN");
+        std::env::remove_var("POSTMARK_FROM_EMAIL");
     }
     let pool = SqlitePoolOptions::new()
         .max_connections(2)

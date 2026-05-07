@@ -10,6 +10,7 @@ import {
   postDecision,
   postThreshold,
   streamNext,
+  type BppGate,
   type Candidate,
   type DecisionGroups,
   type LicensePolicy,
@@ -24,6 +25,7 @@ export interface CuratorState {
   candidate: Candidate | null;
   license: LicensePolicy | null;
   suggestion: Suggestion | null;
+  bppGate: BppGate | null;
   decision_id: number | null;
   selectedGroups: DecisionGroups;
   selectedSizes: Set<number>;
@@ -36,6 +38,7 @@ export function startCurator(root: HTMLElement, onExit: () => void): void {
     candidate: null,
     license: null,
     suggestion: null,
+    bppGate: null,
     decision_id: null,
     selectedGroups: {},
     selectedSizes: new Set(),
@@ -71,13 +74,15 @@ export function startCurator(root: HTMLElement, onExit: () => void): void {
       state.candidate = resp.candidate;
       state.license = resp.license;
       state.suggestion = resp.suggestion;
+      state.bppGate = resp.bpp_gate;
       state.selectedGroups = {};
       state.selectedSizes = new Set(resp.suggestion?.sizes ?? []);
       for (const g of resp.suggestion?.groups ?? []) {
         (state.selectedGroups as Record<string, boolean>)[g] = true;
       }
       renderStreamImage(viewport, resp.candidate);
-      meta.innerHTML = renderCandidateMeta(resp.candidate, resp.license, resp.remaining, resp.total);
+      meta.innerHTML = renderCandidateMeta(resp.candidate, resp.license, resp.remaining, resp.total)
+        + renderBppGate(resp.bpp_gate);
       void prefetchNext();
       installSwipe(viewport, {
         onRight: () => decide('take'),
@@ -185,14 +190,18 @@ export function startCurator(root: HTMLElement, onExit: () => void): void {
     if (!state.candidate || !state.license) return;
     const cand = state.candidate;
     const sug = state.suggestion;
-    const sizeChips = (sug?.sizes ?? [64, 128, 256, 384, 512, 768, 1024, 1536]).slice();
-    // Always show all eight, mark unsafe ones disabled.
+    // Always show all eight chips. A chip is disabled iff the suggestion's
+    // sizes array exists, is non-empty, AND doesn't include this dim — that
+    // means the backend computed an upper bound and this chip would upscale.
+    // When dims are unknown the suggestion returns all 8, and even if it's
+    // empty (legacy responses) we treat that as "no info, let curator pick."
     const allChips = [64, 128, 256, 384, 512, 768, 1024, 1536];
+    const safeSet = sug && sug.sizes.length > 0 ? new Set(sug.sizes) : new Set(allChips);
     root.innerHTML = `
       <div class="curator-screen curator-curate" data-screen="curate">
         ${renderHeader('Curator — review')}
         <div class="curator-preview"><img src="${escapeAttr(cand.blob_url)}" alt="" decoding="async"></div>
-        <div class="curator-meta">${renderCandidateMeta(cand, state.license, undefined, undefined)}</div>
+        <div class="curator-meta">${renderCandidateMeta(cand, state.license, undefined, undefined)}${renderBppGate(state.bppGate)}</div>
         <h2 class="curator-section">Groups</h2>
         <div class="curator-groups" id="groups" role="grid">
           ${groupCell('core_zensim', 'core × zensim')}
@@ -202,11 +211,12 @@ export function startCurator(root: HTMLElement, onExit: () => void): void {
           ${groupCell('full_zensim', 'full × zensim')}
           ${groupCell('full_encoding', 'full × encoding')}
         </div>
-        <h2 class="curator-section">Size variants</h2>
+        <h2 class="curator-section">Downsamples to allow</h2>
+        <p class="muted curator-chip-help">Tap to toggle each target max-dim. Greyed-out chips would upscale the source.</p>
         <div class="curator-chips" id="sizes" role="group">
           ${allChips
             .map((d) => {
-              const enabled = sizeChips.includes(d);
+              const enabled = safeSet.has(d);
               const checked = state.selectedSizes.has(d);
               return `<button class="curator-chip ${checked ? 'on' : ''}" data-size="${d}" ${enabled ? '' : 'disabled aria-disabled="true"'}>${d}</button>`;
             })
@@ -514,6 +524,24 @@ function renderCandidateMeta(
 
 function groupCell(g: keyof DecisionGroups, label: string): string {
   return `<button class="curator-group-btn" data-group="${g}" role="checkbox" aria-checked="false">${escapeHtml(label)}</button>`;
+}
+
+function renderBppGate(gate: BppGate | null): string {
+  if (!gate) return '';
+  const cls =
+    gate.verdict === 'Low' ? 'bpp-low'
+    : gate.verdict === 'High' ? 'bpp-high'
+    : gate.verdict === 'Ok' ? 'bpp-ok'
+    : 'bpp-unknown';
+  const icon =
+    gate.verdict === 'Low' ? '⚠'
+    : gate.verdict === 'High' ? '✓'
+    : gate.verdict === 'Ok' ? '✓'
+    : 'ℹ';
+  return `<div class="curator-bpp-gate ${cls}" data-verdict="${gate.verdict}" role="status" aria-live="polite">
+    <span class="curator-bpp-icon">${icon}</span>
+    <span class="curator-bpp-msg">${escapeHtml(gate.message)}</span>
+  </div>`;
 }
 
 function paintSplit(left: HTMLCanvasElement, right: HTMLCanvasElement, img: HTMLImageElement): void {

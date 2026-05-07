@@ -34,10 +34,19 @@ export interface Suggestion {
   recommended_max_dim: number;
 }
 
+export type BppVerdict = 'Unknown' | 'Ok' | 'Low' | 'High';
+
+export interface BppGate {
+  bpp: number | null;
+  verdict: BppVerdict;
+  message: string;
+}
+
 export interface StreamResp {
   candidate: Candidate | null;
   license: LicensePolicy | null;
   suggestion: Suggestion | null;
+  bpp_gate: BppGate | null;
   remaining: number;
   total: number;
 }

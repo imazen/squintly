@@ -481,6 +481,41 @@ input[type="range"] {
 .curator-flag-card .curator-flag-list button {
   text-align: left;
 }
+.curator-bpp-gate {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 6px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  font-size: 0.8rem;
+  border: 1px solid var(--border);
+  background: var(--card);
+}
+.curator-bpp-gate .curator-bpp-icon {
+  font-weight: 700;
+  flex-shrink: 0;
+}
+.curator-bpp-gate.bpp-ok {
+  border-color: rgba(123, 229, 138, 0.5);
+  color: var(--good);
+}
+.curator-bpp-gate.bpp-high {
+  border-color: rgba(74, 209, 255, 0.5);
+  color: var(--accent);
+}
+.curator-bpp-gate.bpp-low {
+  border-color: var(--danger);
+  background: rgba(255, 107, 136, 0.08);
+  color: var(--danger);
+}
+.curator-bpp-gate.bpp-unknown {
+  color: var(--muted);
+}
+.curator-chip-help {
+  font-size: 0.75rem;
+  margin: 0 0 6px;
+}
 
 /* ---------- Suggest form ---------- */
 .suggest-screen {

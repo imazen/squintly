@@ -342,14 +342,19 @@ pub struct Suggestion {
 const DEFAULT_SIZE_CHIPS: &[u32] = &[64, 128, 256, 384, 512, 768, 1024, 1536];
 
 pub fn suggest(c: &Candidate, source_q_detected: Option<f32>) -> Suggestion {
+    let dim_known = c.width.is_some() && c.height.is_some();
     let max_native = c.width.unwrap_or(0).max(c.height.unwrap_or(0));
-    let safe_max = match source_q_detected {
-        Some(q) if q >= 95.0 => max_native,
-        Some(q) if q >= 85.0 => max_native / 2,
-        Some(q) if q >= 75.0 => max_native / 4,
-        Some(q) if q >= 60.0 => max_native / 4,
-        Some(_) => max_native / 8,
-        None => max_native, // unknown → assume safe
+    let safe_max = if dim_known {
+        match source_q_detected {
+            Some(q) if q >= 95.0 => max_native,
+            Some(q) if q >= 85.0 => max_native / 2,
+            Some(q) if q >= 75.0 => max_native / 4,
+            Some(q) if q >= 60.0 => max_native / 4,
+            Some(_) => max_native / 8,
+            None => max_native, // unknown q with known dims → assume safe
+        }
+    } else {
+        u32::MAX
     };
     let groups = match (source_q_detected, c.format.as_deref()) {
         (Some(q), _) if q >= 95.0 => vec!["core_zensim", "core_encoding"],
@@ -358,15 +363,104 @@ pub fn suggest(c: &Candidate, source_q_detected: Option<f32>) -> Suggestion {
         (Some(q), _) if q >= 70.0 => vec!["full_zensim", "full_encoding"],
         _ => vec![],
     };
-    let sizes: Vec<u32> = DEFAULT_SIZE_CHIPS
-        .iter()
-        .copied()
-        .filter(|d| *d <= safe_max && *d <= max_native.max(1))
-        .collect();
+    // When dims aren't known, surface every chip so the curator can decide
+    // — the spec is explicit that greying out chips means "would upscale",
+    // not "no info." Returning [] makes the UI useless.
+    let sizes: Vec<u32> = if dim_known {
+        DEFAULT_SIZE_CHIPS
+            .iter()
+            .copied()
+            .filter(|d| *d <= safe_max && *d <= max_native.max(1))
+            .collect()
+    } else {
+        DEFAULT_SIZE_CHIPS.to_vec()
+    };
     Suggestion {
         groups,
         sizes,
-        recommended_max_dim: safe_max,
+        recommended_max_dim: if dim_known { safe_max } else { 0 },
+    }
+}
+
+// ---------- bpp gate ----------
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub enum BppVerdict {
+    /// Dimensions or size unknown — gate disabled.
+    Unknown,
+    /// Healthy bpp for the format.
+    Ok,
+    /// Suspiciously low bpp for the format — heavily compressed; flag for
+    /// reconsideration (re-encoding will compound the artifacts).
+    Low,
+    /// Surprisingly high bpp for a lossy format — likely near-lossless or
+    /// not actually compressed. Useful but not blocking.
+    High,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct BppGate {
+    pub bpp: Option<f32>,
+    pub verdict: BppVerdict,
+    pub message: String,
+}
+
+/// Evaluate a candidate's bytes-per-pixel against per-format healthy ranges.
+///
+/// Lossy: jpeg/webp/avif/jxl. Healthy 0.3–4.0 bpp.
+/// Lossless: png/gif. Healthy ≥ 1.0 bpp (well-encoded PNGs are 4-32).
+/// Unknown format → use lossy ranges with wider bands.
+pub fn bpp_gate(c: &Candidate) -> BppGate {
+    let (w, h, size) = match (c.width, c.height, c.size_bytes) {
+        (Some(w), Some(h), Some(s)) if w > 0 && h > 0 && s > 0 => (w as u64, h as u64, s),
+        _ => {
+            return BppGate {
+                bpp: None,
+                verdict: BppVerdict::Unknown,
+                message: "bpp gate disabled — image dimensions or size unknown".to_string(),
+            };
+        }
+    };
+    let pixels = (w * h) as f64;
+    let bits = (size as f64) * 8.0;
+    let bpp = (bits / pixels) as f32;
+    let lossless = matches!(c.format.as_deref(), Some("png" | "gif" | "apng"));
+    let (verdict, message) = if lossless {
+        if bpp < 1.0 {
+            (
+                BppVerdict::Low,
+                format!(
+                    "bpp = {bpp:.2} for {} — unusually low for a lossless format. \
+                     Possibly an over-quantized PNG/GIF; check before training.",
+                    c.format.as_deref().unwrap_or("?")
+                ),
+            )
+        } else {
+            (BppVerdict::Ok, format!("bpp = {bpp:.2} (lossless ✓)"))
+        }
+    } else if bpp < 0.3 {
+        (
+            BppVerdict::Low,
+            format!(
+                "bpp = {bpp:.2} — heavily compressed source. Re-encoding will \
+                 compound artifacts; reject or only use at small target_max_dim."
+            ),
+        )
+    } else if bpp > 4.0 {
+        (
+            BppVerdict::High,
+            format!(
+                "bpp = {bpp:.2} — near-lossless. Likely safe to use at any \
+                 target size."
+            ),
+        )
+    } else {
+        (BppVerdict::Ok, format!("bpp = {bpp:.2} ✓"))
+    };
+    BppGate {
+        bpp: Some(bpp),
+        verdict,
+        message,
     }
 }
 
@@ -385,6 +479,7 @@ pub struct StreamResp {
     pub candidate: Option<Candidate>,
     pub license: Option<&'static LicensePolicy>,
     pub suggestion: Option<Suggestion>,
+    pub bpp_gate: Option<BppGate>,
     pub remaining: i64,
     pub total: i64,
 }
@@ -425,11 +520,13 @@ pub async fn stream_next(
     if let Some(row) = row {
         let c = row_to_candidate(row);
         let suggestion = suggest(&c, q.source_q_detected);
+        let gate = bpp_gate(&c);
         let lic = c.license();
         Ok(Json(StreamResp {
             candidate: Some(c),
             license: Some(lic),
             suggestion: Some(suggestion),
+            bpp_gate: Some(gate),
             remaining,
             total,
         }))
@@ -438,6 +535,7 @@ pub async fn stream_next(
             candidate: None,
             license: None,
             suggestion: None,
+            bpp_gate: None,
             remaining: 0,
             total,
         }))
@@ -1164,5 +1262,124 @@ mod tests {
         let s = suggest(&c, Some(50.0));
         // 2400 / 8 = 300 → 64, 128, 256 fit; 384+ get filtered out.
         assert!(s.sizes.iter().all(|d| *d <= 300));
+    }
+
+    #[test]
+    fn suggest_unknown_dims_returns_all_chips() {
+        let c = Candidate {
+            sha256: "h".into(),
+            corpus: "wide-gamut".into(),
+            relative_path: None,
+            width: None,
+            height: None,
+            size_bytes: Some(125_642),
+            format: Some("jpeg".into()),
+            suspected_category: None,
+            has_alpha: false,
+            has_animation: false,
+            license_id: "wikimedia-mixed".into(),
+            license_url: None,
+            blob_url: "https://r2/x".into(),
+            order_hint: 0,
+        };
+        let s = suggest(&c, None);
+        // dims unknown → curator should be able to pick any chip
+        assert_eq!(s.sizes.len(), 8);
+        assert!(s.sizes.contains(&64));
+        assert!(s.sizes.contains(&1536));
+    }
+
+    #[test]
+    fn bpp_gate_unknown_when_dims_missing() {
+        let c = Candidate {
+            sha256: "h".into(),
+            corpus: "x".into(),
+            relative_path: None,
+            width: None,
+            height: None,
+            size_bytes: Some(100_000),
+            format: Some("jpeg".into()),
+            suspected_category: None,
+            has_alpha: false,
+            has_animation: false,
+            license_id: "mixed-research".into(),
+            license_url: None,
+            blob_url: "https://r2/x".into(),
+            order_hint: 0,
+        };
+        let g = bpp_gate(&c);
+        assert!(matches!(g.verdict, BppVerdict::Unknown));
+        assert!(g.bpp.is_none());
+    }
+
+    #[test]
+    fn bpp_gate_flags_low_jpeg() {
+        // 2400×1800 = 4.32 MP. 100_000 bytes * 8 / 4.32e6 ≈ 0.185 bpp → low
+        let c = Candidate {
+            sha256: "h".into(),
+            corpus: "x".into(),
+            relative_path: None,
+            width: Some(2400),
+            height: Some(1800),
+            size_bytes: Some(100_000),
+            format: Some("jpeg".into()),
+            suspected_category: None,
+            has_alpha: false,
+            has_animation: false,
+            license_id: "mixed-research".into(),
+            license_url: None,
+            blob_url: "https://r2/x".into(),
+            order_hint: 0,
+        };
+        let g = bpp_gate(&c);
+        assert!(matches!(g.verdict, BppVerdict::Low));
+        let bpp = g.bpp.unwrap();
+        assert!(bpp < 0.3, "got {bpp}");
+    }
+
+    #[test]
+    fn bpp_gate_ok_for_typical_jpeg() {
+        // 2400×1800 ≈ 4.32 MP, 800 KB → bpp ≈ 1.48 → OK
+        let c = Candidate {
+            sha256: "h".into(),
+            corpus: "x".into(),
+            relative_path: None,
+            width: Some(2400),
+            height: Some(1800),
+            size_bytes: Some(800_000),
+            format: Some("jpeg".into()),
+            suspected_category: None,
+            has_alpha: false,
+            has_animation: false,
+            license_id: "mixed-research".into(),
+            license_url: None,
+            blob_url: "https://r2/x".into(),
+            order_hint: 0,
+        };
+        let g = bpp_gate(&c);
+        assert!(matches!(g.verdict, BppVerdict::Ok), "got {:?}", g.verdict);
+    }
+
+    #[test]
+    fn bpp_gate_low_for_undercompressed_png() {
+        // 100×100 = 10 KP, 1 KB → bpp = 0.8 → suspicious for lossless
+        let c = Candidate {
+            sha256: "h".into(),
+            corpus: "x".into(),
+            relative_path: None,
+            width: Some(100),
+            height: Some(100),
+            size_bytes: Some(1000),
+            format: Some("png".into()),
+            suspected_category: None,
+            has_alpha: false,
+            has_animation: false,
+            license_id: "mixed-research".into(),
+            license_url: None,
+            blob_url: "https://r2/x".into(),
+            order_hint: 0,
+        };
+        let g = bpp_gate(&c);
+        assert!(matches!(g.verdict, BppVerdict::Low), "got {:?}", g.verdict);
     }
 }

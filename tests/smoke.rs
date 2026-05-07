@@ -81,7 +81,9 @@ async fn smoke_full_loop() -> Result<()> {
         manifest: tokio::sync::RwLock::new(manifest),
         anchors: tokio::sync::RwLock::new(Default::default()),
         source_flags: tokio::sync::RwLock::new(Default::default()),
-        suggestions_dir: tempfile::tempdir()?.keep(),
+        suggestions: squintly::suggestion_store::SuggestionStore::LocalDisk(
+            squintly::suggestion_store::LocalDiskStore::new(tempfile::tempdir()?.keep()),
+        ),
     });
 
     // Build the same router as main, then exercise it via reqwest in a spawned server.

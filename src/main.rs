@@ -128,22 +128,22 @@ async fn main() -> Result<()> {
         "loaded anchor pool + source flags"
     );
 
-    let suggestions_dir = cli.suggestions_dir.clone().unwrap_or_else(|| {
+    let suggestions_local_default = cli.suggestions_dir.clone().unwrap_or_else(|| {
         cli.db
             .parent()
             .map(|p| p.to_path_buf())
             .unwrap_or_else(|| PathBuf::from("."))
             .join("suggestions")
     });
-    if let Err(e) = std::fs::create_dir_all(&suggestions_dir) {
+    if let Err(e) = std::fs::create_dir_all(&suggestions_local_default) {
         tracing::warn!(
-            path = %suggestions_dir.display(),
+            path = %suggestions_local_default.display(),
             error = %e,
-            "could not create suggestions dir; uploads will fail until this is fixed"
+            "could not create local suggestions dir (R2 will still work if configured)"
         );
-    } else {
-        tracing::info!(path = %suggestions_dir.display(), "suggestions dir ready");
     }
+    let suggestions =
+        squintly::suggestion_store::SuggestionStore::from_env(suggestions_local_default);
 
     let state = Arc::new(AppState {
         pool,
@@ -151,7 +151,7 @@ async fn main() -> Result<()> {
         manifest: tokio::sync::RwLock::new(manifest),
         anchors: tokio::sync::RwLock::new(anchors),
         source_flags: tokio::sync::RwLock::new(source_flags),
-        suggestions_dir,
+        suggestions,
     });
 
     let api = Router::new()

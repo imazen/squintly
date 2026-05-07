@@ -46,7 +46,9 @@ async fn boot_app() -> Result<(SocketAddr, sqlx::SqlitePool, std::path::PathBuf)
         manifest: tokio::sync::RwLock::new(Default::default()),
         anchors: tokio::sync::RwLock::new(Default::default()),
         source_flags: tokio::sync::RwLock::new(Default::default()),
-        suggestions_dir: dir.clone(),
+        suggestions: squintly::suggestion_store::SuggestionStore::LocalDisk(
+            squintly::suggestion_store::LocalDiskStore::new(dir.clone()),
+        ),
     });
     let api = Router::new()
         .route(

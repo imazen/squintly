@@ -35,9 +35,9 @@ pub struct AppState {
     pub manifest: tokio::sync::RwLock<Manifest>,
     pub anchors: tokio::sync::RwLock<AnchorPool>,
     pub source_flags: tokio::sync::RwLock<SourceFlagMap>,
-    /// Filesystem root for public-suggestion uploads. See
-    /// `src/suggestions.rs`. Must exist and be writable.
-    pub suggestions_dir: std::path::PathBuf,
+    /// Storage backend for public-suggestion uploads. R2 in production,
+    /// local-disk fallback for dev/tests. See `src/suggestion_store.rs`.
+    pub suggestions: crate::suggestion_store::SuggestionStore,
 }
 
 pub type SharedState = Arc<AppState>;

@@ -25,8 +25,6 @@
 //! env var isn't set, the admin endpoints return 503 — same posture as the
 //! Resend-not-configured fallbacks.
 
-use std::path::{Path, PathBuf};
-
 use anyhow::{Context, Result};
 use axum::Json;
 use axum::extract::{Multipart, Path as AxumPath, Query, State};
@@ -184,18 +182,11 @@ pub async fn submit(
     let sha = hex::encode(h.finalize());
     let ext = ext_for_mime(&mime).unwrap_or("bin");
 
-    let dir = state.suggestions_dir.clone();
-    let target = blob_path(&dir, &sha, ext);
-    if let Some(parent) = target.parent() {
-        tokio::fs::create_dir_all(parent)
-            .await
-            .map_err(|e| AppError::Anyhow(anyhow::anyhow!("mkdir {}: {e}", parent.display())))?;
-    }
-    if !target.exists() {
-        tokio::fs::write(&target, &file_bytes)
-            .await
-            .map_err(|e| AppError::Anyhow(anyhow::anyhow!("write {}: {e}", target.display())))?;
-    }
+    let stored = state
+        .suggestions
+        .put(&sha, ext, &file_bytes, &mime)
+        .await
+        .map_err(|e| AppError::Anyhow(anyhow::anyhow!("storage put: {e}")))?;
 
     // Decide license_id. Caller can pass an explicit policy id; otherwise
     // 'other' if license_text_freeform is set, else 'mixed-research'.
@@ -231,7 +222,7 @@ pub async fn submit(
     .bind(license_text.as_deref())
     .bind(attribution.as_deref())
     .bind(why.as_deref())
-    .bind(target.to_string_lossy().as_ref())
+    .bind(&stored.locator)
     .bind(file_bytes.len() as i64)
     .bind(&mime)
     .fetch_one(&state.pool)
@@ -487,7 +478,7 @@ pub async fn file(
         .fetch_optional(&state.pool)
         .await?
         .ok_or_else(|| AppError::NotFound(format!("suggestion {id}")))?;
-    let path: String = row.get(0);
+    let locator: String = row.get(0);
     let mime: Option<String> = row.try_get(1).ok();
     let status: String = row.try_get(2).unwrap_or_default();
     if status != "accepted" {
@@ -495,9 +486,14 @@ pub async fn file(
             "suggestion not in accepted state".into(),
         ));
     }
-    let bytes = tokio::fs::read(&path)
+    if let Some(url) = state.suggestions.public_url(&locator) {
+        return Ok((StatusCode::FOUND, [(header::LOCATION, url)]).into_response());
+    }
+    let bytes = state
+        .suggestions
+        .read(&locator)
         .await
-        .map_err(|e| AppError::Anyhow(anyhow::anyhow!("read {path}: {e}")))?;
+        .map_err(|e| AppError::Anyhow(anyhow::anyhow!("read {locator}: {e}")))?;
     let mime = mime.unwrap_or_else(|| "application/octet-stream".to_string());
     Ok((StatusCode::OK, [(header::CONTENT_TYPE, mime)], bytes).into_response())
 }
@@ -538,15 +534,6 @@ fn nonempty(s: Option<String>) -> Option<String> {
 fn is_http_url(s: &str) -> bool {
     let l = s.to_ascii_lowercase();
     l.starts_with("http://") || l.starts_with("https://")
-}
-
-fn blob_path(base: &Path, sha: &str, ext: &str) -> PathBuf {
-    let (a, b) = if sha.len() >= 4 {
-        (&sha[0..2], &sha[2..4])
-    } else {
-        ("xx", "xx")
-    };
-    base.join(a).join(b).join(format!("{sha}.{ext}"))
 }
 
 fn sniff_image_mime(bytes: &[u8]) -> Option<&'static str> {
@@ -798,21 +785,6 @@ mod tests {
         webp.extend_from_slice(&[0; 4]);
         assert_eq!(sniff_image_mime(&webp), Some("image/webp"));
         assert_eq!(sniff_image_mime(b"hello there"), None);
-    }
-
-    #[test]
-    fn blob_path_layout() {
-        let p = blob_path(
-            Path::new("/data/suggestions"),
-            "deadbeef0000000000000000000000000000000000000000000000000000beef",
-            "png",
-        );
-        assert_eq!(
-            p,
-            PathBuf::from(
-                "/data/suggestions/de/ad/deadbeef0000000000000000000000000000000000000000000000000000beef.png"
-            )
-        );
     }
 
     #[test]

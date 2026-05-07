@@ -36,7 +36,7 @@ async function welcome(): Promise<void> {
 
   root.innerHTML = `
     <div class="screen center" data-screen="welcome">
-      ${renderTabBar('rate', { onCurator: () => {}, onRate: () => {}, onCalibrate: () => {} })}
+      ${renderTabBar('rate', { onCurator: () => {}, onRate: () => {}, onCalibrate: () => {}, onSuggest: () => {} })}
       <h1>Image Discrimination Study</h1>
       <p>You'll help <strong>make the web faster</strong>. By rating how compressed images compare to their originals, you tell us which artifacts people actually see — letting CDNs ship smaller images without anyone noticing the difference.</p>
       <p>The data trains <strong>zensim</strong>, an open-source perceptual quality metric. We especially need ratings from real phones, in real lighting, at real viewing distances — the data existing public IQA datasets don't capture.</p>

@@ -430,9 +430,56 @@ input[type="range"] {
 }
 .curator-slider input[type="range"] { margin: 0; }
 .curator-q-readout {
-  text-align: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
   font-variant-numeric: tabular-nums;
   font-weight: 600;
+}
+.curator-q-nudge {
+  padding: 6px 14px;
+  font-size: 0.95rem;
+  border-radius: 999px;
+  min-width: 56px;
+}
+.curator-toggle-row {
+  display: flex;
+  justify-content: center;
+  margin: 4px 0;
+}
+.curator-toggle-row button[aria-pressed="true"] {
+  background: var(--good);
+  color: #001a08;
+  border-color: var(--good);
+}
+.curator-tabbar {
+  display: flex;
+  gap: 4px;
+  flex: 1;
+  margin: 0 8px;
+}
+.curator-tabbar button {
+  flex: 1;
+  padding: 4px 10px;
+  font-size: 0.75rem;
+  border-radius: 999px;
+  background: transparent;
+}
+.curator-tabbar button.on {
+  background: var(--accent);
+  color: #00191f;
+  border-color: var(--accent);
+  font-weight: 600;
+}
+.curator-flag-card .curator-flag-list {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 6px;
+  margin: 8px 0;
+}
+.curator-flag-card .curator-flag-list button {
+  text-align: left;
 }
 
 /* ---------- Suggest form ---------- */

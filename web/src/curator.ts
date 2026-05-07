@@ -78,7 +78,12 @@ export function startCurator(root: HTMLElement, onExit: () => void): void {
       }
       renderStreamImage(viewport, resp.candidate);
       meta.innerHTML = renderCandidateMeta(resp.candidate, resp.license, resp.remaining, resp.total);
-      installSwipe(viewport, () => decide('take'), () => decide('reject'));
+      void prefetchNext();
+      installSwipe(viewport, {
+        onRight: () => decide('take'),
+        onLeft: () => decide('reject'),
+        onDown: () => promptFlag(),
+      });
     } catch (e) {
       viewport.innerHTML = `<div class="curator-empty"><h2>Stream error</h2><p class="muted">${escapeHtml(String((e as Error).message))}</p><p class="muted">POST a manifest to <code>/api/curator/manifest</code> first.</p></div>`;
     }
@@ -93,7 +98,7 @@ export function startCurator(root: HTMLElement, onExit: () => void): void {
     if (e.key === 'ArrowLeft' || e.key === 's') void decide('reject');
   };
 
-  const decide = async (kind: 'take' | 'reject' | 'flag') => {
+  const decide = async (kind: 'take' | 'reject' | 'flag', rejectReason?: string) => {
     if (!state.candidate) return;
     const cand = state.candidate;
     if (kind === 'reject' || kind === 'flag') {
@@ -102,6 +107,7 @@ export function startCurator(root: HTMLElement, onExit: () => void): void {
           source_sha256: cand.sha256,
           curator_id: curatorId,
           decision: kind,
+          reject_reason: rejectReason ?? null,
           decision_dpr: window.devicePixelRatio,
           decision_viewport_w: window.innerWidth,
           decision_viewport_h: window.innerHeight,
@@ -114,6 +120,64 @@ export function startCurator(root: HTMLElement, onExit: () => void): void {
     }
     document.removeEventListener('keydown', keyHandler);
     void renderCurate();
+  };
+
+  const promptFlag = () => {
+    const reasons: { id: string; label: string }[] = [
+      { id: 'low_quality', label: 'Source quality too low' },
+      { id: 'inappropriate', label: 'Inappropriate / unsafe' },
+      { id: 'duplicate', label: 'Looks duplicated' },
+      { id: 'broken', label: "Won't load / broken" },
+      { id: 'license_concern', label: 'License concern' },
+      { id: 'other', label: 'Other (skip without flag)' },
+    ];
+    const scrim = document.createElement('div');
+    scrim.className = 'scrim';
+    scrim.innerHTML = `
+      <div class="card curator-flag-card">
+        <h2>Flag this image</h2>
+        <p class="muted">Records the reason; the candidate is removed from your stream.</p>
+        <div class="curator-flag-list">
+          ${reasons.map((r) => `<button data-id="${r.id}">${escapeHtml(r.label)}</button>`).join('')}
+        </div>
+        <div class="choice-row" style="margin-top:8px;">
+          <button id="flag-cancel">Cancel</button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(scrim);
+    scrim.querySelectorAll<HTMLButtonElement>('.curator-flag-list button').forEach((b) => {
+      b.addEventListener('click', () => {
+        const reason = b.dataset.id ?? 'other';
+        scrim.remove();
+        if (reason === 'other') {
+          void decide('reject');
+        } else {
+          void decide('flag', reason);
+        }
+      });
+    });
+    scrim.querySelector<HTMLButtonElement>('#flag-cancel')?.addEventListener('click', () => scrim.remove());
+  };
+
+  // Single-image lookahead: as soon as a candidate is shown, prefetch the
+  // *next* candidate's bytes via a hidden <img> element so the next render
+  // is instant. Phone bandwidth is the constraint, not RAM (per spec §2.1).
+  let lookaheadEl: HTMLImageElement | null = null;
+  const prefetchNext = async () => {
+    try {
+      const probe = await streamNext(curatorId, { skip: 1 });
+      const next = probe.candidate;
+      if (!next) return;
+      if (lookaheadEl) lookaheadEl.remove();
+      lookaheadEl = new Image();
+      lookaheadEl.decoding = 'async';
+      lookaheadEl.style.display = 'none';
+      lookaheadEl.src = next.blob_url;
+      document.body.appendChild(lookaheadEl);
+    } catch {
+      // ignore prefetch failures
+    }
   };
 
   const renderCurate = async () => {
@@ -225,17 +289,29 @@ export function startCurator(root: HTMLElement, onExit: () => void): void {
     const cand = state.candidate;
     const sortedSizes = [...state.selectedSizes].sort((a, b) => b - a);
     const target = sortedSizes[0] ?? 1024;
+    // Tick marks at the pre-encoded anchor q values so the slider visually
+    // confirms which positions have a snapshot.
+    const ticksDatalistId = 'curator-q-ticks';
+    const ticksHtml = ANCHOR_QS.map((q) => `<option value="${q}"></option>`).join('');
     root.innerHTML = `
       <div class="curator-screen curator-threshold" data-screen="threshold">
         ${renderHeader('Curator — find threshold')}
-        <div class="curator-threshold-info">target ${target}px · jpegli stand-in: browser canvas</div>
-        <div class="curator-split" id="split">
+        <div class="curator-threshold-info">target ${target}px · encoder: browser-canvas-jpeg</div>
+        <div class="curator-split" id="split" data-mode="encoded">
           <canvas id="left" aria-label="encoded at 1:1 device pixels"></canvas>
           <canvas id="right" aria-label="encoded at 1:1 CSS pixels (downscaled by DPR)"></canvas>
         </div>
         <div class="curator-slider">
-          <input type="range" min="20" max="98" step="1" value="80" id="qslider" aria-label="JPEG quality">
-          <div class="curator-q-readout"><span id="qval">q = 80</span></div>
+          <input type="range" min="20" max="98" step="1" value="80" id="qslider" list="${ticksDatalistId}" aria-label="JPEG quality">
+          <datalist id="${ticksDatalistId}">${ticksHtml}</datalist>
+          <div class="curator-q-readout">
+            <button class="curator-q-nudge" id="q-down" aria-label="Lower q by 1">−1</button>
+            <span id="qval">q = 80</span>
+            <button class="curator-q-nudge" id="q-up" aria-label="Raise q by 1">+1</button>
+          </div>
+        </div>
+        <div class="curator-toggle-row">
+          <button id="toggle-ref" aria-pressed="false" title="Compare against the uncompressed source">Show reference</button>
         </div>
         <div class="curator-action-row">
           <button id="back">Back</button>
@@ -248,18 +324,37 @@ export function startCurator(root: HTMLElement, onExit: () => void): void {
     const qval = root.querySelector<HTMLSpanElement>('#qval')!;
     const leftC = root.querySelector<HTMLCanvasElement>('#left')!;
     const rightC = root.querySelector<HTMLCanvasElement>('#right')!;
+    const splitEl = root.querySelector<HTMLDivElement>('#split')!;
+    const toggleRef = root.querySelector<HTMLButtonElement>('#toggle-ref')!;
+    const qDown = root.querySelector<HTMLButtonElement>('#q-down')!;
+    const qUp = root.querySelector<HTMLButtonElement>('#q-up')!;
 
     let snapshots: EncodedSnapshot[] = [];
     let sourceImg: HTMLImageElement | null = null;
+    let showingReference = false;
 
-    // Wire UI listeners synchronously so the slider readout always tracks the
-    // value, even before the image and pre-encoded anchors finish loading.
-    slider.addEventListener('input', () => {
+    const setQValReadout = () => {
       qval.textContent = `q = ${slider.value}`;
-    });
+    };
+    setQValReadout();
+    slider.addEventListener('input', setQValReadout);
+
+    const nudge = (delta: number) => {
+      const next = Math.max(
+        Number(slider.min),
+        Math.min(Number(slider.max), Number(slider.value) + delta),
+      );
+      if (next === Number(slider.value)) return;
+      slider.value = String(next);
+      setQValReadout();
+      void trigger();
+    };
+    qDown.addEventListener('click', () => nudge(-1));
+    qUp.addEventListener('click', () => nudge(+1));
+
     let pendingQ: number | null = null;
     let busy = false;
-    const draw = async (q: number) => {
+    const drawEncoded = async (q: number) => {
       if (!sourceImg) return;
       let snap = snapshots.find((s) => s.q === q);
       if (!snap) {
@@ -272,6 +367,17 @@ export function startCurator(root: HTMLElement, onExit: () => void): void {
       }
       const img = await loadImage(snap.url);
       paintSplit(leftC, rightC, img);
+    };
+    const drawReference = () => {
+      if (!sourceImg) return;
+      paintSplit(leftC, rightC, sourceImg);
+    };
+    const draw = async (q: number) => {
+      if (showingReference) {
+        drawReference();
+      } else {
+        await drawEncoded(q);
+      }
     };
     const trigger = async () => {
       if (busy) {
@@ -292,6 +398,23 @@ export function startCurator(root: HTMLElement, onExit: () => void): void {
     };
     slider.addEventListener('change', trigger);
     slider.addEventListener('input', () => void trigger());
+
+    // On pointerup the spec asks for both panels to swap to the uncompressed
+    // source so the curator has a fixed reference for the saved threshold.
+    // We do that here, then leave the toggle-ref button in the on state so
+    // the curator can flip back to the encoded view at will.
+    const setReferenceMode = (on: boolean) => {
+      showingReference = on;
+      toggleRef.setAttribute('aria-pressed', String(on));
+      toggleRef.textContent = on ? 'Showing reference' : 'Show reference';
+      splitEl.dataset.mode = on ? 'reference' : 'encoded';
+      void trigger();
+    };
+    slider.addEventListener('pointerup', () => setReferenceMode(true));
+    slider.addEventListener('touchend', () => setReferenceMode(true));
+    slider.addEventListener('pointerdown', () => setReferenceMode(false));
+    slider.addEventListener('touchstart', () => setReferenceMode(false), { passive: true });
+    toggleRef.addEventListener('click', () => setReferenceMode(!showingReference));
 
     root.querySelector<HTMLButtonElement>('#back')?.addEventListener('click', () => {
       disposeSnapshots(snapshots);
@@ -333,12 +456,24 @@ export function startCurator(root: HTMLElement, onExit: () => void): void {
 function renderHeader(title: string): string {
   return `<header class="curator-header">
     <span class="curator-title">${escapeHtml(title)}</span>
+    <nav class="curator-tabbar" aria-label="Mode">
+      <button class="on" data-tab="curator">Curator</button>
+      <button data-tab="rate" id="curator-tab-rate">Rate</button>
+      <button data-tab="calibrate" id="curator-tab-calibrate">Calibrate</button>
+    </nav>
     <button class="curator-exit" id="exit" aria-label="Exit curator">×</button>
   </header>`;
 }
 
 function bindNav(root: HTMLElement, onExit: () => void): void {
   root.querySelector<HTMLButtonElement>('#exit')?.addEventListener('click', onExit);
+  // Curator-internal tab bar: Rate/Calibrate just exit back to the main shell
+  // (which has its own tab handlers). Keeps the visual contract from §2.1
+  // without each subscreen owning a parallel router.
+  root.querySelectorAll<HTMLButtonElement>('.curator-tabbar button').forEach((b) => {
+    if (b.classList.contains('on')) return;
+    b.addEventListener('click', () => onExit());
+  });
 }
 
 function renderStreamImage(host: HTMLDivElement, c: Candidate): void {
@@ -437,26 +572,57 @@ function loadImage(url: string): Promise<HTMLImageElement> {
   });
 }
 
-function installSwipe(host: HTMLElement, onRight: () => void, onLeft: () => void): void {
+interface SwipeHandlers {
+  onRight: () => void;
+  onLeft: () => void;
+  onDown?: () => void;
+  onUpHold?: (start: () => void, end: () => void) => void;
+}
+
+function installSwipe(host: HTMLElement, h: SwipeHandlers): void {
   let startX = 0;
   let startY = 0;
   let down = false;
+  let holdTimer: number | null = null;
+  let isHolding = false;
+  const PEEK_DELAY_MS = 320;
+
   host.addEventListener('pointerdown', (e: PointerEvent) => {
     down = true;
     startX = e.clientX;
     startY = e.clientY;
+    if (h.onUpHold) {
+      holdTimer = window.setTimeout(() => {
+        isHolding = true;
+        h.onUpHold?.(() => {}, () => {});
+      }, PEEK_DELAY_MS);
+    }
   });
+  const cancelHold = () => {
+    if (holdTimer != null) {
+      window.clearTimeout(holdTimer);
+      holdTimer = null;
+    }
+    isHolding = false;
+  };
   host.addEventListener('pointerup', (e: PointerEvent) => {
+    cancelHold();
     if (!down) return;
     down = false;
     const dx = e.clientX - startX;
     const dy = e.clientY - startY;
+    if (isHolding) return;
     if (Math.abs(dx) > 80 && Math.abs(dx) > Math.abs(dy)) {
-      if (dx > 0) onRight();
-      else onLeft();
+      if (dx > 0) h.onRight();
+      else h.onLeft();
+    } else if (h.onDown && dy > 80 && dy > Math.abs(dx)) {
+      h.onDown();
     }
   });
-  host.addEventListener('pointercancel', () => { down = false; });
+  host.addEventListener('pointercancel', () => {
+    cancelHold();
+    down = false;
+  });
 }
 
 function escapeHtml(s: string): string {

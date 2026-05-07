@@ -94,8 +94,10 @@ export function startSuggest(root: HTMLElement, onExit: () => void): void {
   root.querySelector<HTMLButtonElement>('#cancel')?.addEventListener('click', onExit);
 
   const observerInput = root.querySelector<HTMLInputElement>('#observer-id')!;
-  observerInput.value = observerId;
-  hydrateEmailFromObserver(observerId, root);
+  observerInput.value = observerId ?? '';
+  if (observerId) {
+    hydrateEmailFromObserver(observerId, root);
+  }
 
   const license = root.querySelector<HTMLSelectElement>('#license')!;
   const licHint = root.querySelector<HTMLSpanElement>('#license-hint')!;

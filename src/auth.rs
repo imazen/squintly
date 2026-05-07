@@ -8,9 +8,12 @@
 //! - No passwords ever, no SMS OTP (FBI/CISA 2025 deprecated it).
 //! - Tokens are 32 bytes from `OsRng`, hex-encoded; only BLAKE3 hash persists.
 //! - 15 min TTL, single-use, side-channel-safe via constant-time hash compare.
-//! - Send is via Resend (reqwest POST); without `RESEND_API_KEY`, the start
-//!   endpoint returns a 503 with a clear hint — no silent dev-mode that would
-//!   make production failures look successful.
+//! - Send is via Postmark (reqwest POST); without `POSTMARK_SERVER_TOKEN` +
+//!   `POSTMARK_FROM_EMAIL`, the start endpoint returns a 503 with a clear
+//!   hint — no silent dev-mode that would make production failures look
+//!   successful. The Postmark server token + from address are shared with
+//!   the suggestion-notify path so operators only set one secret per
+//!   environment.
 //!
 //! Cross-device merge logic on verify:
 //! 1. If `email` already belongs to a canonical observer ≠ the requesting
@@ -57,62 +60,85 @@ pub fn looks_like_email(s: &str) -> bool {
     s.chars().all(|c| !c.is_whitespace())
 }
 
+/// Postmark configuration shared by auth + suggestion-notify paths.
+///
+/// Reads `POSTMARK_SERVER_TOKEN` (required) and `POSTMARK_FROM_EMAIL`
+/// (required — Postmark refuses to send from unverified addresses).
+/// `POSTMARK_AUTH_MESSAGE_STREAM` overrides the stream for magic links;
+/// `POSTMARK_MESSAGE_STREAM` is the shared default (`outbound` if neither
+/// is set).
 #[derive(Debug)]
-pub struct ResendConfig {
-    pub api_key: String,
+pub struct MailerConfig {
+    pub server_token: String,
     pub from: String,
+    pub message_stream: String,
 }
 
-impl ResendConfig {
-    /// Reads `RESEND_API_KEY` and `RESEND_FROM_EMAIL`. Returns `None` if the
-    /// API key isn't set; callers turn that into a 503 with a hint, never a
-    /// silent success.
+impl MailerConfig {
     pub fn from_env() -> Option<Self> {
-        let api_key = std::env::var("RESEND_API_KEY").ok()?;
-        if api_key.is_empty() {
+        let server_token = std::env::var("POSTMARK_SERVER_TOKEN").ok()?;
+        if server_token.is_empty() {
             return None;
         }
-        let from = std::env::var("RESEND_FROM_EMAIL")
-            .unwrap_or_else(|_| "Squintly <onboarding@resend.dev>".to_string());
-        Some(Self { api_key, from })
+        let from = std::env::var("POSTMARK_FROM_EMAIL")
+            .ok()
+            .filter(|s| !s.is_empty())?;
+        let message_stream = std::env::var("POSTMARK_AUTH_MESSAGE_STREAM")
+            .ok()
+            .filter(|s| !s.is_empty())
+            .or_else(|| std::env::var("POSTMARK_MESSAGE_STREAM").ok())
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| "outbound".to_string());
+        Some(Self {
+            server_token,
+            from,
+            message_stream,
+        })
     }
 }
+
+/// Backwards-compatible alias for callers that still spell it `ResendConfig`.
+/// New code should use `MailerConfig`.
+pub type ResendConfig = MailerConfig;
 
 pub struct EmailMessage<'a> {
     pub to: &'a str,
     pub link_url: &'a str,
 }
 
-pub async fn send_magic_link(cfg: &ResendConfig, msg: EmailMessage<'_>) -> Result<()> {
+pub async fn send_magic_link(cfg: &MailerConfig, msg: EmailMessage<'_>) -> Result<()> {
     let client = reqwest::Client::new();
     let body = serde_json::json!({
-        "from": cfg.from,
-        "to": [msg.to],
-        "subject": "Sign in to Squintly",
-        "text": format!(
+        "From": cfg.from,
+        "To": msg.to,
+        "Subject": "Sign in to Squintly",
+        "TextBody": format!(
             "Click to sign in to Squintly: {}\n\nThis link expires in 15 minutes. \
              If you didn't request it, ignore this email.",
             msg.link_url
         ),
-        "html": format!(
+        "HtmlBody": format!(
             "<p>Click to sign in to Squintly:</p>\
              <p><a href=\"{url}\">{url}</a></p>\
              <p style=\"color:#888;font-size:0.9em;\">This link expires in 15 minutes. \
              If you didn't request it, ignore this email.</p>",
             url = msg.link_url
         ),
+        "MessageStream": cfg.message_stream,
     });
     let resp = client
-        .post("https://api.resend.com/emails")
-        .bearer_auth(&cfg.api_key)
+        .post("https://api.postmarkapp.com/email")
+        .header("Accept", "application/json")
+        .header("Content-Type", "application/json")
+        .header("X-Postmark-Server-Token", &cfg.server_token)
         .json(&body)
         .send()
         .await
-        .context("calling Resend")?;
+        .context("calling Postmark")?;
     if !resp.status().is_success() {
         let status = resp.status();
         let text = resp.text().await.unwrap_or_default();
-        anyhow::bail!("Resend rejected the send ({status}): {text}");
+        anyhow::bail!("Postmark rejected the send ({status}): {text}");
     }
     Ok(())
 }

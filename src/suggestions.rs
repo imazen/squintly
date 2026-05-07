@@ -689,46 +689,12 @@ struct SubmissionForEmail<'a> {
     size_bytes: usize,
 }
 
-/// Postmark configuration for suggestion-notification emails.
-///
-/// Reads `POSTMARK_SERVER_TOKEN` (required) and `POSTMARK_FROM_EMAIL`
-/// (required — Postmark requires a verified sender). Returns `None` when
-/// the token isn't set, in which case notification is a no-op and we log
-/// the reason at info level.
-struct PostmarkConfig {
-    server_token: String,
-    from: String,
-    /// Optional Postmark message stream — defaults to "outbound" (transactional).
-    message_stream: String,
-}
-
-impl PostmarkConfig {
-    fn from_env() -> Option<Self> {
-        let server_token = std::env::var("POSTMARK_SERVER_TOKEN").ok()?;
-        if server_token.is_empty() {
-            return None;
-        }
-        let from = std::env::var("POSTMARK_FROM_EMAIL")
-            .ok()
-            .filter(|s| !s.is_empty())?;
-        let message_stream = std::env::var("POSTMARK_MESSAGE_STREAM")
-            .ok()
-            .filter(|s| !s.is_empty())
-            .unwrap_or_else(|| "outbound".to_string());
-        Some(Self {
-            server_token,
-            from,
-            message_stream,
-        })
-    }
-}
-
 async fn notify_submission(
     pool: &SqlitePool,
     suggestion_id: i64,
     msg: &SubmissionForEmail<'_>,
 ) -> bool {
-    let cfg = match PostmarkConfig::from_env() {
+    let cfg = match crate::auth::MailerConfig::from_env() {
         Some(c) => c,
         None => {
             tracing::info!(
@@ -756,7 +722,7 @@ async fn notify_submission(
 }
 
 async fn send_notification(
-    cfg: &PostmarkConfig,
+    cfg: &crate::auth::MailerConfig,
     to: &str,
     m: &SubmissionForEmail<'_>,
     policy: &licensing::LicensePolicy,
@@ -786,12 +752,18 @@ async fn send_notification(
         mime = m.mime,
         size = m.size_bytes,
     );
+    // Suggestion notifications use POSTMARK_NOTIFY_MESSAGE_STREAM when set,
+    // otherwise the shared default (`squintly-and-coefficient` in prod).
+    let stream = std::env::var("POSTMARK_NOTIFY_MESSAGE_STREAM")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| cfg.message_stream.clone());
     let body = serde_json::json!({
         "From": cfg.from,
         "To": to,
         "Subject": format!("Squintly suggestion #{} — {}", m.id, m.email),
         "TextBody": text,
-        "MessageStream": cfg.message_stream,
+        "MessageStream": stream,
     });
     let resp = reqwest::Client::new()
         .post("https://api.postmarkapp.com/email")

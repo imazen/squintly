@@ -856,6 +856,19 @@ pub struct LoadManifestReq {
     /// "https://pub-….r2.dev"); for `kind=tsv` it is the prefix that
     /// `relative_path` is appended to.
     pub blob_url_base: String,
+    /// Optional allow-list of `license_id` values; rows whose corpus resolves
+    /// to a policy not in this set are skipped silently. Use this when bulk-
+    /// loading from a mixed-provenance manifest (e.g. corpus-builder R2) and
+    /// you only want the redistributable subset. Empty/None disables filtering.
+    #[serde(default)]
+    pub license_filter: Option<Vec<String>>,
+    /// Convenience flag: when `true`, skips any row whose policy has
+    /// `redistribute_bytes = false`. Equivalent to passing
+    /// `license_filter = ["unsplash", "wikimedia-mixed", "flickr-mixed"]`
+    /// (the three currently-marked-redistributable policies). Mutually
+    /// inclusive with `license_filter`: a row passes if it matches *either*.
+    #[serde(default)]
+    pub redistributable_only: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -871,7 +884,7 @@ pub async fn load_manifest(
     State(state): State<SharedState>,
     Json(req): Json<LoadManifestReq>,
 ) -> Result<Json<LoadManifestResp>, AppError> {
-    let candidates = match req.kind.as_str() {
+    let mut candidates = match req.kind.as_str() {
         "tsv" => parse_tsv_manifest(
             &req.body,
             |corpus, rel| format!("{}/{corpus}/{rel}", req.blob_url_base.trim_end_matches('/')),
@@ -889,10 +902,18 @@ pub async fn load_manifest(
         }),
         _ => return Err(AppError::BadRequest("kind must be 'tsv' or 'jsonl'".into())),
     };
+    let parsed = candidates.len();
+    candidates = filter_candidates(
+        candidates,
+        req.license_filter.as_deref(),
+        req.redistributable_only,
+    );
+    let kept = candidates.len();
     if candidates.is_empty() {
-        return Err(AppError::BadRequest(
-            "manifest parsed to zero candidates; check format and headers".into(),
-        ));
+        return Err(AppError::BadRequest(format!(
+            "manifest parsed to {parsed} rows but the filter dropped them all; \
+             relax license_filter or redistributable_only"
+        )));
     }
     let inserted = upsert_candidates(&state.pool, &candidates)
         .await
@@ -901,7 +922,154 @@ pub async fn load_manifest(
         .fetch_one(&state.pool)
         .await
         .map(|r| r.get::<i64, _>(0))?;
+    tracing::info!(parsed, kept, inserted, total, "load_manifest completed");
     Ok(Json(LoadManifestResp { inserted, total }))
+}
+
+/// Apply optional license filtering. When neither filter is set the input is
+/// returned unchanged. When set, a row passes if its `license_id` matches the
+/// allow-list **OR** (if `redistributable_only`) its policy permits byte
+/// redistribution. Drops are silent — caller decides via the `parsed` vs
+/// `kept` counts how aggressive the filter was.
+pub fn filter_candidates(
+    candidates: Vec<Candidate>,
+    license_filter: Option<&[String]>,
+    redistributable_only: bool,
+) -> Vec<Candidate> {
+    if license_filter.is_none() && !redistributable_only {
+        return candidates;
+    }
+    let allow: std::collections::HashSet<&str> = license_filter
+        .map(|v| v.iter().map(|s| s.as_str()).collect())
+        .unwrap_or_default();
+    candidates
+        .into_iter()
+        .filter(|c| {
+            if allow.contains(c.license_id.as_str()) {
+                return true;
+            }
+            if redistributable_only {
+                return licensing::by_id(&c.license_id).redistribute_bytes;
+            }
+            false
+        })
+        .collect()
+}
+
+/// `POST /api/curator/load-r2-public` — admin-gated convenience that fetches
+/// `manifest.jsonl` from a public-read R2 bucket and bulk-loads the
+/// redistributable-only slice. Use this in production to seed the curator
+/// queue from corpus-builder without round-tripping the 30 MB body through
+/// the operator's machine.
+#[derive(Debug, Deserialize)]
+pub struct LoadR2Req {
+    pub admin_token: String,
+    /// Public-read base, e.g. `https://pub-….r2.dev`. Trailing slashes ok.
+    pub r2_public_base: String,
+    /// Optional manifest path (default `manifest.jsonl`).
+    pub manifest_path: Option<String>,
+    /// Cap on inserted rows. Defaults to 5000; safety against accidentally
+    /// loading the whole 17k-row R2 manifest in one shot.
+    pub limit: Option<usize>,
+    /// Override the default allow-list. Defaults to
+    /// `["unsplash", "wikimedia-mixed"]` — the two policies marked both
+    /// `redistribute_bytes = true` AND `commercial_training = true`.
+    /// Pass `["unsplash", "wikimedia-mixed", "flickr-mixed"]` to also
+    /// include Flickr photos (which are CC-mixed, mostly non-commercial).
+    pub license_filter: Option<Vec<String>>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct LoadR2Resp {
+    pub fetched_lines: usize,
+    pub parsed: usize,
+    pub kept_after_filter: usize,
+    pub inserted: u64,
+    pub total: i64,
+    pub r2_public_base: String,
+}
+
+pub async fn load_r2_public(
+    State(state): State<SharedState>,
+    Json(req): Json<LoadR2Req>,
+) -> Result<Json<LoadR2Resp>, AppError> {
+    require_curator_admin(&Some(req.admin_token.clone()))?;
+    let base = req.r2_public_base.trim_end_matches('/').to_string();
+    let manifest_path = req.manifest_path.as_deref().unwrap_or("manifest.jsonl");
+    let url = format!("{base}/{manifest_path}");
+    let limit = req.limit.unwrap_or(5000);
+    let allow = req
+        .license_filter
+        .unwrap_or_else(|| vec!["unsplash".to_string(), "wikimedia-mixed".to_string()]);
+
+    tracing::info!(url, limit, ?allow, "fetching R2 manifest for bulk load");
+    let resp = reqwest::Client::new()
+        .get(&url)
+        .send()
+        .await
+        .map_err(|e| AppError::Anyhow(anyhow::anyhow!("fetch {url}: {e}")))?
+        .error_for_status()
+        .map_err(|e| AppError::Anyhow(anyhow::anyhow!("R2 manifest HTTP error: {e}")))?;
+    let body = resp
+        .text()
+        .await
+        .map_err(|e| AppError::Anyhow(anyhow::anyhow!("read R2 manifest body: {e}")))?;
+    let total_lines = body.lines().filter(|l| !l.trim().is_empty()).count();
+    let mut candidates = parse_jsonl_manifest(&body, |sha| r2_blob_url(&base, sha));
+    let parsed = candidates.len();
+    candidates = filter_candidates(candidates, Some(&allow), false);
+    let kept = candidates.len();
+    if candidates.len() > limit {
+        candidates.truncate(limit);
+    }
+    let inserted = if candidates.is_empty() {
+        0
+    } else {
+        upsert_candidates(&state.pool, &candidates)
+            .await
+            .map_err(AppError::from)?
+    };
+    let total: i64 = sqlx::query("SELECT COUNT(*) FROM curator_candidates")
+        .fetch_one(&state.pool)
+        .await
+        .map(|r| r.get::<i64, _>(0))?;
+    Ok(Json(LoadR2Resp {
+        fetched_lines: total_lines,
+        parsed,
+        kept_after_filter: kept,
+        inserted,
+        total,
+        r2_public_base: base,
+    }))
+}
+
+/// Curator-side admin gate. Reuses `SQUINTLY_SUGGESTION_ADMIN_TOKEN` so
+/// operators only need to set one secret. When unset, returns 503.
+fn require_curator_admin(provided: &Option<String>) -> Result<(), AppError> {
+    let expected = std::env::var("SQUINTLY_SUGGESTION_ADMIN_TOKEN")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| {
+            AppError::ServiceUnavailable(
+                "Curator admin actions disabled: SQUINTLY_SUGGESTION_ADMIN_TOKEN not set.".into(),
+            )
+        })?;
+    let provided = provided.as_deref().unwrap_or("");
+    if !ct_eq_str(&expected, provided) {
+        return Err(AppError::BadRequest("admin_token mismatch".into()));
+    }
+    Ok(())
+}
+
+fn ct_eq_str(a: &str, b: &str) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut diff = 0u8;
+    for (x, y) in a.as_bytes().iter().zip(b.as_bytes().iter()) {
+        diff |= x ^ y;
+    }
+    diff == 0
 }
 
 #[cfg(test)]

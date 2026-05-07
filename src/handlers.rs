@@ -709,7 +709,7 @@ pub async fn auth_start(
 
     let cfg = ResendConfig::from_env().ok_or_else(|| {
         AppError::ServiceUnavailable(
-            "Email login is not configured on this deployment (RESEND_API_KEY missing). \
+            "Email login is not configured on this deployment (POSTMARK_SERVER_TOKEN/FROM_EMAIL missing). \
              Anonymous use is unaffected."
                 .into(),
         )

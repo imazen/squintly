@@ -185,6 +185,7 @@ async fn main() -> Result<()> {
         .route("/curator/threshold", post(curator::threshold))
         .route("/curator/progress", get(curator::progress))
         .route("/curator/manifest", post(curator::load_manifest))
+        .route("/curator/load-r2-public", post(curator::load_r2_public))
         .route("/curator/licenses", get(curator::license_registry))
         .route("/curator/export.tsv", get(curator::export_tsv))
         // Public corpus suggestions / uploads.

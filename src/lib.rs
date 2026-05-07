@@ -23,6 +23,7 @@ pub mod sampling;
 pub mod staircase;
 pub mod stats;
 pub mod streaks;
+pub mod suggestions;
 pub mod unified;
 
 pub use coefficient::{Coefficient, CoefficientSource};

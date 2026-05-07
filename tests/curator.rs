@@ -42,12 +42,14 @@ async fn boot_app() -> Result<(SocketAddr, sqlx::SqlitePool)> {
         .connect("sqlite::memory:")
         .await?;
     sqlx::migrate!("./migrations").run(&pool).await?;
+    let suggestions_dir = tempfile::tempdir()?.keep();
     let state = Arc::new(AppState {
         pool: pool.clone(),
         coefficient: CoefficientSource::Disabled,
         manifest: tokio::sync::RwLock::new(Default::default()),
         anchors: tokio::sync::RwLock::new(Default::default()),
         source_flags: tokio::sync::RwLock::new(Default::default()),
+        suggestions_dir,
     });
     let api = Router::new()
         .route("/curator/stream/next", get(curator::stream_next))

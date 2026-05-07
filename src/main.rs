@@ -15,6 +15,7 @@ use tracing_subscriber::EnvFilter;
 use squintly::coefficient::{CoefficientSource, FsCoefficient, HttpCoefficient};
 use squintly::curator;
 use squintly::handlers::{self, AppState};
+use squintly::suggestions;
 
 #[derive(RustEmbed)]
 #[folder = "$CARGO_MANIFEST_DIR/web/dist/"]
@@ -34,6 +35,11 @@ struct Cli {
     /// SQLite database path
     #[arg(long, env = "SQUINTLY_DB", default_value = "squintly.db")]
     db: PathBuf,
+
+    /// Filesystem root for public corpus suggestions. Defaults to
+    /// `<db_parent>/suggestions`. Must be writable; created on startup.
+    #[arg(long, env = "SQUINTLY_SUGGESTIONS_DIR")]
+    suggestions_dir: Option<PathBuf>,
 
     /// Bind address (CLAUDE.md bans port 8080; default is 3030).
     /// On Railway, the runtime sets PORT — we honour it automatically below.
@@ -122,12 +128,30 @@ async fn main() -> Result<()> {
         "loaded anchor pool + source flags"
     );
 
+    let suggestions_dir = cli.suggestions_dir.clone().unwrap_or_else(|| {
+        cli.db
+            .parent()
+            .map(|p| p.to_path_buf())
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join("suggestions")
+    });
+    if let Err(e) = std::fs::create_dir_all(&suggestions_dir) {
+        tracing::warn!(
+            path = %suggestions_dir.display(),
+            error = %e,
+            "could not create suggestions dir; uploads will fail until this is fixed"
+        );
+    } else {
+        tracing::info!(path = %suggestions_dir.display(), "suggestions dir ready");
+    }
+
     let state = Arc::new(AppState {
         pool,
         coefficient: coeff,
         manifest: tokio::sync::RwLock::new(manifest),
         anchors: tokio::sync::RwLock::new(anchors),
         source_flags: tokio::sync::RwLock::new(source_flags),
+        suggestions_dir,
     });
 
     let api = Router::new()
@@ -162,7 +186,16 @@ async fn main() -> Result<()> {
         .route("/curator/progress", get(curator::progress))
         .route("/curator/manifest", post(curator::load_manifest))
         .route("/curator/licenses", get(curator::license_registry))
-        .route("/curator/export.tsv", get(curator::export_tsv));
+        .route("/curator/export.tsv", get(curator::export_tsv))
+        // Public corpus suggestions / uploads.
+        .route(
+            "/suggestions",
+            post(suggestions::submit).get(suggestions::list),
+        )
+        .route("/suggestions/{id}/withdraw", post(suggestions::withdraw))
+        .route("/suggestions/{id}/accept", post(suggestions::accept))
+        .route("/suggestions/{id}/reject", post(suggestions::reject))
+        .route("/suggestions/{id}/file", get(suggestions::file));
 
     let app = Router::new()
         .nest("/api", api)

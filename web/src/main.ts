@@ -18,6 +18,7 @@ import {
 } from './conditions';
 import { bindTabBar, renderProgressSummary, renderTabBar, startCurator } from './curator';
 import { listLicenses, type LicensePolicy } from './curator-api';
+import { startSuggest } from './suggest';
 import { startTrials } from './trial';
 
 const root = document.getElementById('app')!;
@@ -57,6 +58,7 @@ async function welcome(): Promise<void> {
   bindTabBar(root, {
     onRate: () => { /* already on rate */ },
     onCurator: () => startCurator(root, () => welcome()),
+    onSuggest: () => startSuggest(root, () => welcome()),
     onCalibrate: () => {
       renderCalibration(root, (result) => {
         saveCalibration(result);

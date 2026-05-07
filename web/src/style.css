@@ -435,6 +435,62 @@ input[type="range"] {
   font-weight: 600;
 }
 
+/* ---------- Suggest form ---------- */
+.suggest-screen {
+  max-width: 640px;
+  margin: 0 auto;
+  gap: 12px;
+}
+.suggest-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.suggest-form .field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.suggest-form .field input,
+.suggest-form .field textarea,
+.suggest-form .field select {
+  font: inherit;
+  background: var(--card);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 12px;
+}
+.suggest-form .field input.verified { border-color: var(--good); }
+.suggest-form .hint { font-size: 0.8rem; }
+.suggest-preview {
+  background: #000;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 6px;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.suggest-preview img {
+  max-height: 120px;
+  max-width: 50%;
+  object-fit: contain;
+}
+.suggest-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+.suggest-disclaimer { font-size: 0.75rem; }
+.suggest-result {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 16px;
+  text-align: left;
+}
+
 /* ---------- Z Fold 7 layouts ----------
    Cover display (folded): ~904 CSS px wide, 2316 tall. Same layout as a phone.
    Inner display (unfolded): ~1968 CSS px wide × 2184 tall. Use a side-by-side

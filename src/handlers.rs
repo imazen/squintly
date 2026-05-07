@@ -35,6 +35,9 @@ pub struct AppState {
     pub manifest: tokio::sync::RwLock<Manifest>,
     pub anchors: tokio::sync::RwLock<AnchorPool>,
     pub source_flags: tokio::sync::RwLock<SourceFlagMap>,
+    /// Filesystem root for public-suggestion uploads. See
+    /// `src/suggestions.rs`. Must exist and be writable.
+    pub suggestions_dir: std::path::PathBuf,
 }
 
 pub type SharedState = Arc<AppState>;
@@ -1083,6 +1086,12 @@ pub struct ObserverProfile {
     pub total_trials: u32,
     pub skill_score: Option<f32>,
     pub compensation_mode: String,
+    /// Email this observer linked via the magic-link flow, if any. Read-only;
+    /// the frontend uses this to pre-fill suggestion forms etc.
+    pub email: Option<String>,
+    /// Unix-millis timestamp when the magic-link verification confirmed the
+    /// email. Null when the observer is still anonymous.
+    pub email_verified_at: Option<i64>,
     pub badges: Vec<BadgeAwarded>,
     pub themes: Vec<ThemeInfo>,
 }
@@ -1101,7 +1110,16 @@ pub struct ThemeInfo {
     pub is_default: bool,
 }
 
-type ProfileRow = (i64, Option<String>, i64, i64, Option<f64>, String);
+type ProfileRow = (
+    i64,
+    Option<String>,
+    i64,
+    i64,
+    Option<f64>,
+    String,
+    Option<String>,
+    Option<i64>,
+);
 
 pub async fn observer_profile(
     State(state): State<SharedState>,
@@ -1109,17 +1127,25 @@ pub async fn observer_profile(
 ) -> Result<Json<ObserverProfile>, AppError> {
     let row: Option<ProfileRow> = sqlx::query_as(
         "SELECT streak_days, streak_last_date, freezes_remaining, total_trials, \
-                skill_score, compensation_mode \
+                skill_score, compensation_mode, email, email_verified_at \
          FROM observers WHERE id = ?",
     )
     .bind(&id)
     .fetch_optional(&state.pool)
     .await?;
-    let (streak_days, streak_last_date, freezes_remaining, total_trials, skill_score, comp_mode) =
-        match row {
-            Some(r) => (r.0, r.1, r.2, r.3, r.4, r.5),
-            None => return Err(AppError::NotFound(format!("observer {id}"))),
-        };
+    let (
+        streak_days,
+        streak_last_date,
+        freezes_remaining,
+        total_trials,
+        skill_score,
+        comp_mode,
+        email,
+        email_verified_at,
+    ) = match row {
+        Some(r) => (r.0, r.1, r.2, r.3, r.4, r.5, r.6, r.7),
+        None => return Err(AppError::NotFound(format!("observer {id}"))),
+    };
 
     let badges = sqlx::query(
         "SELECT b.slug, b.display_name, ob.awarded_at FROM observer_badges ob \
@@ -1160,6 +1186,8 @@ pub async fn observer_profile(
         total_trials: total_trials as u32,
         skill_score: skill_score.map(|v| v as f32),
         compensation_mode: comp_mode,
+        email,
+        email_verified_at,
         badges,
         themes,
     }))

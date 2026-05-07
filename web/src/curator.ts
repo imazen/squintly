@@ -475,13 +475,15 @@ export interface CuratorTabHandlers {
   onCurator: () => void;
   onRate: () => void;
   onCalibrate: () => void;
+  onSuggest: () => void;
 }
 
-export function renderTabBar(active: 'rate' | 'curator' | 'calibrate', _h: CuratorTabHandlers): string {
+export function renderTabBar(active: 'rate' | 'curator' | 'calibrate' | 'suggest', _h: CuratorTabHandlers): string {
   const cls = (k: string) => (k === active ? 'on' : '');
   return `<nav class="squintly-tabs" aria-label="Mode">
     <button class="${cls('rate')}" data-tab="rate">Rate</button>
     <button class="${cls('curator')}" data-tab="curator">Curator</button>
+    <button class="${cls('suggest')}" data-tab="suggest">Suggest</button>
     <button class="${cls('calibrate')}" data-tab="calibrate">Calibrate</button>
   </nav>`;
 }
@@ -493,6 +495,7 @@ export function bindTabBar(root: HTMLElement, h: CuratorTabHandlers): void {
       if (t === 'curator') h.onCurator();
       else if (t === 'rate') h.onRate();
       else if (t === 'calibrate') h.onCalibrate();
+      else if (t === 'suggest') h.onSuggest();
     });
   });
 }

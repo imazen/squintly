@@ -93,6 +93,7 @@ fn decode_to_rgba(
         Some("png") => decode_png(bytes),
         Some("webp") => decode_webp(bytes),
         Some("avif") => decode_avif(bytes),
+        Some("jxl") => decode_jxl(bytes),
         Some(other) => Err(VariantError::UnsupportedFormat(other.to_string())),
         None => Err(VariantError::UnsupportedFormat("unknown".to_string())),
     }
@@ -129,6 +130,11 @@ fn sniff_format(bytes: &[u8], hint: Option<&str>) -> Option<String> {
         if brand == b"heic" {
             return Some("heic".to_string());
         }
+    }
+    // JXL — codestream signature `ff 0a` or container signature
+    // `00 00 00 0c 4a 58 4c 20 0d 0a 87 0a`.
+    if bytes.starts_with(b"\xff\x0a") || bytes.starts_with(b"\x00\x00\x00\x0cJXL \r\n\x87\n") {
+        return Some("jxl".to_string());
     }
     None
 }
@@ -200,6 +206,35 @@ fn decode_webp(bytes: &[u8]) -> Result<(Vec<u8>, u32, u32), VariantError> {
         .read_image(&mut buf)
         .map_err(|e| VariantError::Decode(format!("webp: {e}")))?;
     let rgba = if has_alpha { buf } else { rgb_to_rgba(&buf) };
+    Ok((rgba, w, h))
+}
+
+fn decode_jxl(bytes: &[u8]) -> Result<(Vec<u8>, u32, u32), VariantError> {
+    let img =
+        zenjxl_decoder::decode(bytes).map_err(|e| VariantError::Decode(format!("jxl: {e}")))?;
+    let w = img.width as u32;
+    let h = img.height as u32;
+    let rgba = match img.channels {
+        4 => img.data,
+        2 => {
+            // GrayAlpha → RGBA: replicate luma into RGB, copy alpha.
+            let mut out = Vec::with_capacity((w as usize) * (h as usize) * 4);
+            for chunk in img.data.chunks_exact(2) {
+                let l = chunk[0];
+                let a = chunk[1];
+                out.push(l);
+                out.push(l);
+                out.push(l);
+                out.push(a);
+            }
+            out
+        }
+        n => {
+            return Err(VariantError::Decode(format!(
+                "jxl: unexpected channel count {n}"
+            )));
+        }
+    };
     Ok((rgba, w, h))
 }
 

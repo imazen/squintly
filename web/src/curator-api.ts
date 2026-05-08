@@ -173,6 +173,26 @@ export function postThreshold(req: ThresholdReq): Promise<{ ok: boolean }> {
   return jsonPost('/api/curator/threshold', req);
 }
 
+export interface GenerateVariantReq {
+  decision_id: number;
+  target_max_dim: number;
+  quality?: number;
+}
+
+export interface GenerateVariantResp {
+  ok: boolean;
+  generated_sha256: string;
+  generated_url: string;
+  width: number;
+  height: number;
+  size_bytes: number;
+  source_q: number;
+}
+
+export function generateVariant(req: GenerateVariantReq): Promise<GenerateVariantResp> {
+  return jsonPost('/api/curator/generate-variant', req);
+}
+
 export function getProgress(curator_id: string): Promise<ProgressResp> {
   return jsonGet<ProgressResp>(`/api/curator/progress?curator_id=${encodeURIComponent(curator_id)}`);
 }

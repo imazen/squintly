@@ -5,6 +5,7 @@
 // (1968×2184 unfolded). Layouts adapt to viewport width breakpoints.
 
 import {
+  generateVariant,
   getCuratorId,
   getProgress,
   listLicenses,
@@ -549,8 +550,10 @@ export function startCurator(root: HTMLElement, onExit: () => void): void {
         </div>
         <div class="curator-action-row">
           <button id="back">Back</button>
+          <button id="gen-variant" title="Generate the variant for this size at the saved q">Generate variant</button>
           <button id="save-thr" class="primary">Save threshold</button>
         </div>
+        <div id="gen-status" class="curator-gen-status muted" hidden></div>
       </div>
     `;
     bindNav(root, onExit);
@@ -800,6 +803,39 @@ export function startCurator(root: HTMLElement, onExit: () => void): void {
         void renderStream();
       } catch (e) {
         alert('Could not save threshold: ' + (e as Error).message);
+      }
+    });
+
+    // Generate-variant: kicks off the backend Mitchell-Netravali resize +
+    // jpeg-encode + R2-upload pipeline. Uses the slider's current q so the
+    // curator can preview a variant at any quality without saving the
+    // threshold first.
+    const genBtn = root.querySelector<HTMLButtonElement>('#gen-variant');
+    const genStatus = root.querySelector<HTMLDivElement>('#gen-status');
+    genBtn?.addEventListener('click', async () => {
+      if (state.decision_id == null) return;
+      const q = Number(slider.value);
+      genBtn.disabled = true;
+      if (genStatus) {
+        genStatus.hidden = false;
+        genStatus.textContent = `Generating ${target}px @ q=${q}…`;
+      }
+      try {
+        const resp = await generateVariant({
+          decision_id: state.decision_id,
+          target_max_dim: target,
+          quality: q,
+        });
+        if (genStatus) {
+          const kb = (resp.size_bytes / 1024).toFixed(1);
+          genStatus.innerHTML = `Generated <a href="${escapeAttr(resp.generated_url)}" target="_blank" rel="noreferrer noopener">${resp.width}×${resp.height} JPEG</a> (${kb} KB) at q=${resp.source_q}.`;
+        }
+      } catch (e) {
+        if (genStatus) {
+          genStatus.textContent = `Generate failed: ${(e as Error).message}`;
+        }
+      } finally {
+        genBtn.disabled = false;
       }
     });
 

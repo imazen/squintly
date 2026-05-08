@@ -648,6 +648,138 @@ pub struct DecisionResp {
     pub took: bool,
 }
 
+/// `POST /api/curator/generate-variant` — runs the decode → Mitchell-resize
+/// → JPEG-encode → R2-upload pipeline for a chosen (decision, target_max_dim)
+/// pair. Updates `curator_size_variants` with the generated sha256 + path.
+///
+/// Quality defaults to `q_imperceptible` from the matching threshold row when
+/// available, else 92. Caller can override via `quality`.
+///
+/// AVIF and JXL sources currently return 409 (decoders not yet wired); JPEG,
+/// PNG and WebP work.
+#[derive(Debug, Deserialize)]
+pub struct GenerateVariantReq {
+    pub decision_id: i64,
+    pub target_max_dim: u32,
+    /// Override the JPEG quality. Defaults to the matching threshold's
+    /// `q_imperceptible`, then 92.
+    pub quality: Option<u8>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct GenerateVariantResp {
+    pub ok: bool,
+    pub generated_sha256: String,
+    pub generated_url: String,
+    pub width: u32,
+    pub height: u32,
+    pub size_bytes: usize,
+    pub source_q: u8,
+}
+
+pub async fn generate_variant(
+    State(state): State<SharedState>,
+    Json(req): Json<GenerateVariantReq>,
+) -> Result<Json<GenerateVariantResp>, AppError> {
+    if !(16..=4096).contains(&req.target_max_dim) {
+        return Err(AppError::BadRequest(
+            "target_max_dim must be in [16, 4096]".into(),
+        ));
+    }
+    let row = sqlx::query(
+        "SELECT c.sha256, c.blob_url, c.format \
+         FROM curator_decisions d \
+         JOIN curator_candidates c ON c.sha256 = d.source_sha256 \
+         WHERE d.id = ?",
+    )
+    .bind(req.decision_id)
+    .fetch_optional(&state.pool)
+    .await?
+    .ok_or_else(|| AppError::NotFound(format!("decision {}", req.decision_id)))?;
+    let _source_sha: String = row.get(0);
+    let blob_url: String = row.get(1);
+    let format: Option<String> = row.try_get(2).ok();
+
+    let q = if let Some(q) = req.quality {
+        q
+    } else {
+        let threshold_q: Option<f64> = match sqlx::query(
+            "SELECT q_imperceptible FROM curator_thresholds \
+             WHERE decision_id = ? AND target_max_dim = ?",
+        )
+        .bind(req.decision_id)
+        .bind(req.target_max_dim as i64)
+        .fetch_optional(&state.pool)
+        .await?
+        {
+            Some(r) => r.try_get::<f64, _>(0).ok(),
+            None => None,
+        };
+        threshold_q
+            .map(|q| q.round().clamp(1.0, 100.0) as u8)
+            .unwrap_or(92)
+    };
+
+    let http = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(60))
+        .build()
+        .map_err(|e| AppError::Anyhow(anyhow::anyhow!("http client: {e}")))?;
+    let bytes = crate::variant_gen::fetch_source(&http, &blob_url)
+        .await
+        .map_err(|e| AppError::Anyhow(anyhow::anyhow!(e.to_string())))?;
+
+    let variant =
+        match crate::variant_gen::generate(&bytes, format.as_deref(), req.target_max_dim, q) {
+            Ok(v) => v,
+            Err(crate::variant_gen::VariantError::UnsupportedFormat(f)) => {
+                return Err(AppError::Conflict(format!(
+                    "source format {f} not yet supported by variant pipeline (jpeg/png/webp only)"
+                )));
+            }
+            Err(other) => {
+                return Err(AppError::Anyhow(anyhow::anyhow!(other.to_string())));
+            }
+        };
+
+    let stored = state
+        .suggestions
+        .put_with_prefix(
+            "variants",
+            &variant.sha256,
+            "jpg",
+            &variant.bytes,
+            variant.mime,
+        )
+        .await
+        .map_err(|e| AppError::Anyhow(anyhow::anyhow!("upload: {e}")))?;
+    let url = state
+        .suggestions
+        .public_url(&stored.locator)
+        .unwrap_or_else(|| format!("/api/curator/variant-blob/{}", variant.sha256));
+
+    sqlx::query(
+        "INSERT OR REPLACE INTO curator_size_variants \
+            (decision_id, target_max_dim, generated_sha256, generated_path) \
+         VALUES (?,?,?,?)",
+    )
+    .bind(req.decision_id)
+    .bind(req.target_max_dim as i64)
+    .bind(&variant.sha256)
+    .bind(&url)
+    .execute(&state.pool)
+    .await?;
+
+    Ok(Json(GenerateVariantResp {
+        ok: true,
+        generated_sha256: variant.sha256,
+        generated_url: url,
+        width: variant.width,
+        height: variant.height,
+        size_bytes: variant.bytes.len(),
+        source_q: q,
+    }))
+}
+
 /// `POST /api/curator/decision/undo` — drops the last decision for the given
 /// curator+source, restoring the candidate to undecided. Cascade-deletes any
 /// size variants and thresholds attached to that decision (FK ON DELETE

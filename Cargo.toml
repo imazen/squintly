@@ -41,6 +41,18 @@ url = "2"
 csv = "1"
 rusty-s3 = "0.9.1"
 imagesize = "0.14.0"
+# Variant generation pipeline (decode → Mitchell resize → JPEG encode → R2).
+# zenresize for the resampler — it's the imazen Mitchell-Netravali impl with
+# SIMD. Decode/encode use established pure-Rust crates because zen{jpeg,png,
+# webp,avif} pin to magetypes/archmage versions that aren't all aligned on
+# crates.io as of 2026-05. We can swap to zenjpeg encoding once the
+# transitive version skew lands.
+zenpixels = "0.2.11"
+zenresize = "0.3.1"
+jpeg-decoder = "0.3"
+jpeg-encoder = "0.6"
+png = "0.17"
+image-webp = "0.2"
 
 [dev-dependencies]
 tempfile = "3"

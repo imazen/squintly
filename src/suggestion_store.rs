@@ -65,10 +65,7 @@ impl SuggestionStore {
         }
     }
 
-    /// Persist `bytes` for sha+ext. Returns the canonical URL where the
-    /// frontend can later fetch them. For local-disk backends this is a
-    /// `/api/suggestions/{id}/file` proxy URL the *caller* constructs;
-    /// `put` returns just the storage-side identifier (file path or R2 key).
+    /// Persist `bytes` for sha+ext under the default `suggestions/` prefix.
     pub async fn put(
         &self,
         sha: &str,
@@ -76,9 +73,23 @@ impl SuggestionStore {
         bytes: &[u8],
         mime: &str,
     ) -> Result<StoredObject> {
+        self.put_with_prefix("suggestions", sha, ext, bytes, mime)
+            .await
+    }
+
+    /// Persist under a custom top-level prefix (e.g. `"variants"`). Same
+    /// content-addressed `{xx}/{yy}/{sha}.{ext}` layout under the prefix.
+    pub async fn put_with_prefix(
+        &self,
+        prefix: &str,
+        sha: &str,
+        ext: &str,
+        bytes: &[u8],
+        mime: &str,
+    ) -> Result<StoredObject> {
         match self {
-            SuggestionStore::LocalDisk(s) => s.put(sha, ext, bytes).await,
-            SuggestionStore::R2(r) => r.put(sha, ext, bytes, mime).await,
+            SuggestionStore::LocalDisk(s) => s.put(prefix, sha, ext, bytes).await,
+            SuggestionStore::R2(r) => r.put(prefix, sha, ext, bytes, mime).await,
         }
     }
 
@@ -124,8 +135,8 @@ impl LocalDiskStore {
         Self { base }
     }
 
-    async fn put(&self, sha: &str, ext: &str, bytes: &[u8]) -> Result<StoredObject> {
-        let target = blob_path(&self.base, sha, ext);
+    async fn put(&self, prefix: &str, sha: &str, ext: &str, bytes: &[u8]) -> Result<StoredObject> {
+        let target = blob_path(&self.base.join(prefix), sha, ext);
         if let Some(parent) = target.parent() {
             tokio::fs::create_dir_all(parent)
                 .await
@@ -203,13 +214,13 @@ impl R2Store {
         self.bucket.name()
     }
 
-    fn key_for(sha: &str, ext: &str) -> String {
+    fn key_for(prefix: &str, sha: &str, ext: &str) -> String {
         let (a, b) = if sha.len() >= 4 {
             (&sha[0..2], &sha[2..4])
         } else {
             ("xx", "xx")
         };
-        format!("suggestions/{a}/{b}/{sha}.{ext}")
+        format!("{prefix}/{a}/{b}/{sha}.{ext}")
     }
 
     fn public_url(&self, locator: &str) -> Option<String> {
@@ -218,8 +229,15 @@ impl R2Store {
             .map(|base| format!("{}/{}", base.trim_end_matches('/'), locator))
     }
 
-    async fn put(&self, sha: &str, ext: &str, bytes: &[u8], mime: &str) -> Result<StoredObject> {
-        let key = Self::key_for(sha, ext);
+    async fn put(
+        &self,
+        prefix: &str,
+        sha: &str,
+        ext: &str,
+        bytes: &[u8],
+        mime: &str,
+    ) -> Result<StoredObject> {
+        let key = Self::key_for(prefix, sha, ext);
         let mut action: PutObject = self.bucket.put_object(Some(&self.credentials), &key);
         action
             .headers_mut()
@@ -272,12 +290,24 @@ mod tests {
     #[test]
     fn r2_key_layout() {
         let k = R2Store::key_for(
+            "suggestions",
             "deadbeef0000000000000000000000000000000000000000000000000000beef",
             "jpg",
         );
         assert_eq!(
             k,
             "suggestions/de/ad/deadbeef0000000000000000000000000000000000000000000000000000beef.jpg"
+        );
+        // Variants prefix uses the same content-addressed layout under a
+        // different top-level directory so the bucket can host both.
+        let v = R2Store::key_for(
+            "variants",
+            "abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234",
+            "jpg",
+        );
+        assert_eq!(
+            v,
+            "variants/ab/cd/abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234.jpg"
         );
     }
 
@@ -286,8 +316,12 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let store = LocalDiskStore::new(dir.path().to_path_buf());
         let bytes = b"hello world";
-        let obj = store.put("aabbccdd11223344", "txt", bytes).await.unwrap();
+        let obj = store
+            .put("test", "aabbccdd11223344", "txt", bytes)
+            .await
+            .unwrap();
         assert!(obj.locator.contains("aa/bb/aabbccdd11223344.txt"));
+        assert!(obj.locator.contains("test"));
         let read = store.read(&obj.locator).await.unwrap();
         assert_eq!(read.as_slice(), bytes);
     }

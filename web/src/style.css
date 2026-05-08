@@ -682,6 +682,16 @@ input[type="range"] {
   color: var(--muted);
   font-variant-numeric: tabular-nums;
 }
+.curator-gen-status {
+  font-size: 0.8rem;
+  text-align: center;
+  padding: 8px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  margin-top: 4px;
+}
+.curator-gen-status a { color: var(--accent); }
 
 /* ---------- Suggest form ---------- */
 .suggest-screen {

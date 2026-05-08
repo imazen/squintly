@@ -27,5 +27,6 @@ pub mod streaks;
 pub mod suggestion_store;
 pub mod suggestions;
 pub mod unified;
+pub mod variant_gen;
 
 pub use coefficient::{Coefficient, CoefficientSource};

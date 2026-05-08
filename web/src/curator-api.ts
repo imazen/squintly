@@ -135,11 +135,20 @@ async function jsonPost<TReq, TResp>(url: string, body: TReq): Promise<TResp> {
   return r.json() as Promise<TResp>;
 }
 
-export function streamNext(curator_id: string, opts: { skip?: number; source_q_detected?: number } = {}): Promise<StreamResp> {
+export interface StreamFilter {
+  skip?: number;
+  source_q_detected?: number;
+  corpus?: string[];
+  license_id?: string[];
+}
+
+export function streamNext(curator_id: string, opts: StreamFilter = {}): Promise<StreamResp> {
   const u = new URL('/api/curator/stream/next', location.origin);
   u.searchParams.set('curator_id', curator_id);
   if (opts.skip != null) u.searchParams.set('skip', String(opts.skip));
   if (opts.source_q_detected != null) u.searchParams.set('source_q_detected', String(opts.source_q_detected));
+  if (opts.corpus && opts.corpus.length > 0) u.searchParams.set('corpus', opts.corpus.join(','));
+  if (opts.license_id && opts.license_id.length > 0) u.searchParams.set('license_id', opts.license_id.join(','));
   return jsonGet<StreamResp>(u.pathname + u.search);
 }
 

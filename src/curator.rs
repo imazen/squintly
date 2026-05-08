@@ -472,6 +472,13 @@ pub struct StreamQuery {
     pub source_q_detected: Option<f32>,
     /// Optional: skip this many decided sources (resume-style).
     pub skip: Option<i64>,
+    /// Comma-separated corpus allow-list (e.g. `unsplash-webp,wide-gamut`).
+    /// When set, only candidates whose corpus matches one of these strings
+    /// are eligible. Settings-cog UI populates this from the user's
+    /// preferences in localStorage.
+    pub corpus: Option<String>,
+    /// Comma-separated license-id allow-list (e.g. `unsplash,wikimedia-mixed`).
+    pub license_id: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -488,33 +495,79 @@ pub async fn stream_next(
     State(state): State<SharedState>,
     Query(q): Query<StreamQuery>,
 ) -> Result<Json<StreamResp>, AppError> {
-    let total: i64 = sqlx::query("SELECT COUNT(*) FROM curator_candidates")
-        .fetch_one(&state.pool)
-        .await?
-        .get::<i64, _>(0);
     let curator_id = q.curator_id.unwrap_or_default();
     let skip = q.skip.unwrap_or(0).max(0);
-    let row = sqlx::query(
+    let corpus_filter: Vec<String> = parse_csv_filter(q.corpus.as_deref());
+    let license_filter: Vec<String> = parse_csv_filter(q.license_id.as_deref());
+
+    // Build the WHERE fragment dynamically; bind args after curator_id.
+    let mut where_extra = String::new();
+    if !corpus_filter.is_empty() {
+        where_extra.push_str(" AND c.corpus IN (");
+        for (i, _) in corpus_filter.iter().enumerate() {
+            if i > 0 {
+                where_extra.push(',');
+            }
+            where_extra.push('?');
+        }
+        where_extra.push(')');
+    }
+    if !license_filter.is_empty() {
+        where_extra.push_str(" AND c.license_id IN (");
+        for (i, _) in license_filter.iter().enumerate() {
+            if i > 0 {
+                where_extra.push(',');
+            }
+            where_extra.push('?');
+        }
+        where_extra.push(')');
+    }
+
+    // Total + decided counts honor the same filter so remaining reflects what
+    // the curator actually sees.
+    let total_sql = format!("SELECT COUNT(*) FROM curator_candidates c WHERE 1=1{where_extra}");
+    let mut total_q = sqlx::query(&total_sql);
+    for c in &corpus_filter {
+        total_q = total_q.bind(c);
+    }
+    for l in &license_filter {
+        total_q = total_q.bind(l);
+    }
+    let total: i64 = total_q.fetch_one(&state.pool).await?.get::<i64, _>(0);
+
+    let row_sql = format!(
         "SELECT c.sha256, c.corpus, c.relative_path, c.width, c.height, c.size_bytes, \
                 c.format, c.suspected_category, c.has_alpha, c.has_animation, c.license_id, \
                 c.license_url, c.blob_url, c.order_hint \
          FROM curator_candidates c \
          LEFT JOIN curator_decisions d \
            ON d.source_sha256 = c.sha256 AND d.curator_id = ? \
-         WHERE d.id IS NULL \
+         WHERE d.id IS NULL{where_extra} \
          ORDER BY c.order_hint, c.sha256 \
-         LIMIT 1 OFFSET ?",
-    )
-    .bind(&curator_id)
-    .bind(skip)
-    .fetch_optional(&state.pool)
-    .await?;
+         LIMIT 1 OFFSET ?"
+    );
+    let mut row_q = sqlx::query(&row_sql).bind(&curator_id);
+    for c in &corpus_filter {
+        row_q = row_q.bind(c);
+    }
+    for l in &license_filter {
+        row_q = row_q.bind(l);
+    }
+    let row = row_q.bind(skip).fetch_optional(&state.pool).await?;
 
-    let decided: i64 = sqlx::query("SELECT COUNT(*) FROM curator_decisions WHERE curator_id = ?")
-        .bind(&curator_id)
-        .fetch_one(&state.pool)
-        .await?
-        .get::<i64, _>(0);
+    let decided_sql = format!(
+        "SELECT COUNT(*) FROM curator_decisions d \
+         JOIN curator_candidates c ON c.sha256 = d.source_sha256 \
+         WHERE d.curator_id = ?{where_extra}"
+    );
+    let mut decided_q = sqlx::query(&decided_sql).bind(&curator_id);
+    for c in &corpus_filter {
+        decided_q = decided_q.bind(c);
+    }
+    for l in &license_filter {
+        decided_q = decided_q.bind(l);
+    }
+    let decided: i64 = decided_q.fetch_one(&state.pool).await?.get::<i64, _>(0);
     let remaining = (total - decided).max(0);
 
     if let Some(row) = row {
@@ -1368,6 +1421,20 @@ fn require_curator_admin(provided: &Option<String>) -> Result<(), AppError> {
         return Err(AppError::BadRequest("admin_token mismatch".into()));
     }
     Ok(())
+}
+
+/// Split a comma-separated query-string allow-list, trimming whitespace and
+/// dropping empty entries. Empty input → empty Vec (callers treat that as
+/// "no filter").
+fn parse_csv_filter(s: Option<&str>) -> Vec<String> {
+    s.map(|raw| {
+        raw.split(',')
+            .map(str::trim)
+            .filter(|x| !x.is_empty())
+            .map(str::to_string)
+            .collect()
+    })
+    .unwrap_or_default()
 }
 
 fn ct_eq_str(a: &str, b: &str) -> bool {

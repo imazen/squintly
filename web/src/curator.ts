@@ -7,6 +7,7 @@
 import {
   getCuratorId,
   getProgress,
+  listLicenses,
   postDecision,
   postThreshold,
   streamNext,
@@ -32,12 +33,39 @@ export interface CuratorState {
   selectedSizes: Set<number>;
 }
 
+interface CuratorPrefs {
+  corpus: string[];
+  license_id: string[];
+}
+
+const PREFS_KEY = 'squintly:curator_prefs';
+
+function loadPrefs(): CuratorPrefs {
+  try {
+    const raw = localStorage.getItem(PREFS_KEY);
+    if (!raw) return { corpus: [], license_id: [] };
+    const obj = JSON.parse(raw);
+    return {
+      corpus: Array.isArray(obj.corpus) ? obj.corpus.filter((s: unknown) => typeof s === 'string') : [],
+      license_id: Array.isArray(obj.license_id) ? obj.license_id.filter((s: unknown) => typeof s === 'string') : [],
+    };
+  } catch {
+    return { corpus: [], license_id: [] };
+  }
+}
+
+function savePrefs(p: CuratorPrefs): void {
+  try {
+    localStorage.setItem(PREFS_KEY, JSON.stringify(p));
+  } catch {
+    // localStorage may be unavailable in private mode; non-fatal.
+  }
+}
+
 export function startCurator(root: HTMLElement, onExit: () => void): void {
   const curatorId = getCuratorId();
-  // In-memory list of source-shas decided this session. Undo pops the last
-  // one and recovers the candidate via the backend; persists only across
-  // page reloads if we ever decide to mirror it into localStorage.
   const undoStack: string[] = [];
+  let prefs = loadPrefs();
   const state: CuratorState = {
     screen: 'stream',
     candidate: null,
@@ -58,7 +86,9 @@ export function startCurator(root: HTMLElement, onExit: () => void): void {
         ${renderHeader('Curator — stream')}
         <div class="curator-status-row">
           <span id="status-i-of-n" class="muted"></span>
+          <span id="filter-pill" class="curator-filter-pill" hidden></span>
           <button id="undo" class="curator-undo" ${undoCount === 0 ? 'disabled' : ''} title="Undo last decision (u or z)">↶ Undo${undoCount ? ` (${undoCount})` : ''}</button>
+          <button id="settings" class="curator-settings-btn" aria-label="Filter settings" title="Filter settings">⚙</button>
         </div>
         <div class="curator-viewport" id="cv">
           <div class="muted">Loading next candidate…</div>
@@ -72,10 +102,15 @@ export function startCurator(root: HTMLElement, onExit: () => void): void {
     `;
     bindNav(root, onExit);
     root.querySelector<HTMLButtonElement>('#undo')?.addEventListener('click', () => void doUndo());
+    root.querySelector<HTMLButtonElement>('#settings')?.addEventListener('click', () => void openSettings());
+    updateFilterPill();
     const viewport = root.querySelector<HTMLDivElement>('#cv')!;
     const meta = root.querySelector<HTMLDivElement>('#meta')!;
     try {
-      const resp = await streamNext(curatorId);
+      const resp = await streamNext(curatorId, {
+        corpus: prefs.corpus,
+        license_id: prefs.license_id,
+      });
       if (!resp.candidate) {
         viewport.innerHTML = `<div class="curator-empty"><h2>All decided</h2><p class="muted">${resp.total} candidate(s) reviewed.</p></div>`;
         meta.innerHTML = '';
@@ -136,6 +171,93 @@ export function startCurator(root: HTMLElement, onExit: () => void): void {
       return;
     }
     void renderStream();
+  };
+
+  const updateFilterPill = () => {
+    const pill = root.querySelector<HTMLSpanElement>('#filter-pill');
+    if (!pill) return;
+    const parts: string[] = [];
+    if (prefs.corpus.length > 0) parts.push(`corpus: ${prefs.corpus.length}`);
+    if (prefs.license_id.length > 0) parts.push(`license: ${prefs.license_id.length}`);
+    if (parts.length === 0) {
+      pill.hidden = true;
+      pill.textContent = '';
+    } else {
+      pill.hidden = false;
+      pill.textContent = `filter ${parts.join(' · ')}`;
+    }
+  };
+
+  const openSettings = async () => {
+    const [progress, licenses] = await Promise.all([
+      getProgress(curatorId).catch(() => null),
+      listLicenses().catch(() => [] as LicensePolicy[]),
+    ]);
+    const corpora = (progress?.by_corpus ?? []).slice().sort((a, b) => a.corpus.localeCompare(b.corpus));
+    const scrim = document.createElement('div');
+    scrim.className = 'scrim';
+    scrim.innerHTML = `
+      <div class="card curator-settings-card">
+        <h2>Filter the stream</h2>
+        <p class="muted">Restrict which candidates the curator sees. Empty = no filter (default).</p>
+        <h3>By corpus</h3>
+        <div class="curator-filter-list" id="cf-corpus">
+          ${corpora.length === 0 ? '<p class="muted">No corpora loaded yet.</p>' : corpora.map((c) => {
+            const checked = prefs.corpus.includes(c.corpus) ? 'checked' : '';
+            const remaining = c.total - c.decided;
+            return `<label class="curator-filter-row">
+              <input type="checkbox" data-corpus="${escapeAttr(c.corpus)}" ${checked}>
+              <span class="curator-filter-name">${escapeHtml(c.corpus)}</span>
+              <span class="muted curator-filter-count">${remaining} left of ${c.total}</span>
+            </label>`;
+          }).join('')}
+        </div>
+        <h3>By license</h3>
+        <div class="curator-filter-list" id="cf-license">
+          ${licenses.length === 0 ? '<p class="muted">License registry unavailable.</p>' : licenses.map((p) => {
+            const checked = prefs.license_id.includes(p.id) ? 'checked' : '';
+            return `<label class="curator-filter-row">
+              <input type="checkbox" data-license="${escapeAttr(p.id)}" ${checked}>
+              <span class="curator-filter-name">${escapeHtml(p.label)}</span>
+              <span class="muted curator-filter-count">${p.redistribute_bytes ? '' : 'research-only'}</span>
+            </label>`;
+          }).join('')}
+        </div>
+        <div class="choice-row" style="margin-top:12px;">
+          <button id="cf-clear">Clear filter</button>
+          <button id="cf-cancel">Cancel</button>
+          <button id="cf-apply" class="primary">Apply</button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(scrim);
+    scrim.querySelector<HTMLButtonElement>('#cf-cancel')?.addEventListener('click', () => scrim.remove());
+    scrim.querySelector<HTMLButtonElement>('#cf-clear')?.addEventListener('click', () => {
+      prefs = { corpus: [], license_id: [] };
+      savePrefs(prefs);
+      scrim.remove();
+      void renderStream();
+    });
+    scrim.querySelector<HTMLButtonElement>('#cf-apply')?.addEventListener('click', () => {
+      const corpusSel: string[] = [];
+      scrim
+        .querySelectorAll<HTMLInputElement>('#cf-corpus input[type="checkbox"]:checked')
+        .forEach((b) => {
+          const c = b.dataset.corpus;
+          if (c) corpusSel.push(c);
+        });
+      const licenseSel: string[] = [];
+      scrim
+        .querySelectorAll<HTMLInputElement>('#cf-license input[type="checkbox"]:checked')
+        .forEach((b) => {
+          const c = b.dataset.license;
+          if (c) licenseSel.push(c);
+        });
+      prefs = { corpus: corpusSel, license_id: licenseSel };
+      savePrefs(prefs);
+      scrim.remove();
+      void renderStream();
+    });
   };
 
   const decide = async (kind: 'take' | 'reject' | 'flag', rejectReason?: string) => {
@@ -211,7 +333,11 @@ export function startCurator(root: HTMLElement, onExit: () => void): void {
   let lookaheadEl: HTMLImageElement | null = null;
   const prefetchNext = async () => {
     try {
-      const probe = await streamNext(curatorId, { skip: 1 });
+      const probe = await streamNext(curatorId, {
+        skip: 1,
+        corpus: prefs.corpus,
+        license_id: prefs.license_id,
+      });
       const next = probe.candidate;
       if (!next) return;
       if (lookaheadEl) lookaheadEl.remove();

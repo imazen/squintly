@@ -92,6 +92,7 @@ fn decode_to_rgba(
         Some("jpeg") => decode_jpeg(bytes),
         Some("png") => decode_png(bytes),
         Some("webp") => decode_webp(bytes),
+        Some("avif") => decode_avif(bytes),
         Some(other) => Err(VariantError::UnsupportedFormat(other.to_string())),
         None => Err(VariantError::UnsupportedFormat("unknown".to_string())),
     }
@@ -199,6 +200,42 @@ fn decode_webp(bytes: &[u8]) -> Result<(Vec<u8>, u32, u32), VariantError> {
         .read_image(&mut buf)
         .map_err(|e| VariantError::Decode(format!("webp: {e}")))?;
     let rgba = if has_alpha { buf } else { rgb_to_rgba(&buf) };
+    Ok((rgba, w, h))
+}
+
+fn decode_avif(bytes: &[u8]) -> Result<(Vec<u8>, u32, u32), VariantError> {
+    let buffer = zenavif::decode(bytes).map_err(|e| VariantError::Decode(format!("avif: {e}")))?;
+    let w = buffer.width();
+    let h = buffer.height();
+    let descriptor = buffer.descriptor();
+    let channels = descriptor.channels();
+    let stride = buffer.stride();
+    let raw = buffer.into_vec();
+    // PixelBuffer rows are `stride` bytes each, but the first `width *
+    // channels` bytes per row are pixel data. Repack into a tightly-packed
+    // RGBA Vec<u8>.
+    let row_bytes = (w as usize) * channels;
+    let mut packed = Vec::with_capacity((w as usize) * (h as usize) * channels);
+    for row in 0..(h as usize) {
+        let off = row * stride;
+        if off + row_bytes > raw.len() {
+            return Err(VariantError::Decode(format!(
+                "avif: short buffer (stride={stride} row={row} len={})",
+                raw.len()
+            )));
+        }
+        packed.extend_from_slice(&raw[off..off + row_bytes]);
+    }
+    let rgba = match channels {
+        4 => packed,
+        3 => rgb_to_rgba(&packed),
+        1 => luma_to_rgba(&packed),
+        n => {
+            return Err(VariantError::Decode(format!(
+                "avif: unexpected channel count {n}"
+            )));
+        }
+    };
     Ok((rgba, w, h))
 }
 

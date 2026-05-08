@@ -574,6 +574,37 @@ export function startCurator(root: HTMLElement, onExit: () => void): void {
         await drawEncoded(q);
       }
     };
+    // Snap a slider value to the nearest pre-encoded anchor — used while
+    // the curator is mid-drag so we don't need to JIT encode every tick.
+    const nearestAnchor = (q: number): number => {
+      let best = ANCHOR_QS[0];
+      let bestD = Math.abs(q - best);
+      for (const a of ANCHOR_QS) {
+        const d = Math.abs(q - a);
+        if (d < bestD) {
+          bestD = d;
+          best = a;
+        }
+      }
+      return best;
+    };
+
+    const HOVER_PAUSE_MS = 80; // spec §2.3
+    let hoverTimer: number | null = null;
+    let dragging = false;
+
+    // Immediate path: paint the nearest pre-encoded anchor. Used during drag
+    // so the panels stay responsive without burning the encoder.
+    const drawAnchorSnap = () => {
+      if (showingReference) {
+        drawReference();
+        return;
+      }
+      const targetQ = nearestAnchor(Number(slider.value));
+      // Run drawEncoded but it'll hit the snapshot cache (no JIT encode).
+      void drawEncoded(targetQ);
+    };
+
     const trigger = async () => {
       if (busy) {
         pendingQ = Number(slider.value);
@@ -591,8 +622,34 @@ export function startCurator(root: HTMLElement, onExit: () => void): void {
         }
       }
     };
-    slider.addEventListener('change', trigger);
-    slider.addEventListener('input', () => void trigger());
+
+    // Debounced JIT encode after slider stops moving. Schedules a `trigger()`
+    // call HOVER_PAUSE_MS after the last input event. Cancels itself on each
+    // new input so a continuous drag never queues encodes.
+    const scheduleJit = () => {
+      if (hoverTimer != null) {
+        window.clearTimeout(hoverTimer);
+      }
+      hoverTimer = window.setTimeout(() => {
+        hoverTimer = null;
+        void trigger();
+      }, HOVER_PAUSE_MS);
+    };
+
+    // While dragging: paint the nearest anchor immediately (instant feedback,
+    // no encode cost), then schedule a JIT encode at the actual q value once
+    // the curator pauses. On `change` (drag end / keyboard nudge), encode now.
+    slider.addEventListener('input', () => {
+      if (dragging) drawAnchorSnap();
+      scheduleJit();
+    });
+    slider.addEventListener('change', () => {
+      if (hoverTimer != null) {
+        window.clearTimeout(hoverTimer);
+        hoverTimer = null;
+      }
+      void trigger();
+    });
 
     // On pointerup the spec asks for both panels to swap to the uncompressed
     // source so the curator has a fixed reference for the saved threshold.
@@ -605,16 +662,28 @@ export function startCurator(root: HTMLElement, onExit: () => void): void {
       splitEl.dataset.mode = on ? 'reference' : 'encoded';
       void trigger();
     };
-    slider.addEventListener('pointerup', () => setReferenceMode(true));
-    slider.addEventListener('touchend', () => setReferenceMode(true));
-    slider.addEventListener('pointerdown', () => setReferenceMode(false));
-    slider.addEventListener('touchstart', () => setReferenceMode(false), { passive: true });
+    slider.addEventListener('pointerup', () => {
+      dragging = false;
+      setReferenceMode(true);
+    });
+    slider.addEventListener('touchend', () => {
+      dragging = false;
+      setReferenceMode(true);
+    });
+    slider.addEventListener('pointerdown', () => {
+      dragging = true;
+      setReferenceMode(false);
+    });
+    slider.addEventListener('touchstart', () => {
+      dragging = true;
+      setReferenceMode(false);
+    }, { passive: true });
     toggleRef.addEventListener('click', () => setReferenceMode(!showingReference));
 
     // Drag-to-pan on the split. Touch + mouse via Pointer Events. Shares one
     // offset across both panels so they stay aligned. Delta is in CSS pixels;
     // convert to image-pixel-space by × dpr (left canvas is 1:1 device).
-    let dragging = false;
+    let panning = false;
     let lastX = 0;
     let lastY = 0;
     let activePointer: number | null = null;
@@ -622,7 +691,7 @@ export function startCurator(root: HTMLElement, onExit: () => void): void {
     const onPointerDown = (e: PointerEvent) => {
       if (activePointer != null) return;
       activePointer = e.pointerId;
-      dragging = true;
+      panning = true;
       lastX = e.clientX;
       lastY = e.clientY;
       splitEl.setPointerCapture(e.pointerId);
@@ -630,7 +699,7 @@ export function startCurator(root: HTMLElement, onExit: () => void): void {
       e.preventDefault();
     };
     const onPointerMove = (e: PointerEvent) => {
-      if (!dragging || e.pointerId !== activePointer) return;
+      if (!panning || e.pointerId !== activePointer) return;
       const dx = (e.clientX - lastX) * dpr;
       const dy = (e.clientY - lastY) * dpr;
       lastX = e.clientX;
@@ -643,7 +712,7 @@ export function startCurator(root: HTMLElement, onExit: () => void): void {
     };
     const onPointerUp = (e: PointerEvent) => {
       if (e.pointerId !== activePointer) return;
-      dragging = false;
+      panning = false;
       activePointer = null;
       splitEl.classList.remove('panning');
       try { splitEl.releasePointerCapture(e.pointerId); } catch { /* ignore */ }

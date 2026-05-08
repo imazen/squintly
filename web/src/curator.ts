@@ -10,6 +10,7 @@ import {
   postDecision,
   postThreshold,
   streamNext,
+  undoDecision,
   type BppGate,
   type Candidate,
   type DecisionGroups,
@@ -33,6 +34,10 @@ export interface CuratorState {
 
 export function startCurator(root: HTMLElement, onExit: () => void): void {
   const curatorId = getCuratorId();
+  // In-memory list of source-shas decided this session. Undo pops the last
+  // one and recovers the candidate via the backend; persists only across
+  // page reloads if we ever decide to mirror it into localStorage.
+  const undoStack: string[] = [];
   const state: CuratorState = {
     screen: 'stream',
     candidate: null,
@@ -47,9 +52,14 @@ export function startCurator(root: HTMLElement, onExit: () => void): void {
   const renderStream = async () => {
     state.screen = 'stream';
     state.candidate = null;
+    const undoCount = undoStack.length;
     root.innerHTML = `
       <div class="curator-screen curator-stream" data-screen="stream">
         ${renderHeader('Curator — stream')}
+        <div class="curator-status-row">
+          <span id="status-i-of-n" class="muted"></span>
+          <button id="undo" class="curator-undo" ${undoCount === 0 ? 'disabled' : ''} title="Undo last decision (u or z)">↶ Undo${undoCount ? ` (${undoCount})` : ''}</button>
+        </div>
         <div class="curator-viewport" id="cv">
           <div class="muted">Loading next candidate…</div>
         </div>
@@ -61,6 +71,7 @@ export function startCurator(root: HTMLElement, onExit: () => void): void {
       </div>
     `;
     bindNav(root, onExit);
+    root.querySelector<HTMLButtonElement>('#undo')?.addEventListener('click', () => void doUndo());
     const viewport = root.querySelector<HTMLDivElement>('#cv')!;
     const meta = root.querySelector<HTMLDivElement>('#meta')!;
     try {
@@ -83,6 +94,11 @@ export function startCurator(root: HTMLElement, onExit: () => void): void {
       renderStreamImage(viewport, resp.candidate);
       meta.innerHTML = renderCandidateMeta(resp.candidate, resp.license, resp.remaining, resp.total)
         + renderBppGate(resp.bpp_gate);
+      const status = root.querySelector<HTMLSpanElement>('#status-i-of-n');
+      if (status) {
+        const decided = resp.total - resp.remaining;
+        status.textContent = `${decided} / ${resp.total}`;
+      }
       void prefetchNext();
       installSwipe(viewport, {
         onRight: () => decide('take'),
@@ -98,9 +114,28 @@ export function startCurator(root: HTMLElement, onExit: () => void): void {
   };
 
   const keyHandler = (e: KeyboardEvent) => {
-    if (state.screen !== 'stream' || !state.candidate) return;
-    if (e.key === 'ArrowRight' || e.key === 'f') void decide('take');
-    if (e.key === 'ArrowLeft' || e.key === 's') void decide('reject');
+    if (state.screen !== 'stream') return;
+    if (state.candidate && (e.key === 'ArrowRight' || e.key === 'f')) {
+      void decide('take');
+    } else if (state.candidate && (e.key === 'ArrowLeft' || e.key === 's')) {
+      void decide('reject');
+    } else if (e.key === 'u' || e.key === 'z') {
+      void doUndo();
+    }
+  };
+
+  const doUndo = async () => {
+    const sha = undoStack.pop();
+    try {
+      const resp = await undoDecision(curatorId, sha);
+      if (!resp.undone) return;
+    } catch (e) {
+      console.warn('undo failed', e);
+      // Restore the stack so the user can retry.
+      if (sha) undoStack.push(sha);
+      return;
+    }
+    void renderStream();
   };
 
   const decide = async (kind: 'take' | 'reject' | 'flag', rejectReason?: string) => {
@@ -117,12 +152,17 @@ export function startCurator(root: HTMLElement, onExit: () => void): void {
           decision_viewport_w: window.innerWidth,
           decision_viewport_h: window.innerHeight,
         });
+        undoStack.push(cand.sha256);
+        if (undoStack.length > 50) undoStack.shift();
       } catch (e) {
         console.warn('decision failed', e);
       }
       void renderStream();
       return;
     }
+    // For 'take' the actual decision write happens inside renderCurate via
+    // saveDecision(). Stack push happens there too so an undo from curate
+    // works as expected.
     document.removeEventListener('keydown', keyHandler);
     void renderCurate();
   };
@@ -285,6 +325,8 @@ export function startCurator(root: HTMLElement, onExit: () => void): void {
         decision_viewport_w: window.innerWidth,
         decision_viewport_h: window.innerHeight,
       });
+      undoStack.push(state.candidate.sha256);
+      if (undoStack.length > 50) undoStack.shift();
       return resp.decision_id;
     } catch (e) {
       console.warn('saveDecision failed', e);

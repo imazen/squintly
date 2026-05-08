@@ -182,6 +182,7 @@ async fn main() -> Result<()> {
         // Curator mode (corpus development).
         .route("/curator/stream/next", get(curator::stream_next))
         .route("/curator/decision", post(curator::decision))
+        .route("/curator/decision/undo", post(curator::undo_decision))
         .route("/curator/threshold", post(curator::threshold))
         .route("/curator/progress", get(curator::progress))
         .route("/curator/manifest", post(curator::load_manifest))

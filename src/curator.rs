@@ -580,6 +580,84 @@ pub struct DecisionResp {
     pub took: bool,
 }
 
+/// `POST /api/curator/decision/undo` — drops the last decision for the given
+/// curator+source, restoring the candidate to undecided. Cascade-deletes any
+/// size variants and thresholds attached to that decision (FK ON DELETE
+/// CASCADE in 0007_curator.sql). The caller picks which sha to undo —
+/// frontend tracks "last decided" in memory rather than us doing time-based
+/// guessing.
+#[derive(Debug, Deserialize)]
+pub struct UndoReq {
+    pub curator_id: String,
+    /// Optional: when omitted, undo the most-recently-decided source for
+    /// this curator (from `decided_at`). Provide explicitly when the client
+    /// wants to undo a specific earlier decision.
+    pub source_sha256: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct UndoResp {
+    pub undone: bool,
+    pub source_sha256: Option<String>,
+    pub had_threshold: bool,
+}
+
+pub async fn undo_decision(
+    State(state): State<SharedState>,
+    Json(req): Json<UndoReq>,
+) -> Result<Json<UndoResp>, AppError> {
+    if req.curator_id.is_empty() {
+        return Err(AppError::BadRequest("curator_id required".into()));
+    }
+    // Find the target row.
+    let row = if let Some(sha) = req.source_sha256.as_deref() {
+        sqlx::query(
+            "SELECT id, source_sha256 FROM curator_decisions \
+             WHERE curator_id = ? AND source_sha256 = ? \
+             ORDER BY decided_at DESC LIMIT 1",
+        )
+        .bind(&req.curator_id)
+        .bind(sha)
+        .fetch_optional(&state.pool)
+        .await?
+    } else {
+        sqlx::query(
+            "SELECT id, source_sha256 FROM curator_decisions \
+             WHERE curator_id = ? ORDER BY decided_at DESC LIMIT 1",
+        )
+        .bind(&req.curator_id)
+        .fetch_optional(&state.pool)
+        .await?
+    };
+    let row = match row {
+        Some(r) => r,
+        None => {
+            return Ok(Json(UndoResp {
+                undone: false,
+                source_sha256: None,
+                had_threshold: false,
+            }));
+        }
+    };
+    let id: i64 = row.get(0);
+    let sha: String = row.get(1);
+    let threshold_count: i64 =
+        sqlx::query("SELECT COUNT(*) FROM curator_thresholds WHERE decision_id = ?")
+            .bind(id)
+            .fetch_one(&state.pool)
+            .await?
+            .get::<i64, _>(0);
+    sqlx::query("DELETE FROM curator_decisions WHERE id = ?")
+        .bind(id)
+        .execute(&state.pool)
+        .await?;
+    Ok(Json(UndoResp {
+        undone: true,
+        source_sha256: Some(sha),
+        had_threshold: threshold_count > 0,
+    }))
+}
+
 pub async fn decision(
     State(state): State<SharedState>,
     Json(req): Json<DecisionReq>,

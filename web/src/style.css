@@ -516,6 +516,30 @@ input[type="range"] {
   font-size: 0.75rem;
   margin: 0 0 6px;
 }
+.curator-status-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 4px;
+  font-size: 0.85rem;
+  font-variant-numeric: tabular-nums;
+}
+.curator-undo {
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 4px 12px;
+  font-size: 0.8rem;
+}
+.curator-undo[disabled] {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.curator-undo:not([disabled]):hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
 
 /* ---------- Suggest form ---------- */
 .suggest-screen {

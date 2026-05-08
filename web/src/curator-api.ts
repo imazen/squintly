@@ -147,6 +147,16 @@ export function postDecision(req: DecisionReq): Promise<DecisionResp> {
   return jsonPost('/api/curator/decision', req);
 }
 
+export interface UndoResp {
+  undone: boolean;
+  source_sha256: string | null;
+  had_threshold: boolean;
+}
+
+export function undoDecision(curator_id: string, source_sha256?: string): Promise<UndoResp> {
+  return jsonPost('/api/curator/decision/undo', { curator_id, source_sha256 });
+}
+
 export function postThreshold(req: ThresholdReq): Promise<{ ok: boolean }> {
   return jsonPost('/api/curator/threshold', req);
 }

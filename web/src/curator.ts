@@ -139,6 +139,8 @@ export function startCurator(root: HTMLElement, onExit: () => void): void {
         onRight: () => decide('take'),
         onLeft: () => decide('reject'),
         onDown: () => promptFlag(),
+        onPeekStart: () => showPeekOverlay(viewport, state.candidate, state.bppGate, state.license),
+        onPeekEnd: () => hidePeekOverlay(viewport),
       });
     } catch (e) {
       viewport.innerHTML = `<div class="curator-empty"><h2>Stream error</h2><p class="muted">${escapeHtml(String((e as Error).message))}</p><p class="muted">POST a manifest to <code>/api/curator/manifest</code> first.</p></div>`;
@@ -757,6 +759,43 @@ function groupCell(g: keyof DecisionGroups, label: string): string {
   return `<button class="curator-group-btn" data-group="${g}" role="checkbox" aria-checked="false">${escapeHtml(label)}</button>`;
 }
 
+function showPeekOverlay(
+  host: HTMLElement,
+  c: Candidate | null,
+  gate: BppGate | null,
+  license: LicensePolicy | null,
+): void {
+  if (!c) return;
+  hidePeekOverlay(host);
+  const overlay = document.createElement('div');
+  overlay.className = 'curator-peek-overlay';
+  const dims = c.width && c.height ? `${c.width}×${c.height}` : 'unknown dims';
+  const sz = c.size_bytes ? `${(c.size_bytes / 1024).toFixed(0)} KB` : '?';
+  const fmt = c.format ?? '?';
+  const cat = c.suspected_category ? `<div class="peek-row"><span>category</span><span>${escapeHtml(c.suspected_category)}</span></div>` : '';
+  const bppLine = gate?.bpp != null ? `<div class="peek-row"><span>bpp</span><span>${gate.bpp.toFixed(2)} (${gate.verdict})</span></div>` : '';
+  const licLine = license
+    ? `<div class="peek-row"><span>license</span><span>${escapeHtml(license.label)}</span></div>`
+    : '';
+  overlay.innerHTML = `
+    <div class="peek-card">
+      <div class="peek-row peek-sha"><span>sha256</span><code>${escapeHtml(c.sha256.slice(0, 16))}…</code></div>
+      <div class="peek-row"><span>corpus</span><span>${escapeHtml(c.corpus)}</span></div>
+      ${cat}
+      <div class="peek-row"><span>format</span><span>${escapeHtml(fmt)}</span></div>
+      <div class="peek-row"><span>dims</span><span>${dims}</span></div>
+      <div class="peek-row"><span>size</span><span>${sz}</span></div>
+      ${bppLine}
+      ${licLine}
+    </div>
+  `;
+  host.appendChild(overlay);
+}
+
+function hidePeekOverlay(host: HTMLElement): void {
+  host.querySelectorAll('.curator-peek-overlay').forEach((el) => el.remove());
+}
+
 function renderBppGate(gate: BppGate | null): string {
   if (!gate) return '';
   const cls =
@@ -849,7 +888,11 @@ interface SwipeHandlers {
   onRight: () => void;
   onLeft: () => void;
   onDown?: () => void;
-  onUpHold?: (start: () => void, end: () => void) => void;
+  /// Fires after a long-press threshold (320 ms). Use for the spec §2.1
+  /// "tap and hold → metadata overlay" gesture.
+  onPeekStart?: () => void;
+  /// Fires on pointerup or cancel after a peek started.
+  onPeekEnd?: () => void;
 }
 
 function installSwipe(host: HTMLElement, h: SwipeHandlers): void {
@@ -864,10 +907,10 @@ function installSwipe(host: HTMLElement, h: SwipeHandlers): void {
     down = true;
     startX = e.clientX;
     startY = e.clientY;
-    if (h.onUpHold) {
+    if (h.onPeekStart) {
       holdTimer = window.setTimeout(() => {
         isHolding = true;
-        h.onUpHold?.(() => {}, () => {});
+        h.onPeekStart?.();
       }, PEEK_DELAY_MS);
     }
   });
@@ -875,6 +918,9 @@ function installSwipe(host: HTMLElement, h: SwipeHandlers): void {
     if (holdTimer != null) {
       window.clearTimeout(holdTimer);
       holdTimer = null;
+    }
+    if (isHolding) {
+      h.onPeekEnd?.();
     }
     isHolding = false;
   };
@@ -884,7 +930,6 @@ function installSwipe(host: HTMLElement, h: SwipeHandlers): void {
     down = false;
     const dx = e.clientX - startX;
     const dy = e.clientY - startY;
-    if (isHolding) return;
     if (Math.abs(dx) > 80 && Math.abs(dx) > Math.abs(dy)) {
       if (dx > 0) h.onRight();
       else h.onLeft();
@@ -895,6 +940,14 @@ function installSwipe(host: HTMLElement, h: SwipeHandlers): void {
   host.addEventListener('pointercancel', () => {
     cancelHold();
     down = false;
+  });
+  // If pointer leaves while still down, don't trigger a swipe — but cancel
+  // the hold timer so we don't fire onPeekStart on an already-released touch.
+  host.addEventListener('pointerleave', () => {
+    if (holdTimer != null) {
+      window.clearTimeout(holdTimer);
+      holdTimer = null;
+    }
   });
 }
 

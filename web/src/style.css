@@ -600,6 +600,48 @@ input[type="range"] {
   font-size: 0.75rem;
   font-variant-numeric: tabular-nums;
 }
+.curator-peek-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding: 12px;
+  background: linear-gradient(to top, rgba(0,0,0,0.9), rgba(0,0,0,0.5));
+  pointer-events: none;
+  animation: peek-fade-in 120ms ease-out;
+  z-index: 5;
+}
+@keyframes peek-fade-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+.curator-peek-overlay .peek-card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 12px 14px;
+  font-size: 0.78rem;
+  line-height: 1.5;
+  width: 100%;
+  max-width: 420px;
+  font-variant-numeric: tabular-nums;
+}
+.curator-peek-overlay .peek-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+.curator-peek-overlay .peek-row > span:first-child {
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: 0.65rem;
+}
+.curator-peek-overlay .peek-sha code {
+  font-size: 0.72rem;
+}
+.curator-viewport { position: relative; }
 
 /* ---------- Suggest form ---------- */
 .suggest-screen {

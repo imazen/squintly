@@ -58,6 +58,11 @@ pub struct Candidate {
     /// URL the browser should fetch to render the image. Empty if unknown.
     pub blob_url: String,
     pub order_hint: i64,
+    /// libjpeg-style quality estimate (1-100) for JPEG sources, parsed from
+    /// the DQT marker by `src/jpeg_q.rs`. Backfilled by
+    /// `POST /api/curator/backfill-dims`. None for non-JPEG sources or rows
+    /// not yet backfilled.
+    pub source_q_detected: Option<f32>,
 }
 
 impl Candidate {
@@ -137,6 +142,7 @@ pub fn parse_tsv_manifest(
             license_url: map.get("license_url").map(|s| s.to_string()),
             blob_url: blob_url_for_path(&corpus, &relative_path),
             order_hint: order,
+            source_q_detected: None,
         });
         order += 1;
     }
@@ -201,6 +207,7 @@ pub fn parse_jsonl_manifest(
                 .map(str::to_string),
             blob_url: blob_url_for_sha(&sha),
             order_hint: order,
+            source_q_detected: None,
         });
         order += 1;
     }
@@ -249,15 +256,15 @@ pub async fn upsert_candidates(pool: &SqlitePool, candidates: &[Candidate]) -> R
              ON CONFLICT(sha256) DO UPDATE SET \
                 corpus = excluded.corpus, \
                 relative_path = excluded.relative_path, \
-                width = excluded.width, \
-                height = excluded.height, \
-                size_bytes = excluded.size_bytes, \
-                format = excluded.format, \
-                suspected_category = excluded.suspected_category, \
+                width = COALESCE(excluded.width, width), \
+                height = COALESCE(excluded.height, height), \
+                size_bytes = COALESCE(excluded.size_bytes, size_bytes), \
+                format = COALESCE(excluded.format, format), \
+                suspected_category = COALESCE(excluded.suspected_category, suspected_category), \
                 has_alpha = excluded.has_alpha, \
                 has_animation = excluded.has_animation, \
                 license_id = excluded.license_id, \
-                license_url = excluded.license_url, \
+                license_url = COALESCE(excluded.license_url, license_url), \
                 blob_url = excluded.blob_url, \
                 order_hint = excluded.order_hint",
         )
@@ -288,7 +295,7 @@ async fn fetch_candidate(pool: &SqlitePool, sha: &str) -> Result<Option<Candidat
     let row = sqlx::query(
         "SELECT sha256, corpus, relative_path, width, height, size_bytes, format, \
                 suspected_category, has_alpha, has_animation, license_id, license_url, \
-                blob_url, order_hint \
+                blob_url, order_hint, source_q_detected \
          FROM curator_candidates WHERE sha256 = ?",
     )
     .bind(sha)
@@ -327,6 +334,11 @@ fn row_to_candidate(row: sqlx::sqlite::SqliteRow) -> Candidate {
         license_url: row.try_get(11).ok(),
         blob_url: row.try_get(12).unwrap_or_default(),
         order_hint: row.try_get(13).unwrap_or(0),
+        source_q_detected: row
+            .try_get::<Option<f64>, _>(14)
+            .ok()
+            .flatten()
+            .map(|q| q as f32),
     }
 }
 
@@ -538,7 +550,7 @@ pub async fn stream_next(
     let row_sql = format!(
         "SELECT c.sha256, c.corpus, c.relative_path, c.width, c.height, c.size_bytes, \
                 c.format, c.suspected_category, c.has_alpha, c.has_animation, c.license_id, \
-                c.license_url, c.blob_url, c.order_hint \
+                c.license_url, c.blob_url, c.order_hint, c.source_q_detected \
          FROM curator_candidates c \
          LEFT JOIN curator_decisions d \
            ON d.source_sha256 = c.sha256 AND d.curator_id = ? \
@@ -572,7 +584,10 @@ pub async fn stream_next(
 
     if let Some(row) = row {
         let c = row_to_candidate(row);
-        let suggestion = suggest(&c, q.source_q_detected);
+        // Per-row detected q wins unless the caller explicitly overrides via
+        // ?source_q_detected= (useful for ad-hoc what-ifs from the UI).
+        let q_for_suggest = q.source_q_detected.or(c.source_q_detected);
+        let suggestion = suggest(&c, q_for_suggest);
         let gate = bpp_gate(&c);
         let lic = c.license();
         Ok(Json(StreamResp {
@@ -1298,6 +1313,18 @@ pub struct BackfillDimsResp {
     pub parsed_ok: usize,
     pub updated: usize,
     pub failures: usize,
+    /// Of the rows where we got bytes, how many also produced a JPEG quality
+    /// estimate via DQT-table parse. Non-JPEGs always count as 0 here.
+    pub q_estimated: usize,
+}
+
+#[derive(Debug, Deserialize, Default)]
+pub struct BackfillDimsReqMode {
+    /// When true, also re-process rows that already have dims but are missing
+    /// `source_q_detected` (useful after the 0009 migration on a DB that
+    /// already has populated widths).
+    #[serde(default)]
+    pub include_dim_ok_missing_q: bool,
 }
 
 pub async fn backfill_dims(
@@ -1310,13 +1337,28 @@ pub async fn backfill_dims(
         .fetch_bytes
         .unwrap_or(262_144)
         .clamp(1024, 4 * 1024 * 1024);
-    let rows = sqlx::query("SELECT sha256, blob_url FROM curator_candidates WHERE width IS NULL OR height IS NULL OR width = 0 OR height = 0 ORDER BY order_hint LIMIT ?")
-        .bind(limit)
-        .fetch_all(&state.pool)
-        .await?;
-    let candidates: Vec<(String, String)> = rows
+    // We process rows missing dims OR (after the 0009 migration) missing
+    // source_q_detected on JPEG sources. The single SQL covers both because
+    // backfill is idempotent — re-fetching a row that already has dims still
+    // costs the same range request, but lets us populate q in one pass.
+    let rows = sqlx::query(
+        "SELECT sha256, blob_url, format FROM curator_candidates \
+         WHERE width IS NULL OR height IS NULL OR width = 0 OR height = 0 \
+            OR (format = 'jpeg' AND source_q_detected IS NULL) \
+         ORDER BY order_hint LIMIT ?",
+    )
+    .bind(limit)
+    .fetch_all(&state.pool)
+    .await?;
+    let candidates: Vec<(String, String, Option<String>)> = rows
         .into_iter()
-        .map(|r| (r.get::<String, _>(0), r.get::<String, _>(1)))
+        .map(|r| {
+            (
+                r.get::<String, _>(0),
+                r.get::<String, _>(1),
+                r.try_get::<Option<String>, _>(2).ok().flatten(),
+            )
+        })
         .collect();
     let considered = candidates.len();
     if considered == 0 {
@@ -1326,6 +1368,7 @@ pub async fn backfill_dims(
             parsed_ok: 0,
             updated: 0,
             failures: 0,
+            q_estimated: 0,
         }));
     }
     let http = reqwest::Client::builder()
@@ -1333,9 +1376,16 @@ pub async fn backfill_dims(
         .build()
         .map_err(|e| AppError::Anyhow(anyhow::anyhow!("http client: {e}")))?;
 
+    struct Probe {
+        sha: String,
+        dims: Option<(i64, i64)>,
+        q: Option<f32>,
+        err: String,
+    }
+
     let semaphore = std::sync::Arc::new(tokio::sync::Semaphore::new(16));
     let mut tasks = tokio::task::JoinSet::new();
-    for (sha, url) in candidates {
+    for (sha, url, fmt) in candidates {
         let sem = semaphore.clone();
         let http = http.clone();
         tasks.spawn(async move {
@@ -1347,25 +1397,61 @@ pub async fn backfill_dims(
                 .await;
             let resp = match resp {
                 Ok(r) if r.status().is_success() || r.status().as_u16() == 206 => r,
-                Ok(r) => return (sha, None, format!("HTTP {}", r.status())),
-                Err(e) => return (sha, None, format!("{e}")),
+                Ok(r) => {
+                    return Probe {
+                        sha,
+                        dims: None,
+                        q: None,
+                        err: format!("HTTP {}", r.status()),
+                    };
+                }
+                Err(e) => {
+                    return Probe {
+                        sha,
+                        dims: None,
+                        q: None,
+                        err: format!("{e}"),
+                    };
+                }
             };
             let bytes = match resp.bytes().await {
                 Ok(b) => b,
-                Err(e) => return (sha, None, format!("read body: {e}")),
+                Err(e) => {
+                    return Probe {
+                        sha,
+                        dims: None,
+                        q: None,
+                        err: format!("read body: {e}"),
+                    };
+                }
             };
-            match imagesize::blob_size(&bytes) {
-                Ok(d) => (sha, Some((d.width as i64, d.height as i64)), String::new()),
-                Err(e) => (sha, None, format!("parse: {e}")),
-            }
+            let dims = imagesize::blob_size(&bytes)
+                .ok()
+                .map(|d| (d.width as i64, d.height as i64));
+            // q estimate only meaningful for JPEGs — try anyway and discard
+            // if format mismatches.
+            let q = if matches!(fmt.as_deref(), Some("jpeg") | Some("jpg") | Some("JPEG"))
+                || (fmt.is_none() && bytes.len() >= 4 && bytes[0] == 0xFF && bytes[1] == 0xD8)
+            {
+                crate::jpeg_q::estimate_quality(&bytes)
+            } else {
+                None
+            };
+            let err = if dims.is_none() {
+                "could not parse dims".to_string()
+            } else {
+                String::new()
+            };
+            Probe { sha, dims, q, err }
         });
     }
     let mut fetched_ok = 0usize;
     let mut parsed_ok = 0usize;
     let mut updated = 0usize;
     let mut failures = 0usize;
+    let mut q_estimated = 0usize;
     while let Some(joined) = tasks.join_next().await {
-        let (sha, dims, err) = match joined {
+        let probe = match joined {
             Ok(t) => t,
             Err(e) => {
                 tracing::warn!(error = %e, "backfill task panicked");
@@ -1373,27 +1459,44 @@ pub async fn backfill_dims(
                 continue;
             }
         };
-        if let Some((w, h)) = dims {
-            fetched_ok += 1;
-            parsed_ok += 1;
-            let res =
-                sqlx::query("UPDATE curator_candidates SET width = ?, height = ? WHERE sha256 = ?")
-                    .bind(w)
-                    .bind(h)
-                    .bind(&sha)
-                    .execute(&state.pool)
-                    .await;
-            match res {
-                Ok(r) if r.rows_affected() > 0 => updated += 1,
-                Ok(_) => {}
-                Err(e) => {
-                    failures += 1;
-                    tracing::warn!(sha, error = %e, "update failed");
-                }
-            }
-        } else {
+        // We treat any row where we successfully read bytes as "fetched_ok",
+        // even if dims didn't parse — since q may still come through.
+        let any_signal = probe.dims.is_some() || probe.q.is_some();
+        if !any_signal {
             failures += 1;
-            tracing::debug!(sha, err, "backfill could not parse dims");
+            tracing::debug!(sha = %probe.sha, err = %probe.err, "backfill no signal");
+            continue;
+        }
+        fetched_ok += 1;
+        if probe.dims.is_some() {
+            parsed_ok += 1;
+        }
+        if probe.q.is_some() {
+            q_estimated += 1;
+        }
+        // Build an UPDATE that only touches the columns we have a value for.
+        // SQLite's COALESCE pattern keeps the existing column when the
+        // bound parameter is NULL.
+        let res = sqlx::query(
+            "UPDATE curator_candidates SET \
+                width = COALESCE(?, width), \
+                height = COALESCE(?, height), \
+                source_q_detected = COALESCE(?, source_q_detected) \
+             WHERE sha256 = ?",
+        )
+        .bind(probe.dims.map(|d| d.0))
+        .bind(probe.dims.map(|d| d.1))
+        .bind(probe.q.map(|q| q as f64))
+        .bind(&probe.sha)
+        .execute(&state.pool)
+        .await;
+        match res {
+            Ok(r) if r.rows_affected() > 0 => updated += 1,
+            Ok(_) => {}
+            Err(e) => {
+                failures += 1;
+                tracing::warn!(sha = %probe.sha, error = %e, "update failed");
+            }
         }
     }
     Ok(Json(BackfillDimsResp {
@@ -1402,6 +1505,7 @@ pub async fn backfill_dims(
         parsed_ok,
         updated,
         failures,
+        q_estimated,
     }))
 }
 
@@ -1513,6 +1617,7 @@ mod tests {
             license_url: None,
             blob_url: "https://r2/x".into(),
             order_hint: 0,
+            source_q_detected: None,
         };
         let s = suggest(&c, Some(96.0));
         assert!(s.groups.contains(&"core_zensim"));
@@ -1536,6 +1641,7 @@ mod tests {
             license_url: None,
             blob_url: "https://r2/x".into(),
             order_hint: 0,
+            source_q_detected: None,
         };
         let s = suggest(&c, Some(50.0));
         // 2400 / 8 = 300 → 64, 128, 256 fit; 384+ get filtered out.
@@ -1559,6 +1665,7 @@ mod tests {
             license_url: None,
             blob_url: "https://r2/x".into(),
             order_hint: 0,
+            source_q_detected: None,
         };
         let s = suggest(&c, None);
         // dims unknown → curator should be able to pick any chip
@@ -1584,6 +1691,7 @@ mod tests {
             license_url: None,
             blob_url: "https://r2/x".into(),
             order_hint: 0,
+            source_q_detected: None,
         };
         let g = bpp_gate(&c);
         assert!(matches!(g.verdict, BppVerdict::Unknown));
@@ -1608,6 +1716,7 @@ mod tests {
             license_url: None,
             blob_url: "https://r2/x".into(),
             order_hint: 0,
+            source_q_detected: None,
         };
         let g = bpp_gate(&c);
         assert!(matches!(g.verdict, BppVerdict::Low));
@@ -1633,6 +1742,7 @@ mod tests {
             license_url: None,
             blob_url: "https://r2/x".into(),
             order_hint: 0,
+            source_q_detected: None,
         };
         let g = bpp_gate(&c);
         assert!(matches!(g.verdict, BppVerdict::Ok), "got {:?}", g.verdict);
@@ -1656,6 +1766,7 @@ mod tests {
             license_url: None,
             blob_url: "https://r2/x".into(),
             order_hint: 0,
+            source_q_detected: None,
         };
         let g = bpp_gate(&c);
         assert!(matches!(g.verdict, BppVerdict::Low), "got {:?}", g.verdict);

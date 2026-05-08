@@ -774,6 +774,9 @@ function showPeekOverlay(
   const fmt = c.format ?? '?';
   const cat = c.suspected_category ? `<div class="peek-row"><span>category</span><span>${escapeHtml(c.suspected_category)}</span></div>` : '';
   const bppLine = gate?.bpp != null ? `<div class="peek-row"><span>bpp</span><span>${gate.bpp.toFixed(2)} (${gate.verdict})</span></div>` : '';
+  const qLine = c.source_q_detected != null
+    ? `<div class="peek-row"><span>source q</span><span>${c.source_q_detected.toFixed(1)}</span></div>`
+    : '';
   const licLine = license
     ? `<div class="peek-row"><span>license</span><span>${escapeHtml(license.label)}</span></div>`
     : '';
@@ -786,6 +789,7 @@ function showPeekOverlay(
       <div class="peek-row"><span>dims</span><span>${dims}</span></div>
       <div class="peek-row"><span>size</span><span>${sz}</span></div>
       ${bppLine}
+      ${qLine}
       ${licLine}
     </div>
   `;

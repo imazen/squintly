@@ -18,6 +18,7 @@ pub mod db;
 pub mod export;
 pub mod grading;
 pub mod handlers;
+pub mod jpeg_q;
 pub mod licensing;
 pub mod sampling;
 pub mod staircase;

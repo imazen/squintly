@@ -26,6 +26,9 @@ export interface Candidate {
   license_url: string | null;
   blob_url: string;
   order_hint: number;
+  /// libjpeg-style q estimate (1..100) for JPEG sources, populated by the
+  /// admin backfill. Null for non-JPEG or rows not yet processed.
+  source_q_detected: number | null;
 }
 
 export interface Suggestion {

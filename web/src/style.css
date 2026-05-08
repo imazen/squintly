@@ -642,6 +642,46 @@ input[type="range"] {
   font-size: 0.72rem;
 }
 .curator-viewport { position: relative; }
+.curator-preview-strip-wrap {
+  margin-top: 8px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 6px 10px;
+}
+.curator-preview-strip-wrap summary {
+  cursor: pointer;
+  font-size: 0.85rem;
+  padding: 4px 0;
+}
+.curator-preview-strip {
+  display: flex;
+  gap: 12px;
+  overflow-x: auto;
+  padding: 8px 0;
+  align-items: flex-end;
+}
+.curator-preview-strip[data-empty="true"] {
+  padding: 12px 4px;
+}
+.curator-thumb {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+.curator-thumb canvas {
+  background: #000;
+  border-radius: 4px;
+  display: block;
+}
+.curator-thumb figcaption {
+  font-size: 0.7rem;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
 
 /* ---------- Suggest form ---------- */
 .suggest-screen {

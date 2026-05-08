@@ -390,6 +390,12 @@ export function startCurator(root: HTMLElement, onExit: () => void): void {
             })
             .join('')}
         </div>
+        <details class="curator-preview-strip-wrap" id="preview-wrap">
+          <summary class="muted">Preview at selected sizes</summary>
+          <div class="curator-preview-strip" id="preview-strip" data-empty="true">
+            <p class="muted">Select sizes above, then expand to see thumbnails.</p>
+          </div>
+        </details>
         <div class="curator-action-row">
           <button id="back">Back</button>
           <button id="save-no-thr" >Save</button>
@@ -419,7 +425,54 @@ export function startCurator(root: HTMLElement, onExit: () => void): void {
           state.selectedSizes.add(d);
           btn.classList.add('on');
         }
+        if (previewWrap?.open) void renderPreviewStrip();
       });
+    });
+
+    // Preview strip — renders one thumbnail per selected size by drawing the
+    // source onto a sized canvas (browser high-quality smoothing — close
+    // enough to Mitchell for a sanity check). Lazy: only fires when the
+    // <details> is expanded, and re-fires when chip toggles change the set.
+    const previewWrap = root.querySelector<HTMLDetailsElement>('#preview-wrap');
+    const renderPreviewStrip = async () => {
+      const host = root.querySelector<HTMLDivElement>('#preview-strip');
+      if (!host || !cand) return;
+      const sorted = [...state.selectedSizes].sort((a, b) => a - b);
+      if (sorted.length === 0) {
+        host.dataset.empty = 'true';
+        host.innerHTML = '<p class="muted">Select sizes above to see thumbnails.</p>';
+        return;
+      }
+      host.dataset.empty = 'false';
+      host.innerHTML = sorted
+        .map((d) => `<figure class="curator-thumb"><canvas data-size="${d}"></canvas><figcaption>${d}px</figcaption></figure>`)
+        .join('');
+      let img: HTMLImageElement;
+      try {
+        img = await loadImage(cand.blob_url);
+      } catch (e) {
+        host.innerHTML = `<p class="muted">Couldn't load source: ${escapeHtml(String((e as Error).message))}</p>`;
+        return;
+      }
+      const naturalMax = Math.max(img.naturalWidth, img.naturalHeight) || 1;
+      host.querySelectorAll<HTMLCanvasElement>('canvas[data-size]').forEach((c) => {
+        const target = Number(c.dataset.size) || 0;
+        const scale = Math.min(1, target / naturalMax);
+        const w = Math.max(1, Math.round(img.naturalWidth * scale));
+        const h = Math.max(1, Math.round(img.naturalHeight * scale));
+        c.width = w;
+        c.height = h;
+        c.style.maxWidth = `${Math.min(w, 160)}px`;
+        c.style.height = 'auto';
+        const ctx = c.getContext('2d');
+        if (!ctx) return;
+        ctx.imageSmoothingEnabled = true;
+        ctx.imageSmoothingQuality = 'high';
+        ctx.drawImage(img, 0, 0, w, h);
+      });
+    };
+    previewWrap?.addEventListener('toggle', () => {
+      if (previewWrap.open) void renderPreviewStrip();
     });
     root.querySelector<HTMLButtonElement>('#back')?.addEventListener('click', () => void renderStream());
     root.querySelector<HTMLButtonElement>('#save-no-thr')?.addEventListener('click', async () => {

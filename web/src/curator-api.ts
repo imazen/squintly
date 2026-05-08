@@ -176,6 +176,9 @@ export function postThreshold(req: ThresholdReq): Promise<{ ok: boolean }> {
 export interface GenerateVariantReq {
   decision_id: number;
   target_max_dim: number;
+  /** "png" (default — lossless, training-safe) or "jpeg" (preview only). */
+  format?: 'png' | 'jpeg';
+  /** Only honored when format==='jpeg'. */
   quality?: number;
 }
 
@@ -186,7 +189,8 @@ export interface GenerateVariantResp {
   width: number;
   height: number;
   size_bytes: number;
-  source_q: number;
+  /** "png-rgba8-lossless" or "jpeg-qNN". */
+  encoder_label: string;
 }
 
 export function generateVariant(req: GenerateVariantReq): Promise<GenerateVariantResp> {

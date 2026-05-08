@@ -661,8 +661,14 @@ pub struct DecisionResp {
 pub struct GenerateVariantReq {
     pub decision_id: i64,
     pub target_max_dim: u32,
-    /// Override the JPEG quality. Defaults to the matching threshold's
-    /// `q_imperceptible`, then 92.
+    /// Output format: "png" (default, lossless RGBA8 — spec-correct for
+    /// ground-truth corpus material) or "jpeg" (lossy; preview/thumbnail
+    /// only — never feed back into training as ground truth).
+    /// Case-insensitive.
+    #[serde(default)]
+    pub format: Option<String>,
+    /// JPEG quality (1..100). Only honored when `format = "jpeg"`. Defaults
+    /// to the matching threshold's `q_imperceptible`, else 92.
     pub quality: Option<u8>,
 }
 
@@ -674,7 +680,9 @@ pub struct GenerateVariantResp {
     pub width: u32,
     pub height: u32,
     pub size_bytes: usize,
-    pub source_q: u8,
+    /// "png-rgba8-lossless" or "jpeg-qNN" — written to
+    /// `curator_size_variants.encoder_label` for downstream filtering.
+    pub encoder_label: String,
 }
 
 pub async fn generate_variant(
@@ -700,24 +708,39 @@ pub async fn generate_variant(
     let blob_url: String = row.get(1);
     let format: Option<String> = row.try_get(2).ok();
 
-    let q = if let Some(q) = req.quality {
-        q
-    } else {
-        let threshold_q: Option<f64> = match sqlx::query(
-            "SELECT q_imperceptible FROM curator_thresholds \
-             WHERE decision_id = ? AND target_max_dim = ?",
-        )
-        .bind(req.decision_id)
-        .bind(req.target_max_dim as i64)
-        .fetch_optional(&state.pool)
-        .await?
-        {
-            Some(r) => r.try_get::<f64, _>(0).ok(),
-            None => None,
-        };
-        threshold_q
-            .map(|q| q.round().clamp(1.0, 100.0) as u8)
-            .unwrap_or(92)
+    // Resolve the output format. Default = PNG (lossless, ground-truth-safe).
+    // JPEG only when explicitly requested.
+    let format_lc = req.format.as_deref().map(|s| s.to_ascii_lowercase());
+    let out_format = match format_lc.as_deref() {
+        None | Some("png") => crate::variant_gen::VariantFormat::Png,
+        Some("jpeg") | Some("jpg") => {
+            // Resolve quality: explicit override → threshold-q → 92.
+            let q = if let Some(q) = req.quality {
+                q
+            } else {
+                let threshold_q: Option<f64> = match sqlx::query(
+                    "SELECT q_imperceptible FROM curator_thresholds \
+                     WHERE decision_id = ? AND target_max_dim = ?",
+                )
+                .bind(req.decision_id)
+                .bind(req.target_max_dim as i64)
+                .fetch_optional(&state.pool)
+                .await?
+                {
+                    Some(r) => r.try_get::<f64, _>(0).ok(),
+                    None => None,
+                };
+                threshold_q
+                    .map(|q| q.round().clamp(1.0, 100.0) as u8)
+                    .unwrap_or(92)
+            };
+            crate::variant_gen::VariantFormat::Jpeg { quality: q }
+        }
+        Some(other) => {
+            return Err(AppError::BadRequest(format!(
+                "format must be 'png' or 'jpeg', got {other}"
+            )));
+        } // exhaustive: None handled by the first arm
     };
 
     let http = reqwest::Client::builder()
@@ -728,25 +751,29 @@ pub async fn generate_variant(
         .await
         .map_err(|e| AppError::Anyhow(anyhow::anyhow!(e.to_string())))?;
 
-    let variant =
-        match crate::variant_gen::generate(&bytes, format.as_deref(), req.target_max_dim, q) {
-            Ok(v) => v,
-            Err(crate::variant_gen::VariantError::UnsupportedFormat(f)) => {
-                return Err(AppError::Conflict(format!(
-                    "source format {f} not yet supported by variant pipeline (jpeg/png/webp only)"
-                )));
-            }
-            Err(other) => {
-                return Err(AppError::Anyhow(anyhow::anyhow!(other.to_string())));
-            }
-        };
+    let variant = match crate::variant_gen::generate(
+        &bytes,
+        format.as_deref(),
+        req.target_max_dim,
+        out_format,
+    ) {
+        Ok(v) => v,
+        Err(crate::variant_gen::VariantError::UnsupportedFormat(f)) => {
+            return Err(AppError::Conflict(format!(
+                "source format {f} not supported by variant pipeline (jpeg/png/webp/avif/jxl)"
+            )));
+        }
+        Err(other) => {
+            return Err(AppError::Anyhow(anyhow::anyhow!(other.to_string())));
+        }
+    };
 
     let stored = state
         .suggestions
         .put_with_prefix(
             "variants",
             &variant.sha256,
-            "jpg",
+            variant.format.ext(),
             &variant.bytes,
             variant.mime,
         )
@@ -769,6 +796,7 @@ pub async fn generate_variant(
     .execute(&state.pool)
     .await?;
 
+    let label = variant.format.label();
     Ok(Json(GenerateVariantResp {
         ok: true,
         generated_sha256: variant.sha256,
@@ -776,7 +804,7 @@ pub async fn generate_variant(
         width: variant.width,
         height: variant.height,
         size_bytes: variant.bytes.len(),
-        source_q: q,
+        encoder_label: label,
     }))
 }
 

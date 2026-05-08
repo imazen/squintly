@@ -692,6 +692,11 @@ input[type="range"] {
   margin-top: 4px;
 }
 .curator-gen-status a { color: var(--accent); }
+.curator-gen-help {
+  font-size: 0.75rem;
+  margin: 4px 0 0;
+  text-align: center;
+}
 
 /* ---------- Suggest form ---------- */
 .suggest-screen {

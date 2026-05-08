@@ -1,20 +1,29 @@
 //! Variant generation pipeline.
 //!
 //! Decode a candidate's source bytes → resize via zenresize Mitchell-Netravali
-//! → JPEG-encode at the curator's chosen quality → upload to R2 under
-//! `variants/{xx}/{yy}/{sha}.jpg`. Spec §4 (`POST
+//! → encode losslessly (PNG by default) → upload to R2 under
+//! `variants/{xx}/{yy}/{sha}.{ext}`. Spec §4 (`POST
 //! /api/curator/generate-variant`).
 //!
-//! Decode side uses pure-Rust crates (`jpeg-decoder`, `png`, `image-webp`)
-//! while the imazen ecosystem's `zenjpeg` / `zenpng` / `zenwebp` work through
-//! the magetypes/archmage version skew on crates.io. The encode side uses
-//! `jpeg-encoder` for the same reason. Resize is `zenresize::Resizer` with
-//! `Filter::Mitchell` — the part of the pipeline where the imazen choice
-//! actually matters perceptually for downstream training data.
+//! **Lossless by default.** Variants are training ground-truth: zensim
+//! training, codec sweeps, and threshold validation all consume them as
+//! "what the source looks like at this size." JPEG-encoding the variant
+//! bakes encoder artifacts into ground truth — future encoders would
+//! compete against the JPEG artifacts, not the original signal, and a
+//! q_imperceptible measured against the curator's slider would be
+//! compounded with a second pass of lossy encode. PNG keeps the resampled
+//! pixels bit-exact; the file is bigger, but storage isn't the bottleneck
+//! and the cost is paid once per (source × size).
 //!
-//! AVIF and JXL sources currently 415 — a follow-up swap to zenavif/zenjxl
-//! when those stabilize on crates.io will close this gap. WebP is supported
-//! via `image-webp`.
+//! JPEG is still available behind `{format: "jpeg", quality: N}` for the
+//! preview/thumbnail use case where size matters and ground truth doesn't.
+//! Encoder identity is recorded so downstream consumers can filter.
+//!
+//! Decode side: pure-Rust crates (`jpeg-decoder`, `png`, `image-webp`,
+//! `zenavif`, `zenjxl-decoder`). Resize is `zenresize::Resizer` with
+//! `Filter::Mitchell` — the perceptually-meaningful step. Encode is the
+//! `png` crate (lossless, 8-bit RGBA) or `jpeg-encoder` (when explicitly
+//! requested).
 
 use sha2::{Digest, Sha256};
 
@@ -30,6 +39,41 @@ pub enum VariantError {
     Fetch(String),
 }
 
+/// Output encoding for a generated variant. PNG is the spec-correct choice
+/// for ground-truth corpus material; JPEG is provided only as an opt-in for
+/// preview/thumbnail use cases where size dominates over fidelity.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VariantFormat {
+    /// 8-bit RGBA PNG — lossless, default. Mime `image/png`, ext `png`.
+    Png,
+    /// JPEG at the given quality. Lossy. Mime `image/jpeg`, ext `jpg`.
+    /// Reserved for thumbnails / previews; never use as training input.
+    Jpeg { quality: u8 },
+}
+
+impl VariantFormat {
+    pub fn mime(self) -> &'static str {
+        match self {
+            VariantFormat::Png => "image/png",
+            VariantFormat::Jpeg { .. } => "image/jpeg",
+        }
+    }
+    pub fn ext(self) -> &'static str {
+        match self {
+            VariantFormat::Png => "png",
+            VariantFormat::Jpeg { .. } => "jpg",
+        }
+    }
+    /// Stable label written into `curator_size_variants` so downstream
+    /// consumers can distinguish PNG ground truth from JPEG previews.
+    pub fn label(self) -> String {
+        match self {
+            VariantFormat::Png => "png-rgba8-lossless".into(),
+            VariantFormat::Jpeg { quality } => format!("jpeg-q{quality}"),
+        }
+    }
+}
+
 /// One generated variant ready to persist.
 pub struct Variant {
     pub width: u32,
@@ -37,10 +81,11 @@ pub struct Variant {
     pub bytes: Vec<u8>,
     pub sha256: String,
     pub mime: &'static str,
+    pub format: VariantFormat,
 }
 
-/// Run the full pipeline for a single (source_bytes, target_max_dim, quality)
-/// triple. Returns the encoded JPEG bytes, the new sha256, and the new dims.
+/// Run the full pipeline for a single (source_bytes, target_max_dim, format)
+/// triple. Returns the encoded bytes, the new sha256, and the new dims.
 ///
 /// `format_hint` is the candidate's stored format (`"jpeg"` etc.). When
 /// `None`, format is sniffed from the bytes.
@@ -48,7 +93,7 @@ pub fn generate(
     source_bytes: &[u8],
     format_hint: Option<&str>,
     target_max_dim: u32,
-    quality: u8,
+    out_format: VariantFormat,
 ) -> Result<Variant, VariantError> {
     let (rgba, w, h) = decode_to_rgba(source_bytes, format_hint)?;
     let (out_w, out_h) = fit_to_max(w, h, target_max_dim);
@@ -57,16 +102,20 @@ pub fn generate(
     } else {
         resize_rgba_mitchell(&rgba, w, h, out_w, out_h)?
     };
-    let jpeg = encode_jpeg(&resized, out_w, out_h, quality)?;
+    let bytes = match out_format {
+        VariantFormat::Png => encode_png(&resized, out_w, out_h)?,
+        VariantFormat::Jpeg { quality } => encode_jpeg(&resized, out_w, out_h, quality)?,
+    };
     let mut hasher = Sha256::new();
-    hasher.update(&jpeg);
+    hasher.update(&bytes);
     let sha = hex::encode(hasher.finalize());
     Ok(Variant {
         width: out_w,
         height: out_h,
-        bytes: jpeg,
+        bytes,
         sha256: sha,
-        mime: "image/jpeg",
+        mime: out_format.mime(),
+        format: out_format,
     })
 }
 
@@ -326,6 +375,28 @@ fn resize_rgba_mitchell(
 
 // ---------- encode ----------
 
+fn encode_png(rgba: &[u8], w: u32, h: u32) -> Result<Vec<u8>, VariantError> {
+    let mut out = Vec::new();
+    {
+        let mut encoder = png::Encoder::new(&mut out, w, h);
+        encoder.set_color(png::ColorType::Rgba);
+        encoder.set_depth(png::BitDepth::Eight);
+        // sRGB by default — matches what zenresize emits for an RGBA8_SRGB
+        // input descriptor and what the curator's slider expects. ICC
+        // round-trip for wide-gamut sources is a follow-up: zenpixels
+        // exposes color_context() on PixelBuffer, but the decoders we use
+        // outside zenavif don't preserve it yet.
+        encoder.set_source_srgb(png::SrgbRenderingIntent::RelativeColorimetric);
+        let mut writer = encoder
+            .write_header()
+            .map_err(|e| VariantError::Encode(format!("png header: {e}")))?;
+        writer
+            .write_image_data(rgba)
+            .map_err(|e| VariantError::Encode(format!("png data: {e}")))?;
+    }
+    Ok(out)
+}
+
 fn encode_jpeg(rgba: &[u8], w: u32, h: u32, quality: u8) -> Result<Vec<u8>, VariantError> {
     let mut out = Vec::with_capacity((w as usize * h as usize) / 4);
     let mut encoder = jpeg_encoder::Encoder::new(&mut out, quality);
@@ -396,23 +467,43 @@ mod tests {
         assert_eq!(sniff_format(&[], Some("WEBP")).as_deref(), Some("webp"));
     }
 
-    #[test]
-    fn full_pipeline_jpeg_roundtrip() {
-        // Encode a tiny test image, then run it through generate() to confirm
-        // the whole decode → resize → encode chain runs and produces JPEG.
+    fn fake_jpeg_source() -> Vec<u8> {
         let mut src = Vec::new();
         let mut enc = jpeg_encoder::Encoder::new(&mut src, 90);
         enc.set_progressive(false);
-        // 32x32 red square (RGBA)
         let pixels: Vec<u8> = (0..32 * 32).flat_map(|_| [200, 50, 50, 255]).collect();
         enc.encode(&pixels, 32, 32, jpeg_encoder::ColorType::Rgba)
             .unwrap();
+        src
+    }
 
-        let v = generate(&src, Some("jpeg"), 16, 80).expect("generate");
+    #[test]
+    fn full_pipeline_png_roundtrip_default() {
+        // Default format is PNG; confirm the resampled output is a valid PNG.
+        let src = fake_jpeg_source();
+        let v = generate(&src, Some("jpeg"), 16, VariantFormat::Png).expect("generate");
+        assert_eq!(v.width, 16);
+        assert_eq!(v.height, 16);
+        assert!(
+            v.bytes.starts_with(b"\x89PNG\r\n\x1a\n"),
+            "got bytes start: {:?}",
+            &v.bytes[..8]
+        );
+        assert_eq!(v.mime, "image/png");
+        assert_eq!(v.format.label(), "png-rgba8-lossless");
+        assert_eq!(v.sha256.len(), 64);
+    }
+
+    #[test]
+    fn full_pipeline_jpeg_roundtrip_optin() {
+        // JPEG is still available for preview/thumbnail use.
+        let src = fake_jpeg_source();
+        let v = generate(&src, Some("jpeg"), 16, VariantFormat::Jpeg { quality: 80 })
+            .expect("generate");
         assert_eq!(v.width, 16);
         assert_eq!(v.height, 16);
         assert!(v.bytes.starts_with(b"\xff\xd8\xff"));
         assert_eq!(v.mime, "image/jpeg");
-        assert_eq!(v.sha256.len(), 64);
+        assert_eq!(v.format.label(), "jpeg-q80");
     }
 }

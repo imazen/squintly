@@ -550,9 +550,10 @@ export function startCurator(root: HTMLElement, onExit: () => void): void {
         </div>
         <div class="curator-action-row">
           <button id="back">Back</button>
-          <button id="gen-variant" title="Generate the variant for this size at the saved q">Generate variant</button>
+          <button id="gen-variant" title="Generate the lossless PNG variant for this size (training-safe)">Generate variant</button>
           <button id="save-thr" class="primary">Save threshold</button>
         </div>
+        <p class="muted curator-gen-help">Variants are saved as <strong>lossless PNG</strong> — they're training ground truth, not previews.</p>
         <div id="gen-status" class="curator-gen-status muted" hidden></div>
       </div>
     `;
@@ -814,21 +815,21 @@ export function startCurator(root: HTMLElement, onExit: () => void): void {
     const genStatus = root.querySelector<HTMLDivElement>('#gen-status');
     genBtn?.addEventListener('click', async () => {
       if (state.decision_id == null) return;
-      const q = Number(slider.value);
       genBtn.disabled = true;
       if (genStatus) {
         genStatus.hidden = false;
-        genStatus.textContent = `Generating ${target}px @ q=${q}…`;
+        genStatus.textContent = `Generating ${target}px lossless PNG…`;
       }
       try {
         const resp = await generateVariant({
           decision_id: state.decision_id,
           target_max_dim: target,
-          quality: q,
+          // PNG is the default — explicitly omit format/quality so the
+          // backend uses its training-safe path.
         });
         if (genStatus) {
           const kb = (resp.size_bytes / 1024).toFixed(1);
-          genStatus.innerHTML = `Generated <a href="${escapeAttr(resp.generated_url)}" target="_blank" rel="noreferrer noopener">${resp.width}×${resp.height} JPEG</a> (${kb} KB) at q=${resp.source_q}.`;
+          genStatus.innerHTML = `Generated <a href="${escapeAttr(resp.generated_url)}" target="_blank" rel="noreferrer noopener">${resp.width}×${resp.height} ${escapeHtml(resp.encoder_label)}</a> (${kb} KB).`;
         }
       } catch (e) {
         if (genStatus) {

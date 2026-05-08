@@ -490,6 +490,7 @@ export function startCurator(root: HTMLElement, onExit: () => void): void {
         </div>
         <div class="curator-toggle-row">
           <button id="toggle-ref" aria-pressed="false" title="Compare against the uncompressed source">Show reference</button>
+          <button id="reset-crop" title="Recenter the crop window">⊕ Reset crop</button>
         </div>
         <div class="curator-action-row">
           <button id="back">Back</button>
@@ -510,6 +511,9 @@ export function startCurator(root: HTMLElement, onExit: () => void): void {
     let snapshots: EncodedSnapshot[] = [];
     let sourceImg: HTMLImageElement | null = null;
     let showingReference = false;
+    // Crop offset (image-pixels relative to center). Updated by drag-to-pan
+    // on either canvas; both panels stay aligned via a shared offset.
+    const cropOffset = { x: 0, y: 0 };
 
     const setQValReadout = () => {
       qval.textContent = `q = ${slider.value}`;
@@ -532,6 +536,7 @@ export function startCurator(root: HTMLElement, onExit: () => void): void {
 
     let pendingQ: number | null = null;
     let busy = false;
+    let lastEncodedImg: HTMLImageElement | null = null;
     const drawEncoded = async (q: number) => {
       if (!sourceImg) return;
       let snap = snapshots.find((s) => s.q === q);
@@ -544,11 +549,21 @@ export function startCurator(root: HTMLElement, onExit: () => void): void {
         }
       }
       const img = await loadImage(snap.url);
-      paintSplit(leftC, rightC, img);
+      lastEncodedImg = img;
+      paintSplit(leftC, rightC, img, cropOffset);
     };
     const drawReference = () => {
       if (!sourceImg) return;
-      paintSplit(leftC, rightC, sourceImg);
+      paintSplit(leftC, rightC, sourceImg, cropOffset);
+    };
+    // Re-paint without re-encoding — used while dragging the crop. Picks the
+    // current image (encoded or reference) and just translates the offset.
+    const repaintCurrent = () => {
+      if (showingReference) {
+        if (sourceImg) paintSplit(leftC, rightC, sourceImg, cropOffset);
+      } else if (lastEncodedImg) {
+        paintSplit(leftC, rightC, lastEncodedImg, cropOffset);
+      }
     };
     const draw = async (q: number) => {
       if (showingReference) {
@@ -593,6 +608,54 @@ export function startCurator(root: HTMLElement, onExit: () => void): void {
     slider.addEventListener('pointerdown', () => setReferenceMode(false));
     slider.addEventListener('touchstart', () => setReferenceMode(false), { passive: true });
     toggleRef.addEventListener('click', () => setReferenceMode(!showingReference));
+
+    // Drag-to-pan on the split. Touch + mouse via Pointer Events. Shares one
+    // offset across both panels so they stay aligned. Delta is in CSS pixels;
+    // convert to image-pixel-space by × dpr (left canvas is 1:1 device).
+    let dragging = false;
+    let lastX = 0;
+    let lastY = 0;
+    let activePointer: number | null = null;
+    const dpr = window.devicePixelRatio || 1;
+    const onPointerDown = (e: PointerEvent) => {
+      if (activePointer != null) return;
+      activePointer = e.pointerId;
+      dragging = true;
+      lastX = e.clientX;
+      lastY = e.clientY;
+      splitEl.setPointerCapture(e.pointerId);
+      splitEl.classList.add('panning');
+      e.preventDefault();
+    };
+    const onPointerMove = (e: PointerEvent) => {
+      if (!dragging || e.pointerId !== activePointer) return;
+      const dx = (e.clientX - lastX) * dpr;
+      const dy = (e.clientY - lastY) * dpr;
+      lastX = e.clientX;
+      lastY = e.clientY;
+      // Drag direction = move the *content* the way the finger moves, so
+      // panning right shows content to the right of center → offset.x decreases.
+      cropOffset.x -= dx;
+      cropOffset.y -= dy;
+      repaintCurrent();
+    };
+    const onPointerUp = (e: PointerEvent) => {
+      if (e.pointerId !== activePointer) return;
+      dragging = false;
+      activePointer = null;
+      splitEl.classList.remove('panning');
+      try { splitEl.releasePointerCapture(e.pointerId); } catch { /* ignore */ }
+    };
+    splitEl.addEventListener('pointerdown', onPointerDown);
+    splitEl.addEventListener('pointermove', onPointerMove);
+    splitEl.addEventListener('pointerup', onPointerUp);
+    splitEl.addEventListener('pointercancel', onPointerUp);
+
+    root.querySelector<HTMLButtonElement>('#reset-crop')?.addEventListener('click', () => {
+      cropOffset.x = 0;
+      cropOffset.y = 0;
+      repaintCurrent();
+    });
 
     root.querySelector<HTMLButtonElement>('#back')?.addEventListener('click', () => {
       disposeSnapshots(snapshots);
@@ -712,12 +775,23 @@ function renderBppGate(gate: BppGate | null): string {
   </div>`;
 }
 
-function paintSplit(left: HTMLCanvasElement, right: HTMLCanvasElement, img: HTMLImageElement): void {
+interface CropOffset {
+  x: number;
+  y: number;
+}
+
+function paintSplit(
+  left: HTMLCanvasElement,
+  right: HTMLCanvasElement,
+  img: HTMLImageElement,
+  offset: CropOffset = { x: 0, y: 0 },
+): void {
   const dpr = window.devicePixelRatio || 1;
   const naturalW = img.naturalWidth;
   const naturalH = img.naturalHeight;
 
-  // Container queries: pick a window centered on the image.
+  // Container queries: pick a window centered on the image, then translate
+  // by the offset (in image pixels) clamped to the source extent.
   const leftRect = left.getBoundingClientRect();
   const rightRect = right.getBoundingClientRect();
 
@@ -728,11 +802,14 @@ function paintSplit(left: HTMLCanvasElement, right: HTMLCanvasElement, img: HTML
   left.height = lcssH * dpr;
   const lctx = left.getContext('2d')!;
   lctx.imageSmoothingEnabled = false;
-  // Center crop in image coordinates with one image pixel per device pixel.
   const lWindowW = Math.min(naturalW, left.width);
   const lWindowH = Math.min(naturalH, left.height);
-  const sx = Math.floor((naturalW - lWindowW) / 2);
-  const sy = Math.floor((naturalH - lWindowH) / 2);
+  const cx0 = Math.floor((naturalW - lWindowW) / 2);
+  const cy0 = Math.floor((naturalH - lWindowH) / 2);
+  const sxMax = Math.max(0, naturalW - lWindowW);
+  const syMax = Math.max(0, naturalH - lWindowH);
+  const sx = Math.min(sxMax, Math.max(0, cx0 + offset.x));
+  const sy = Math.min(syMax, Math.max(0, cy0 + offset.y));
   lctx.fillStyle = '#000';
   lctx.fillRect(0, 0, left.width, left.height);
   const ldx = Math.floor((left.width - lWindowW) / 2);

@@ -416,12 +416,16 @@ input[type="range"] {
   border-radius: 12px;
   padding: 4px;
   min-height: 40vh;
+  touch-action: none; /* drag-to-pan should not scroll the page */
+  cursor: grab;
 }
+.curator-split.panning { cursor: grabbing; }
 .curator-split canvas {
   width: 100%;
   height: 100%;
   background: #000;
   display: block;
+  pointer-events: none; /* let the parent swallow the drag */
 }
 .curator-slider {
   display: grid;

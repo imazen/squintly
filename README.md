@@ -297,9 +297,12 @@ What we don't yet enforce automatically (tracking these as v0.2 exit gates):
 
 - [x] `_MANIFEST.json` emitted alongside every export TSV
       (`/api/export/{kind}.manifest.json` paired with the TSV; describedby Link header).
-- [ ] Nightly Tower-mirror cron of the SQLite snapshot dir.
-- [ ] Per-table row counts in a `db_health` table updated hourly so we notice when
-      drift starts.
+- [x] Nightly Tower-mirror snapshot — `main.rs` auto-detects `/mnt/tower` and spawns
+      a daily `VACUUM INTO /mnt/tower/output/squintly-archive/<iso>.db` task. Silently
+      no-ops on Railway / CI / remote deploys where the mount is absent.
+- [x] Per-table row counts in a `db_health` table updated hourly
+      (`src/db_health.rs::refresh` + `migrations/0010_db_health.sql`; hourly tokio task
+      in `main.rs`).
 - [ ] Curator R2 snapshot tag pinned in each session's `study_commit` so a re-run is
       reproducible.
 

@@ -172,6 +172,71 @@ async fn main() -> Result<()> {
         });
     }
 
+    // Hourly db_health snapshot. Tracks per-table row counts + DB file size
+    // so we notice drift between snapshots. Failures are non-fatal — a
+    // missed hour just leaves the prior hour's snapshot as the latest.
+    {
+        let pool = state.pool.clone();
+        tokio::spawn(async move {
+            loop {
+                match squintly::db_health::refresh(&pool).await {
+                    Ok(n) => tracing::debug!(tables = n, "db_health refreshed"),
+                    Err(e) => tracing::warn!(error = %e, "db_health refresh failed"),
+                }
+                tokio::time::sleep(std::time::Duration::from_secs(3600)).await;
+            }
+        });
+    }
+
+    // Tower-mirror background task. Auto-detects /mnt/tower at startup;
+    // when present (the user's local dev mount), runs nightly
+    // `VACUUM INTO` snapshots into `/mnt/tower/output/squintly-archive/`.
+    // When absent (Railway, CI, vast.ai, anywhere not on Lilith's LAN),
+    // silently no-ops with a single info log — Tower-mirror is a
+    // local-dev convenience, not a production safety requirement.
+    {
+        let db_path = cli.db.clone();
+        let tower_root = std::path::Path::new("/mnt/tower/output/squintly-archive");
+        if tower_root.parent().map(|p| p.exists()).unwrap_or(false) {
+            tracing::info!(
+                path = %tower_root.display(),
+                "Tower mount detected; scheduling nightly VACUUM INTO snapshots"
+            );
+            // Ensure the archive dir exists; non-fatal if it can't be made.
+            if let Err(e) = std::fs::create_dir_all(tower_root) {
+                tracing::warn!(error = %e, "could not create Tower archive dir; mirror disabled");
+            } else {
+                let pool = state.pool.clone();
+                let tower_root = tower_root.to_path_buf();
+                tokio::spawn(async move {
+                    loop {
+                        let stamp = chrono::Utc::now().format("%Y-%m-%dT%H-%M-%SZ");
+                        let dest = tower_root.join(format!("squintly-{stamp}.db"));
+                        let dest_str = dest.to_string_lossy().to_string();
+                        // SQLite VACUUM INTO produces an atomic consistent
+                        // snapshot from a running database; safer than copying
+                        // the live .db file.
+                        let sql = format!("VACUUM INTO '{}'", dest_str.replace('\'', "''"));
+                        match sqlx::query(&sql).execute(&pool).await {
+                            Ok(_) => tracing::info!(path = %dest_str, "Tower snapshot written"),
+                            Err(e) => tracing::warn!(error = %e, "Tower VACUUM INTO failed"),
+                        }
+                        // Once-per-day cadence; first run fires immediately
+                        // (so dev sees evidence the mirror is working).
+                        tokio::time::sleep(std::time::Duration::from_secs(24 * 3600)).await;
+                    }
+                });
+            }
+        } else {
+            tracing::info!(
+                "Tower mount /mnt/tower not present; nightly Tower snapshots disabled \
+                 (this is expected on Railway / CI / remote deploys). \
+                 source DB: {}",
+                db_path.display()
+            );
+        }
+    }
+
     let api = Router::new()
         .route("/session", post(handlers::create_session))
         .route("/session/{id}/end", post(handlers::end_session))

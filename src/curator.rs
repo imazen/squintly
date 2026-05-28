@@ -1391,6 +1391,12 @@ pub struct LoadR2Resp {
     pub inserted: u64,
     pub total: i64,
     pub r2_public_base: String,
+    /// UUID of the row in `manifest_snapshots`. Pinned into every session
+    /// started after this load via `sessions.manifest_snapshot_id` so
+    /// downstream analysis can reproduce the exact candidate pool.
+    pub manifest_snapshot_id: String,
+    /// SHA-256 of the raw JSONL body the snapshot was computed from.
+    pub manifest_sha256: String,
 }
 
 pub async fn load_r2_public(
@@ -1437,6 +1443,53 @@ pub async fn load_r2_public(
         .fetch_one(&state.pool)
         .await
         .map(|r| r.get::<i64, _>(0))?;
+
+    // Record the snapshot so every session started after this load can be
+    // joined back to the exact R2 base + path + body sha256 it drew from.
+    // UNIQUE(r2_public_base, manifest_path, manifest_sha256) means
+    // re-loading an unchanged manifest is a cheap no-op rather than
+    // a noise row.
+    use sha2::Digest;
+    let digest = sha2::Sha256::digest(body.as_bytes());
+    let manifest_sha256 = digest.iter().map(|b| format!("{b:02x}")).collect::<String>();
+    let snapshot_id = uuid::Uuid::new_v4().to_string();
+    let now = crate::db::now_ms();
+    let existing: Option<(String,)> = sqlx::query_as(
+        "SELECT id FROM manifest_snapshots \
+         WHERE r2_public_base = ? AND manifest_path = ? AND manifest_sha256 = ?",
+    )
+    .bind(&base)
+    .bind(manifest_path)
+    .bind(&manifest_sha256)
+    .fetch_optional(&state.pool)
+    .await?;
+    let snapshot_id = if let Some((id,)) = existing {
+        tracing::info!(snapshot_id = %id, "reusing existing manifest_snapshots row (sha256 match)");
+        id
+    } else {
+        sqlx::query(
+            "INSERT INTO manifest_snapshots (id, loaded_at, r2_public_base, manifest_path, \
+             manifest_sha256, body_bytes, n_candidates) \
+             VALUES (?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(&snapshot_id)
+        .bind(now)
+        .bind(&base)
+        .bind(manifest_path)
+        .bind(&manifest_sha256)
+        .bind(body.len() as i64)
+        .bind(kept as i64)
+        .execute(&state.pool)
+        .await?;
+        tracing::info!(
+            snapshot_id = %snapshot_id,
+            manifest_sha256,
+            n_candidates = kept,
+            "recorded manifest_snapshots row"
+        );
+        snapshot_id
+    };
+
     Ok(Json(LoadR2Resp {
         fetched_lines: total_lines,
         parsed,
@@ -1444,6 +1497,8 @@ pub async fn load_r2_public(
         inserted,
         total,
         r2_public_base: base,
+        manifest_snapshot_id: snapshot_id,
+        manifest_sha256,
     }))
 }
 

@@ -303,8 +303,13 @@ What we don't yet enforce automatically (tracking these as v0.2 exit gates):
 - [x] Per-table row counts in a `db_health` table updated hourly
       (`src/db_health.rs::refresh` + `migrations/0010_db_health.sql`; hourly tokio task
       in `main.rs`).
-- [ ] Curator R2 snapshot tag pinned in each session's `study_commit` so a re-run is
-      reproducible.
+- [x] Curator R2 snapshot tag pinned in each session — `manifest_snapshots` table
+      (`migrations/0011_manifest_snapshots.sql`) records `(r2_public_base,
+      manifest_path, manifest_sha256, body_bytes, n_candidates)` per load; UNIQUE
+      key on the three identity columns means re-loading an unchanged manifest is
+      a cheap no-op. `sessions.manifest_snapshot_id` FK pins the latest snapshot
+      at session creation so analysis six months later can join from any session
+      to the exact candidate pool it drew from.
 
 ---
 

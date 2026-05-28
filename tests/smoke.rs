@@ -75,8 +75,20 @@ async fn smoke_full_loop() -> Result<()> {
         .await?;
     sqlx::migrate!("./migrations").run(&pool).await?;
 
+    // Pre-seed a manifest snapshot row so we can assert the session pins it.
+    let snapshot_id = uuid::Uuid::new_v4().to_string();
+    sqlx::query(
+        "INSERT INTO manifest_snapshots (id, loaded_at, r2_public_base, manifest_path, \
+         manifest_sha256, body_bytes, n_candidates) \
+         VALUES (?, 1, 'https://r2.example', 'manifest.jsonl', \
+         'deadbeef0000000000000000000000000000000000000000000000000000beef', 42, 7)",
+    )
+    .bind(&snapshot_id)
+    .execute(&pool)
+    .await?;
+
     let state = Arc::new(AppState {
-        pool,
+        pool: pool.clone(),
         coefficient: CoefficientSource::Http(coeff),
         manifest: tokio::sync::RwLock::new(manifest),
         anchors: tokio::sync::RwLock::new(Default::default()),
@@ -141,6 +153,20 @@ async fn smoke_full_loop() -> Result<()> {
     let observer_id = s["observer_id"].as_str().unwrap().to_string();
     assert_eq!(s["streak_days"], 1);
     assert_eq!(s["streak_outcome"], "advanced");
+
+    // The freshly-created session must pin the manifest snapshot we
+    // seeded above (the latest snapshot in manifest_snapshots).
+    let (pinned,): (Option<String>,) = sqlx::query_as(
+        "SELECT manifest_snapshot_id FROM sessions WHERE id = ?",
+    )
+    .bind(&session_id)
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(
+        pinned.as_deref(),
+        Some(snapshot_id.as_str()),
+        "session should pin the latest manifest snapshot"
+    );
 
     // 2. fetch a few trials and record responses
     let mut single_seen = false;

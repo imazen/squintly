@@ -220,12 +220,27 @@ pub async fn create_session(
             .join(",")
     });
 
+    // Pin the most recent manifest snapshot for reproducibility — when
+    // someone re-runs an analysis six months from now they can join from
+    // sessions.manifest_snapshot_id → manifest_snapshots and recover the
+    // exact R2 base + path + body sha256 the observer's trials drew
+    // candidates from. NULL when there's no R2 snapshot (fresh DB, FS
+    // coefficient mode).
+    let manifest_snapshot_id: Option<String> = sqlx::query_as::<_, (String,)>(
+        "SELECT id FROM manifest_snapshots ORDER BY loaded_at DESC LIMIT 1",
+    )
+    .fetch_optional(&state.pool)
+    .await
+    .ok()
+    .flatten()
+    .map(|(id,)| id);
+
     sqlx::query(
         "INSERT INTO sessions (id, observer_id, started_at, device_pixel_ratio, \
          screen_width_css, screen_height_css, color_gamut, dynamic_range_high, prefers_dark, \
          pointer_type, timezone, viewing_distance_cm, ambient_light, css_px_per_mm, notes, \
-         theme_slug, supported_codecs, codec_probe_cached) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+         theme_slug, supported_codecs, codec_probe_cached, manifest_snapshot_id) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&session_id)
     .bind(&observer_id)
@@ -245,6 +260,7 @@ pub async fn create_session(
     .bind(req.theme_slug.as_deref())
     .bind(supported_codecs_csv.as_deref())
     .bind(req.codec_probe_cached.unwrap_or(false) as i64)
+    .bind(manifest_snapshot_id.as_deref())
     .execute(&state.pool)
     .await?;
 

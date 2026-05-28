@@ -154,6 +154,24 @@ async fn main() -> Result<()> {
         suggestions,
     });
 
+    // Spawn the nightly observer_grades batch. Fires once on startup so a
+    // fresh deploy has a populated table, then every 24h. We don't block
+    // startup on the first run — failures bubble through the log layer
+    // and the request path keeps working off whatever's in observer_grades
+    // from the previous run.
+    {
+        let pool = state.pool.clone();
+        tokio::spawn(async move {
+            loop {
+                match squintly::grading::rebuild_observer_grades(&pool).await {
+                    Ok(n) => tracing::info!(observers = n, "rebuilt observer_grades"),
+                    Err(e) => tracing::warn!(error = %e, "observer_grades rebuild failed"),
+                }
+                tokio::time::sleep(std::time::Duration::from_secs(24 * 3600)).await;
+            }
+        });
+    }
+
     let api = Router::new()
         .route("/session", post(handlers::create_session))
         .route("/session/{id}/end", post(handlers::end_session))

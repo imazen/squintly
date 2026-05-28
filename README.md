@@ -97,8 +97,8 @@ Ranked by ROI for converged-cells-per-human-hour. Status legend: ✅ done · �
 | **5** | **Anchor reservation** — CID22-style reference-pinned anchors at ~5 % rate align our scale across studies | ✅ | `migrations/0006_v02_rigor.sql` (`corpus_anchors`), [`docs/methodology.md`](docs/methodology.md) §3.6 | populate the table from CID22 source overlap |
 | **6** | **Onboarding calibration** — codec-probe + credit-card slider for physical CSS-px/mm | ✅ | `web/src/calibration-onboarding.ts`, `web/src/codec-probe.ts`, `migrations/0004_codec_support.sql` | — |
 | **7** | **Honeypots** — known-answer trials at ~1/30 rate; fail-two-end-session | ✅ | [`docs/methodology.md`](docs/methodology.md) §3.9 | tune fail rate to ≤ 5 % on T1 observers |
-| **8** | **Per-session grading A–F** + `session_weight ∈ {0, 0.5, 1.0, 1.5}` multiplier at scale reconstruction | ✅ | `src/grading.rs` (413 LOC), `migrations/0002_grading.sql` | finish nightly `observer_grades` batch (TODO `grading.rs:343`) |
-| **9** | **Per-observer reliability** — Crowd-BT-style `η` + pwcmp leave-one-out log-likelihood | 🟡 | `src/grading.rs:340` TODO marks | implement post-pilot once we have ≥ 50 sessions/observer signal |
+| **8** | **Per-session grading A–F** + `session_weight ∈ {0, 0.5, 1.0, 1.5}` multiplier at scale reconstruction | ✅ | `src/grading.rs`, `migrations/0002_grading.sql` | — |
+| **9** | **Per-observer reliability** — nightly `observer_grades` aggregation (trial-weighted golden, session-count-weighted even-odd, geometric-mean composite weight, trusted-pool promotion at weight ≥ 0.70 ∧ n_trials ≥ 50); Crowd-BT η + pwcmp LOO log-likelihood queued | 🟡 | `src/grading.rs::rebuild_observer_grades`, hooked into a 24h tokio task at `src/main.rs` | implement the pwcmp LOO (`dist_L > 1.5`) + Pérez-Ortiz 2019 (δ_o, σ_o) ACR fits post-pilot once we have ≥ 50 sessions/observer signal |
 | **10** | **Engagement / retention** — streaks, freezes, tier ladder (anon → email → passkey → researcher), leaderboard | ✅ | `migrations/0003_engagement.sql`, `migrations/0005_auth.sql`, `web/src/auth-modal.ts` | iterate UX based on drop-off telemetry |
 | **11** | **Phone-first single-stimulus + tap interaction** — short attention sessions, no mouse, portrait orientation | ✅ | [`SPEC.md`](SPEC.md) §"Target audience: phones", Playwright `zfold7-cover/inner` device profiles | — |
 | **12** | **Unified pairwise + ACR-rating scale** (Pérez-Ortiz 2019 mixed BT-Davidson + ordinal model) | 🟡 | `src/bt.rs` (240 LOC), [`docs/methodology.md`](docs/methodology.md) §5.5 | verify the unified-scale solver matches the spec; add held-out log-likelihood gain test (H3) |
@@ -106,10 +106,10 @@ Ranked by ROI for converged-cells-per-human-hour. Status legend: ✅ done · �
 | **14** | **Boosted Triplet Comparison (BTC)** — quadratic boosting `h(d) = γ₁d + γ₂d²` for high-fidelity near-JND sensitivity | 🔵 | not yet | v0.3 optional add for the q ≥ 80 band; expected ~3× discrimination ([AIC-3 2410.09501](https://arxiv.org/abs/2410.09501)) |
 | **15** | **Hybrid expert + crowd** — route highest-EIG pairs to expert raters | ⚫ | not in scope for v1 (squintly is anonymous by design); zensim-level hybrid possible later via a separate study |
 
-The first 11 are done; **#1 (ASAP→next_trial) shipped** as part of the
-glossary commit's follow-up. The remaining v0.2 work is the end-to-end smoke
-test on a real phone plus the nightly grading batch (#9 TODO at
-`src/grading.rs:340`).
+The first 11 are done; #1 (ASAP→next_trial) and #9 (nightly observer_grades
+batch) both shipped recently. The remaining v0.2 work is the end-to-end smoke
+test on a real phone plus the deeper #9 follow-up (pwcmp LOO + Pérez-Ortiz
+2019 per-observer ACR fits) once we have ≥ 50 sessions/observer to fit on.
 
 ---
 

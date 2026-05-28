@@ -337,10 +337,148 @@ fn pearson(x: &[f64], y: &[f64]) -> Option<f64> {
     }
 }
 
+/// Rebuild every observer's `observer_grades` row from their session
+/// history. Idempotent — wipes the table first, then re-inserts. Runs
+/// nightly from a background task (see `main.rs::spawn_grading_batch`)
+/// and can be triggered manually via the admin endpoint.
+///
+/// Aggregates across each observer's graded sessions:
+/// - `n_sessions`, `n_trials` — totals.
+/// - `golden_pass_rate` — trial-weighted mean (each session's rate weighted
+///   by its `n_trials`, so a long lousy session doesn't get drowned by a
+///   short clean session).
+/// - `even_odd_r` — session-count-weighted mean (each session has equal
+///   evidence about within-session consistency, regardless of trial count).
+/// - `weight` — geometric mean of session weights (matches the per-session
+///   composite_weight aggregation — any one bad session drags hard,
+///   matching the "any one signal can flag" philosophy).
+/// - `quality_grade` — derived from `weight` via `grade_letter`.
+///
+/// Promotes observers to the trusted pool when `weight ≥ 0.70`
+/// (grade ≥ B) AND `n_trials ≥ 50`, demotes otherwise. The 50-trial
+/// floor is what keeps a single A-grade session from instantly trusting
+/// a brand-new observer.
+///
+/// The pwcmp leave-one-out log-likelihood (`pwcmp_log_lik` / `pwcmp_dist_l`)
+/// and CID22 normalised-disagreement (`cid22_*`) columns are left NULL
+/// until those fits land — they need a global BT solve over all observers'
+/// pair data and are tracked separately.
+pub async fn rebuild_observer_grades(pool: &SqlitePool) -> Result<u64> {
+    let now = now_ms();
+
+    // Pull every graded session (those have a non-NULL `graded_at`). The
+    // session_weight column is the geometric-mean composite already
+    // computed by `grade_session`.
+    let rows = sqlx::query(
+        "SELECT observer_id, n_trials, session_weight, golden_pass_rate, even_odd_r \
+         FROM sessions \
+         WHERE graded_at IS NOT NULL",
+    )
+    .fetch_all(pool)
+    .await?;
+
+    #[derive(Default)]
+    struct Accum {
+        n_sessions: i64,
+        n_trials: i64,
+        weight_log_sum: f64,
+        weight_log_n: i64,
+        golden_num: f64,
+        golden_den: i64,
+        even_odd_sum: f64,
+        even_odd_n: i64,
+    }
+    let mut acc: HashMap<String, Accum> = HashMap::new();
+    for row in rows {
+        let obs: String = row.get(0);
+        let n_trials: i64 = row.get(1);
+        let weight: f32 = row.get(2);
+        let golden: Option<f32> = row.get(3);
+        let even_odd: Option<f32> = row.get(4);
+        let a = acc.entry(obs).or_default();
+        a.n_sessions += 1;
+        a.n_trials += n_trials;
+        // log(0) → -∞ shorts the geometric mean to 0; clamp at 1e-6 so a
+        // single F-grade session doesn't zero an observer's lifetime mean.
+        let w = (weight as f64).max(1e-6);
+        a.weight_log_sum += w.ln();
+        a.weight_log_n += 1;
+        if let Some(r) = golden {
+            a.golden_num += (r as f64) * (n_trials as f64);
+            a.golden_den += n_trials;
+        }
+        if let Some(r) = even_odd {
+            a.even_odd_sum += r as f64;
+            a.even_odd_n += 1;
+        }
+    }
+
+    // Idempotent: wipe and re-insert. Cheap on the squintly scale (≤ 10⁴
+    // observers expected lifetime) and avoids drift if observer ids ever
+    // get deleted upstream.
+    sqlx::query("DELETE FROM observer_grades")
+        .execute(pool)
+        .await?;
+
+    let mut written = 0u64;
+    for (observer_id, a) in &acc {
+        let weight = if a.weight_log_n > 0 {
+            (a.weight_log_sum / a.weight_log_n as f64).exp() as f32
+        } else {
+            0.0
+        };
+        let golden = if a.golden_den > 0 {
+            Some((a.golden_num / a.golden_den as f64) as f32)
+        } else {
+            None
+        };
+        let even_odd = if a.even_odd_n > 0 {
+            Some((a.even_odd_sum / a.even_odd_n as f64) as f32)
+        } else {
+            None
+        };
+        let grade = grade_letter(weight);
+
+        sqlx::query(
+            "INSERT INTO observer_grades (observer_id, computed_at, n_trials, n_sessions, \
+             quality_grade, weight, golden_pass_rate, even_odd_r) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(observer_id)
+        .bind(now)
+        .bind(a.n_trials)
+        .bind(a.n_sessions)
+        .bind(grade)
+        .bind(weight)
+        .bind(golden)
+        .bind(even_odd)
+        .execute(pool)
+        .await?;
+
+        // Promotion / demotion. The 50-trial floor stops a single A-grade
+        // session from trusting a brand-new observer; the B-grade weight
+        // threshold matches `grade_letter`'s tier.
+        let trusted = if weight >= 0.70 && a.n_trials >= 50 {
+            1
+        } else {
+            0
+        };
+        sqlx::query("UPDATE observers SET trusted_pool = ? WHERE id = ?")
+            .bind(trusted)
+            .bind(observer_id)
+            .execute(pool)
+            .await?;
+        written += 1;
+    }
+    Ok(written)
+}
+
 // TODO(v0.2): pwcmp leave-one-out per-observer log-likelihood (`dist_L > 1.5`).
 // TODO(v0.2): Pérez-Ortiz 2019 unified BT + ACR (δ_o, σ_o) per-observer fit.
 // TODO(v0.2): CID22 normalised-disagreement aggregation across observers.
-// TODO(v0.2): nightly observer_grades batch.
+// rebuild_observer_grades above ships the nightly aggregation that closes
+// amplifier #9's primary blocker; the LOO and per-observer ACR fits feed
+// the `pwcmp_*` and `sigma_acr` / `delta_acr` columns once they land.
 
 #[cfg(test)]
 mod tests {
@@ -409,5 +547,104 @@ mod tests {
         };
         let w = composite_weight(&g);
         assert!(w < 0.05, "got {w}");
+    }
+
+    #[tokio::test]
+    async fn rebuild_observer_grades_aggregates_sessions_and_sets_trust() -> Result<()> {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(2)
+            .connect("sqlite::memory:")
+            .await?;
+        sqlx::migrate!("./migrations").run(&pool).await?;
+
+        // Two observers: alice is strong + has enough trials; bob is weak.
+        for obs in ["alice", "bob"] {
+            sqlx::query("INSERT INTO observers (id, created_at) VALUES (?, ?)")
+                .bind(obs)
+                .bind(now_ms())
+                .execute(&pool)
+                .await?;
+        }
+        // Helper: insert a graded session with the given weight and trial count.
+        let insert_session = |obs: &'static str,
+                              id: &'static str,
+                              weight: f32,
+                              n_trials: i64,
+                              golden: Option<f32>,
+                              even_odd: Option<f32>| {
+            let pool = pool.clone();
+            async move {
+                sqlx::query(
+                    "INSERT INTO sessions (id, observer_id, started_at, device_pixel_ratio, \
+                     screen_width_css, screen_height_css, session_weight, session_grade, \
+                     golden_pass_rate, even_odd_r, n_trials, graded_at) \
+                     VALUES (?, ?, ?, 3.0, 390, 844, ?, ?, ?, ?, ?, ?)",
+                )
+                .bind(id)
+                .bind(obs)
+                .bind(now_ms())
+                .bind(weight)
+                .bind(grade_letter(weight))
+                .bind(golden)
+                .bind(even_odd)
+                .bind(n_trials)
+                .bind(now_ms())
+                .execute(&pool)
+                .await
+            }
+        };
+        insert_session("alice", "s_a1", 0.90, 30, Some(0.95), Some(0.6)).await?;
+        insert_session("alice", "s_a2", 0.85, 40, Some(0.90), Some(0.7)).await?;
+        insert_session("bob", "s_b1", 0.30, 12, Some(0.35), Some(0.0)).await?;
+
+        let written = rebuild_observer_grades(&pool).await?;
+        assert_eq!(written, 2);
+
+        let alice: (i64, i64, String, f32, Option<f32>) = sqlx::query_as(
+            "SELECT n_sessions, n_trials, quality_grade, weight, golden_pass_rate \
+             FROM observer_grades WHERE observer_id = 'alice'",
+        )
+        .fetch_one(&pool)
+        .await?;
+        assert_eq!(alice.0, 2);
+        assert_eq!(alice.1, 70);
+        assert_eq!(alice.2, "A");
+        assert!(alice.3 > 0.80, "alice weight: {}", alice.3);
+        let alice_golden = alice.4.unwrap();
+        // trial-weighted mean: (0.95·30 + 0.90·40) / 70 ≈ 0.921
+        assert!((alice_golden - 0.921).abs() < 0.01, "alice golden: {alice_golden}");
+
+        let bob: (i64, i64, String, f32) = sqlx::query_as(
+            "SELECT n_sessions, n_trials, quality_grade, weight \
+             FROM observer_grades WHERE observer_id = 'bob'",
+        )
+        .fetch_one(&pool)
+        .await?;
+        assert_eq!(bob.0, 1);
+        assert_eq!(bob.1, 12);
+        assert_eq!(bob.2, "D");
+
+        // Trust pool: alice gets in (B+ AND ≥50 trials), bob does not.
+        let alice_trusted: i64 =
+            sqlx::query_as::<_, (i64,)>("SELECT trusted_pool FROM observers WHERE id = 'alice'")
+                .fetch_one(&pool)
+                .await?
+                .0;
+        let bob_trusted: i64 =
+            sqlx::query_as::<_, (i64,)>("SELECT trusted_pool FROM observers WHERE id = 'bob'")
+                .fetch_one(&pool)
+                .await?
+                .0;
+        assert_eq!(alice_trusted, 1);
+        assert_eq!(bob_trusted, 0);
+
+        // Idempotent: a second rebuild produces the same row count, no
+        // duplicates from the UNIQUE PK on observer_id.
+        let again = rebuild_observer_grades(&pool).await?;
+        assert_eq!(again, 2);
+        let count: (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM observer_grades").fetch_one(&pool).await?;
+        assert_eq!(count.0, 2);
+        Ok(())
     }
 }

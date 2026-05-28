@@ -195,6 +195,22 @@ async fn main() -> Result<()> {
         .route("/export/thresholds.tsv", get(handlers::export_thresholds))
         .route("/export/responses.tsv", get(handlers::export_responses))
         .route("/export/unified.tsv", get(handlers::export_unified))
+        .route(
+            "/export/pareto.manifest.json",
+            get(handlers::export_pareto_manifest),
+        )
+        .route(
+            "/export/thresholds.manifest.json",
+            get(handlers::export_thresholds_manifest),
+        )
+        .route(
+            "/export/responses.manifest.json",
+            get(handlers::export_responses_manifest),
+        )
+        .route(
+            "/export/unified.manifest.json",
+            get(handlers::export_unified_manifest),
+        )
         .route("/stats", get(handlers::stats))
         .route("/manifest/refresh", post(handlers::refresh_manifest))
         // Curator mode (corpus development).

@@ -102,6 +102,10 @@ async fn smoke_full_loop() -> Result<()> {
         .route("/export/pareto.tsv", get(handlers::export_pareto))
         .route("/export/thresholds.tsv", get(handlers::export_thresholds))
         .route("/export/responses.tsv", get(handlers::export_responses))
+        .route(
+            "/export/responses.manifest.json",
+            get(handlers::export_responses_manifest),
+        )
         .route("/stats", get(handlers::stats));
     let app = Router::new().nest("/api", api).with_state(state);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
@@ -242,6 +246,41 @@ async fn smoke_full_loop() -> Result<()> {
     assert!(
         response_lines >= 31,
         "expected header + 30 rows, got {response_lines}"
+    );
+
+    // The TSV must come with a Link rel=describedby pointing at the manifest;
+    // the manifest itself must carry build_commit + sha256 + row_count.
+    let resp_full = client
+        .get(format!("{base}/api/export/responses.tsv"))
+        .send()
+        .await?;
+    let link = resp_full
+        .headers()
+        .get("link")
+        .map(|v| v.to_str().unwrap_or("").to_string())
+        .unwrap_or_default();
+    assert!(
+        link.contains("responses.manifest.json"),
+        "missing describedby Link header: {link}"
+    );
+    let manifest_json: serde_json::Value = client
+        .get(format!("{base}/api/export/responses.manifest.json"))
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+    assert_eq!(manifest_json["kind"], "responses");
+    assert!(manifest_json["build_commit"].is_string());
+    assert_eq!(
+        manifest_json["sha256"].as_str().map(|s| s.len()),
+        Some(64),
+        "sha256 should be 64 hex chars"
+    );
+    assert!(
+        manifest_json["row_count"].as_u64().unwrap_or(0) >= 30,
+        "manifest row_count = {}",
+        manifest_json["row_count"]
     );
 
     Ok(())

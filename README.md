@@ -270,10 +270,13 @@ the global CLAUDE.md "ML Data Pipeline Discipline" section verbatim:
 1. **One canonical DB.** `${SQUINTLY_DB}` is the only store of human responses. No
    shadow exports, no "fast-iter" copies in `/tmp`. Backups via SQLite `VACUUM INTO`
    nightly to `/data/snapshots/squintly-<iso>.db`.
-2. **Every export carries `build_commit`.** Per-TSV `_MANIFEST.json` (planned for v0.2
-   exit; tracking in [§9](#9-contributing--open-decisions)) records `study_commit` +
-   `db_snapshot_sha256` + `n_rows` + `iso_ts`. Without this, "is this export still
-   valid?" becomes a forensic audit.
+2. **Every export carries `build_commit`.** `/api/export/{kind}.tsv` ships a sibling
+   `/api/export/{kind}.manifest.json` carrying `build_commit` (the git SHA the binary
+   was built from, via `build.rs`), `schema_version`, `exported_at`, `row_count`,
+   `sha256` of the TSV body, and a `source_query` pointer at the Rust source that
+   produced the rows. The TSV response also carries a `Link: <…>; rel="describedby"`
+   header pointing at the sidecar. Without this, "is this export still valid?"
+   becomes a forensic audit.
 3. **No source-image duplication.** Squintly *consumes* the coefficient store; never
    copies images, never writes back. The R2 manifest at the public bucket is the
    canonical curator input.
@@ -292,7 +295,8 @@ the global CLAUDE.md "ML Data Pipeline Discipline" section verbatim:
 
 What we don't yet enforce automatically (tracking these as v0.2 exit gates):
 
-- [ ] `_MANIFEST.json` emitted alongside every export TSV (currently exports ship raw).
+- [x] `_MANIFEST.json` emitted alongside every export TSV
+      (`/api/export/{kind}.manifest.json` paired with the TSV; describedby Link header).
 - [ ] Nightly Tower-mirror cron of the SQLite snapshot dir.
 - [ ] Per-table row counts in a `db_health` table updated hourly so we notice when
       drift starts.
@@ -323,15 +327,15 @@ Full study design + decision rules: [`docs/STUDY.md`](docs/STUDY.md).
 The amplifier table in [§3](#3-how-we-amplify-human-effort-15-levers) is the authoritative
 checklist of what's done vs planned. The next-most-impactful tractable chunks:
 
-1. **Wire ASAP into `next_trial`** (amplifier #1). The hardest method work is done in
-   `src/asap.rs`; what's needed is the integration in `src/handlers.rs:next_trial` after
-   the BT posterior has ≥ 50 trials — until then, cold-start with random sampling.
-2. **End-to-end smoke on a real phone** (v0.2 exit gate). The Playwright e2e tests run
+1. **End-to-end smoke on a real phone** (v0.2 exit gate). The Playwright e2e tests run
    in CI but a human-on-Galaxy-Fold-7 walkthrough catches everything the headless
    browser misses.
-3. **Nightly grading batch + per-observer η** (amplifier #9). After the pilot, this
-   compounds with #1 — re-weighted responses make the BT posterior tighter.
-4. **`_MANIFEST.json` on exports** (data-sprawl gate). 100 LOC, blocks reproducibility.
+2. **pwcmp LOO + Pérez-Ortiz 2019 per-observer ACR fits** (amplifier #9 deep dive).
+   The nightly `observer_grades` aggregation already fills the trial-weighted golden
+   pass rate, even-odd consistency, geometric-mean weight, and trusted-pool promotion;
+   the LOO and per-observer ACR fits fill the `pwcmp_*` and `sigma_acr` / `delta_acr`
+   columns once we have ≥ 50 sessions per observer.
+3. **Tower-mirror cron + db_health** — the two remaining data-sprawl v0.2 exit gates.
 
 Open decisions worth surfacing:
 

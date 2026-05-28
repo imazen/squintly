@@ -772,44 +772,163 @@ pub async fn proxy_encoding(
 
 // ---------- export ----------
 
-pub async fn export_pareto(State(state): State<SharedState>) -> Result<Response, AppError> {
-    let body = crate::export::pareto_tsv(&state.pool).await?;
+/// Build-time git commit baked in via `build.rs`. Falls back to `"unknown"`
+/// for off-tree builds (cargo-install, vendored). Every export manifest
+/// carries this so "is this data still valid?" stays a single grep
+/// against the source tree, not a forensic audit (CLAUDE.md ML-data §2).
+pub const BUILD_COMMIT: &str = env!("SQUINTLY_BUILD_COMMIT");
+
+/// Per-export schema version. Bump when an export TSV's columns or
+/// semantics change so downstream consumers can refuse stale shapes.
+/// Bound separately for each export so a `pareto` schema bump doesn't
+/// invalidate cached `responses` data.
+fn schema_version(kind: ExportKind) -> u32 {
+    match kind {
+        ExportKind::Pareto => 1,
+        ExportKind::Thresholds => 1,
+        ExportKind::Responses => 1,
+        ExportKind::Unified => 1,
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+enum ExportKind {
+    Pareto,
+    Thresholds,
+    Responses,
+    Unified,
+}
+
+impl ExportKind {
+    fn name(self) -> &'static str {
+        match self {
+            ExportKind::Pareto => "pareto",
+            ExportKind::Thresholds => "thresholds",
+            ExportKind::Responses => "responses",
+            ExportKind::Unified => "unified",
+        }
+    }
+    fn source_query(self) -> &'static str {
+        match self {
+            ExportKind::Pareto => "src/export.rs::pareto_tsv",
+            ExportKind::Thresholds => "src/export.rs::thresholds_tsv",
+            ExportKind::Responses => "src/export.rs::responses_tsv",
+            ExportKind::Unified => "src/export.rs::unified_tsv",
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+pub struct ExportManifest {
+    /// Identifier for the export — one of `pareto`/`thresholds`/`responses`/`unified`.
+    kind: &'static str,
+    /// Per-kind schema version. Bump when columns or semantics change.
+    schema_version: u32,
+    /// Git SHA the binary was built from (or `unknown` for off-tree builds).
+    build_commit: &'static str,
+    /// ISO-8601 UTC of when this manifest was produced.
+    exported_at: String,
+    /// Body row count (excludes the header row).
+    row_count: u64,
+    /// Hex-encoded SHA-256 of the TSV body (header included). Lets a
+    /// downstream consumer detect silent corruption or transcoding without
+    /// re-running the query.
+    sha256: String,
+    /// Pointer into the binary's source that produced the TSV — the
+    /// reproduction recipe lives there, not duplicated in the manifest.
+    source_query: &'static str,
+    /// Byte size of the TSV body.
+    body_bytes: u64,
+    /// Reminder that exports are private. Squintly does not redistribute
+    /// observer data; consumers must respect the same.
+    redistribution: &'static str,
+}
+
+/// Build the manifest JSON for a given TSV body. Pure function — only the
+/// body, kind, and current clock are inputs.
+fn build_export_manifest(kind: ExportKind, body: &str) -> ExportManifest {
+    use sha2::Digest;
+    let row_count = body.lines().count().saturating_sub(1) as u64;
+    let digest = sha2::Sha256::digest(body.as_bytes());
+    let sha256 = digest.iter().map(|b| format!("{b:02x}")).collect::<String>();
+    ExportManifest {
+        kind: kind.name(),
+        schema_version: schema_version(kind),
+        build_commit: BUILD_COMMIT,
+        exported_at: chrono::Utc::now().to_rfc3339(),
+        row_count,
+        sha256,
+        source_query: kind.source_query(),
+        body_bytes: body.len() as u64,
+        redistribution: "private — not for redistribution",
+    }
+}
+
+fn tsv_response(body: String, kind: ExportKind) -> Response {
     let mut headers = HeaderMap::new();
     headers.insert(
         header::CONTENT_TYPE,
         HeaderValue::from_static("text/tab-separated-values"),
     );
-    Ok((StatusCode::OK, headers, body).into_response())
+    // Link header points at the sidecar so a wget/curl/etc consumer that
+    // follows Link rels gets the provenance pair, not just the bare TSV.
+    headers.insert(
+        header::LINK,
+        HeaderValue::from_str(&format!(
+            "</api/export/{}.manifest.json>; rel=\"describedby\"",
+            kind.name()
+        ))
+        .unwrap(),
+    );
+    (StatusCode::OK, headers, body).into_response()
+}
+
+pub async fn export_pareto(State(state): State<SharedState>) -> Result<Response, AppError> {
+    let body = crate::export::pareto_tsv(&state.pool).await?;
+    Ok(tsv_response(body, ExportKind::Pareto))
 }
 
 pub async fn export_thresholds(State(state): State<SharedState>) -> Result<Response, AppError> {
     let body = crate::export::thresholds_tsv(&state.pool).await?;
-    let mut headers = HeaderMap::new();
-    headers.insert(
-        header::CONTENT_TYPE,
-        HeaderValue::from_static("text/tab-separated-values"),
-    );
-    Ok((StatusCode::OK, headers, body).into_response())
+    Ok(tsv_response(body, ExportKind::Thresholds))
 }
 
 pub async fn export_responses(State(state): State<SharedState>) -> Result<Response, AppError> {
     let body = crate::export::responses_tsv(&state.pool).await?;
-    let mut headers = HeaderMap::new();
-    headers.insert(
-        header::CONTENT_TYPE,
-        HeaderValue::from_static("text/tab-separated-values"),
-    );
-    Ok((StatusCode::OK, headers, body).into_response())
+    Ok(tsv_response(body, ExportKind::Responses))
 }
 
 pub async fn export_unified(State(state): State<SharedState>) -> Result<Response, AppError> {
     let body = crate::export::unified_tsv(&state.pool).await?;
-    let mut headers = HeaderMap::new();
-    headers.insert(
-        header::CONTENT_TYPE,
-        HeaderValue::from_static("text/tab-separated-values"),
-    );
-    Ok((StatusCode::OK, headers, body).into_response())
+    Ok(tsv_response(body, ExportKind::Unified))
+}
+
+pub async fn export_pareto_manifest(
+    State(state): State<SharedState>,
+) -> Result<Json<ExportManifest>, AppError> {
+    let body = crate::export::pareto_tsv(&state.pool).await?;
+    Ok(Json(build_export_manifest(ExportKind::Pareto, &body)))
+}
+
+pub async fn export_thresholds_manifest(
+    State(state): State<SharedState>,
+) -> Result<Json<ExportManifest>, AppError> {
+    let body = crate::export::thresholds_tsv(&state.pool).await?;
+    Ok(Json(build_export_manifest(ExportKind::Thresholds, &body)))
+}
+
+pub async fn export_responses_manifest(
+    State(state): State<SharedState>,
+) -> Result<Json<ExportManifest>, AppError> {
+    let body = crate::export::responses_tsv(&state.pool).await?;
+    Ok(Json(build_export_manifest(ExportKind::Responses, &body)))
+}
+
+pub async fn export_unified_manifest(
+    State(state): State<SharedState>,
+) -> Result<Json<ExportManifest>, AppError> {
+    let body = crate::export::unified_tsv(&state.pool).await?;
+    Ok(Json(build_export_manifest(ExportKind::Unified, &body)))
 }
 
 // ---------- optional email magic-link auth ----------
@@ -1435,5 +1554,43 @@ impl IntoResponse for AppError {
         };
         tracing::warn!(?code, %msg, "request failed");
         (code, msg).into_response()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn export_manifest_hashes_body_and_counts_rows() {
+        let body = "image_id\tsize\tconfig_name\n\
+                    img1\tS\tmozjpeg-q40\n\
+                    img2\tM\tzenwebp-q70\n\
+                    img3\tL\tzenjxl-d2\n";
+        let m = build_export_manifest(ExportKind::Pareto, body);
+        assert_eq!(m.kind, "pareto");
+        assert_eq!(m.schema_version, 1);
+        assert_eq!(m.row_count, 3); // header excluded
+        assert_eq!(m.body_bytes, body.len() as u64);
+        // sha256 of the body should be deterministic and 64 hex chars.
+        assert_eq!(m.sha256.len(), 64);
+        let again = build_export_manifest(ExportKind::Pareto, body);
+        assert_eq!(m.sha256, again.sha256, "sha256 should be deterministic");
+        // Different body → different hash.
+        let other = build_export_manifest(ExportKind::Pareto, "image_id\tsize\nimg1\tS\n");
+        assert_ne!(m.sha256, other.sha256);
+        assert_eq!(m.source_query, "src/export.rs::pareto_tsv");
+        assert_eq!(m.redistribution, "private — not for redistribution");
+    }
+
+    #[test]
+    fn export_manifest_handles_empty_body() {
+        // Header-only TSV (no data rows) should report row_count = 0.
+        let m = build_export_manifest(ExportKind::Responses, "trial_id\tsession_id\n");
+        assert_eq!(m.row_count, 0);
+
+        // Truly empty body → saturating_sub keeps row_count at 0.
+        let m2 = build_export_manifest(ExportKind::Responses, "");
+        assert_eq!(m2.row_count, 0);
     }
 }

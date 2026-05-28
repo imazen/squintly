@@ -1,37 +1,24 @@
 //! Pérez-Ortiz et al. 2019 unified rating + pairwise quality scale fit
 //! ([PDF](https://www.cl.cam.ac.uk/~rkm38/pdfs/perezortiz2019unified_quality_scale.pdf)).
 //!
-//! **KNOWN ISSUES (2026-05-28)** — the gradient-descent solver below is
-//! NOT production-ready. On synthetic data where pair + rating evidence
-//! are consistent with the same latent m, the solver diverges instead of
-//! converging: σ explodes (observed σ = 2361 vs the BT-only fit's 0.343),
-//! τ wanders far outside the m range (observed τ_0 = -1356), log_σ_o
-//! goes NaN, and the loop hits `max_iter` without converging. The
-//! existing `unified_fit_recovers_obvious_ranking` and
-//! `unified_fit_estimates_observer_bias` tests pass because they're
-//! narrow (one observer, simple ranking checks) and don't trip the
-//! divergence modes.
+//! **Three bug fixes landed 2026-05-28** that brought the solver from
+//! diverging-on-any-real-data to passing a 4-item / 4-tier-rating
+//! regression test (`unified_competitive_with_bt_only_on_heldout_pairs`):
 //!
-//! Suspected causes (TODO before pilot):
-//! 1. `grad_log_sigma_o` chain rule is off — the `lower.max(-1e6)` hack
-//!    at line ~181 suggests the `−∞ lower` branch is mis-derived.
-//! 2. `grad_log_sigma` for the pair Thurstone term has the wrong sign
-//!    (or the chain factor is missing a factor of 2): when ratings are
-//!    introduced, σ runs away rather than equilibrating.
-//! 3. The tau-monotonicity enforcement (sort ascending after each step)
-//!    can clobber the gradient update for non-monotone-violating taus.
-//!
-//! Mitigations until the solver is rewritten:
-//! - `pair_log_likelihood` / `rating_log_likelihood` / `total_log_likelihood`
-//!   (below) work correctly on any `UnifiedFit` regardless of how it was
-//!   produced — held-out scoring is decoupled from training. Callers
-//!   wiring the H3 pilot evaluation should use these against fits from
-//!   the reference implementations in `/mnt/v/repos/iqa-tools/` (pwcmp
-//!   + a Pérez-Ortiz cumulative-link implementation) until the in-tree
-//!   solver is fixed.
-//! - For v0.1 production, `src/bt.rs::fit` (the BT-Davidson solver) is
-//!   the working code path; the threshold staircase covers the rating
-//!   modality independently.
+//! 1. `d_log_sigma_o` NaN when a rating == 4 (upper = +∞). `pdf_u` was
+//!    set to 0 for the infinite case but `upper * pdf_u = ∞ · 0` still
+//!    produced NaN in f32 arithmetic, which then poisoned `log_sigma_o`
+//!    and cascaded. Both infinite arms now have explicit `0.0` guards.
+//! 2. No prior on global `log_sigma` → drifted into the σ ≫ 1 flat
+//!    region where `dl_dz · (-z) → 0` and σ ≈ 2000 was a fixed point.
+//!    Added `log_σ ~ N(0, 1²)` matching `log_σ_o`'s shape.
+//! 3. Rating-index sign convention was inverted. Squintly's UI uses
+//!    rating 1 = imperceptible = BEST quality, but the cumulative-link
+//!    model as coded treated higher μ as worse — so pair (higher m =
+//!    better) and rating (higher m = worse) signals contradicted and the
+//!    fit infered m upside-down. Now we flip `k_idx = 4 - rating` inside
+//!    both the fit loop and `rating_log_likelihood`, aligning both
+//!    modalities on "higher m = better".
 //!
 //! Joint likelihood for two protocols on the same items:
 //!
@@ -129,6 +116,12 @@ pub fn fit_unified(
     let prior_m = 1.0 / (1.5 * 1.5);
     let prior_delta = 1.0 / (0.5 * 0.5);
     let prior_log_sigma_o = 1.0 / (0.5 * 0.5);
+    // log_σ ~ N(0, 1²) keeps the global pairwise σ in roughly
+    // [exp(-2), exp(2)] = [0.135, 7.4]. Without this the gradient on
+    // log_σ vanishes for σ ≫ 1 (z → 0 for all pairs, dl_dz · (-z) → 0)
+    // so the optimiser can drift into a flat broken-loss region where
+    // σ ≈ 2000 is a fixed point.
+    let prior_log_sigma = 1.0;
 
     let mut prev_loss = f32::INFINITY;
     let mut lr: f32 = 0.02;
@@ -172,12 +165,24 @@ pub fn fit_unified(
         }
 
         // Rating contribution (cumulative-link model).
+        //
+        // **Sign convention.** The cumulative-link model is written so that
+        // higher μ ⇒ higher tier index ⇒ "worse" in the cumulative-link's
+        // own ordinal sense. Squintly's UI inverts that: rating 1 =
+        // imperceptible = BEST quality, rating 4 = hate = WORST. We want
+        // higher m to mean "better" (matching BT-Davidson where higher m
+        // wins more often), so we invert the rating index here: rating 1
+        // ↦ k_idx 3 (top of cumulative-link tier), rating 4 ↦ k_idx 0
+        // (bottom). Without this flip, pair (higher m better) and rating
+        // (higher m worse) signals contradict and the fit infers m
+        // upside-down — see the 2026-05-28 unified-solver bug history
+        // in CLAUDE.md.
         for r in ratings {
             let i = r.item;
             let o = r.observer;
             let mu = m[i] + delta[o];
             let so = log_sigma_o[o].exp().max(1e-3);
-            let k_idx = (r.rating as usize).clamp(1, 4) - 1; // 0..3
+            let k_idx = 4 - (r.rating as usize).clamp(1, 4); // rating 1 -> 3, rating 4 -> 0
             // P(rating = k+1) = Φ((τ_k - mu)/σ_o) - Φ((τ_{k-1} - mu)/σ_o), with
             // τ_-1 = -∞, τ_3 = +∞.
             let upper = if k_idx == 3 {
@@ -210,13 +215,15 @@ pub fn fit_unified(
             let inv_pk = -1.0 / p_k;
             // ∂(p_upper - p_lower)/∂mu = -(pdf_u - pdf_l)/σ_o (sign from -μ in arg)
             let d_mu = -(pdf_u - pdf_l) / so;
-            let d_log_sigma_o = -((upper * pdf_u) - (lower.max(-1e6) * pdf_l));
-            // d_log_sigma_o = -((upper * pdf_u) - (lower * pdf_l)); but treat infinite lower as 0 contribution
-            let d_log_sigma_o = if lower.is_infinite() {
-                -(upper * pdf_u)
-            } else {
-                d_log_sigma_o
-            };
+            // dp_k/d(log σ_o) = -(z_u·φ(z_u) − z_l·φ(z_l)) — see module doc.
+            // Both infinite-arm cases need an explicit guard: ∞·0 = NaN in
+            // f32, but the limit `z·φ(z) → 0` as |z| → ∞ is what we want.
+            // The pre-fix `lower.max(-1e6)` patched the lower arm only;
+            // when a rating == 4 (upper = +∞), upper·pdf_u was NaN and
+            // poisoned `log_sigma_o`.
+            let upper_term = if upper.is_infinite() { 0.0 } else { upper * pdf_u };
+            let lower_term = if lower.is_infinite() { 0.0 } else { lower * pdf_l };
+            let d_log_sigma_o = -(upper_term - lower_term);
             grad_m[i] += inv_pk * d_mu;
             grad_delta[o] += inv_pk * d_mu;
             grad_log_sigma_o[o] += inv_pk * d_log_sigma_o;
@@ -240,6 +247,10 @@ pub fn fit_unified(
             grad_delta[o] += prior_delta * delta[o];
             grad_log_sigma_o[o] += prior_log_sigma_o * log_sigma_o[o];
         }
+        // Prior on the global pairwise log_sigma — stops it from drifting
+        // into the σ ≫ 1 flat region where dl_dz · (-z) → 0.
+        loss += 0.5 * prior_log_sigma * log_sigma * log_sigma;
+        grad_log_sigma += prior_log_sigma * log_sigma;
 
         // Anchor reference.
         grad_m[0] = 0.0;
@@ -342,7 +353,9 @@ pub fn rating_log_likelihood(fit: &UnifiedFit, ratings: &[RatingObs]) -> f64 {
             (0.0, 1.0)
         };
         let mu = fit.m[i] + delta_o;
-        let k_idx = (r.rating as usize).clamp(1, 4) - 1;
+        // Same rating-index flip as the fit loop above: rating 1 ↦ 3
+        // (top tier under the cumulative-link convention), rating 4 ↦ 0.
+        let k_idx = 4 - (r.rating as usize).clamp(1, 4);
         let upper = if k_idx == 3 {
             f32::INFINITY
         } else {
@@ -462,6 +475,113 @@ mod tests {
     }
 
     #[test]
+    fn unified_competitive_with_bt_only_on_heldout_pairs() {
+        // Regression test for the 2026-05-28 unified-solver bugs:
+        //   (a) NaN in d_log_sigma_o when rating == 4 (upper = +∞)
+        //   (b) no prior on global log_sigma → drift to σ ≈ 2000 fixed point
+        // Both fixed in the same commit that brought this test online.
+        //
+        // Setup: 4 items at true m = [0, −0.4, −0.8, −1.2], one observer,
+        // pair observations from Thurstone(σ=1), 4-tier ratings whose modal
+        // tier matches each item (so all ratings 1..4 occur — exercising
+        // the rating == 4 / upper = +∞ branch that triggered bug (a)).
+        //
+        // The unified fit should not regress vs BT-only on held-out pair
+        // log-likelihood: both have the same pair data, ratings only add
+        // independent signal on the same latent m. Tolerance is ±0.1
+        // nats/trial — well within Monte-Carlo noise at n=48.
+        use rand::Rng;
+        use rand::SeedableRng;
+        use rand::rngs::SmallRng;
+
+        let n_items = 4;
+        let true_m: [f32; 4] = [0.0, -0.4, -0.8, -1.2];
+
+        let mut rng = SmallRng::seed_from_u64(7);
+        let mut pairs: Vec<PairObs> = Vec::new();
+        for a in 0..n_items {
+            for b in 0..n_items {
+                if a == b {
+                    continue;
+                }
+                for _ in 0..15 {
+                    let diff = true_m[a] - true_m[b];
+                    let eps: f32 = (rng.random::<f32>() - 0.5) * 2.0;
+                    let outcome = if diff + eps > 0.0 {
+                        PairOutcome::AWins
+                    } else {
+                        PairOutcome::BWins
+                    };
+                    pairs.push(PairObs {
+                        item_a: a,
+                        item_b: b,
+                        observer: 0,
+                        outcome,
+                    });
+                }
+            }
+        }
+        let mut ratings: Vec<RatingObs> = Vec::new();
+        for i in 0..n_items {
+            let modal = (i + 1) as u8;
+            for _ in 0..30 {
+                let r = if rng.random::<f32>() < 0.8 {
+                    modal
+                } else if modal > 1 && rng.random::<f32>() < 0.5 {
+                    modal - 1
+                } else if modal < 4 {
+                    modal + 1
+                } else {
+                    modal - 1
+                };
+                ratings.push(RatingObs {
+                    item: i,
+                    observer: 0,
+                    rating: r,
+                });
+            }
+        }
+
+        let split_p = (pairs.len() as f32 * 0.8) as usize;
+        let split_r = (ratings.len() as f32 * 0.8) as usize;
+        let train_pairs = &pairs[..split_p];
+        let test_pairs = &pairs[split_p..];
+        let train_ratings = &ratings[..split_r];
+
+        let unified = fit_unified(n_items, 1, train_pairs, train_ratings);
+        let bt_only = fit_unified(n_items, 1, train_pairs, &[]);
+
+        // Bug-regression assertions: σ must be in a sane range and no NaN
+        // anywhere. Pre-fix: σ ≈ 2361 and log_sigma_o = NaN.
+        assert!(
+            unified.sigma > 0.05 && unified.sigma < 20.0,
+            "σ should be moderate; got {}",
+            unified.sigma
+        );
+        assert!(
+            unified.log_sigma_o.iter().all(|s| s.is_finite()),
+            "log_σ_o should be finite; got {:?}",
+            unified.log_sigma_o
+        );
+        assert!(
+            unified.tau.iter().all(|t| t.is_finite() && t.abs() < 20.0),
+            "τ should be in m-range; got {:?}",
+            unified.tau
+        );
+
+        let ll_unified = pair_log_likelihood(&unified, test_pairs);
+        let ll_bt = pair_log_likelihood(&bt_only, test_pairs);
+        let per_trial_delta = (ll_unified - ll_bt) / (test_pairs.len() as f64);
+        assert!(
+            per_trial_delta > -0.1,
+            "unified should at least match BT-only on consistent synthetic data; \
+             per-trial Δ = {per_trial_delta:.4} nats \
+             (ll_unified={ll_unified:.2}, ll_bt={ll_bt:.2}, n_test={})",
+            test_pairs.len()
+        );
+    }
+
+    #[test]
     fn total_log_likelihood_decomposes_into_pair_and_rating_terms() {
         // Pure additivity check — no solver, just verifies that the helper
         // composition is correct.
@@ -503,12 +623,12 @@ mod tests {
                 item: 0,
                 observer: 0,
                 rating: 2,
-            }); // observer 0: ref → 2
+            }); // observer 0: ref → 2 (worse)
             ratings.push(RatingObs {
                 item: 0,
                 observer: 1,
                 rating: 1,
-            }); // observer 1: ref → 1
+            }); // observer 1: ref → 1 (better)
             ratings.push(RatingObs {
                 item: 1,
                 observer: 0,
@@ -521,10 +641,13 @@ mod tests {
             });
         }
         let fit = fit_unified(2, 2, &[], &ratings);
-        // Observer 0's δ should be more positive (their ratings are higher = worse).
+        // Under the corrected convention (higher m = better quality),
+        // observer 0 — who gives WORSE (higher-numbered) ratings — needs
+        // a lower μ to match the data → δ_0 LESS than δ_1.
         assert!(
-            fit.delta[0] > fit.delta[1] - 0.1,
-            "δ[0]={} should be greater than δ[1]={}",
+            fit.delta[0] < fit.delta[1] + 0.1,
+            "observer 0 rates worse than observer 1 → δ[0] should be ≤ δ[1]; \
+             got δ[0]={}, δ[1]={}",
             fit.delta[0],
             fit.delta[1]
         );

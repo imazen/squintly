@@ -80,4 +80,43 @@ just test
 
 ## Known Bugs
 
-(none yet)
+### unified.rs solver diverges on synthetic data (2026-05-28)
+
+`src/unified.rs::fit_unified` does not converge when both pair and rating
+observations are present and consistent with the same latent m. On a 4-item
+4-tier-rating synthetic dataset (SmallRng seed 7, 240 pair obs, 120 rating
+obs, m range [0, −1.2]):
+
+| Param | Unified fit (broken) | BT-only fit (working) |
+|---|---|---|
+| `m` | [0, +0.31, −0.05, −0.41] | [0, −0.27, −0.59, −0.91] |
+| `σ` | 2361.16 | 0.343 |
+| `τ` | [−1356.29, 0.19, 1.05] | (n/a) |
+| `log_σ_o` | NaN | (n/a) |
+| `iterations` | 800 (max) | 204 (converged) |
+| held-out pair LL | −24.95 | −7.08 |
+
+Held-out pair log-likelihood is **0.5 nats/trial worse** for unified
+than BT-only on the same training set — the unified-spec literature
+predicts the opposite direction.
+
+Suspected causes, ranked:
+1. `grad_log_sigma_o` chain rule wrong — the `lower.max(-1e6)` hack at
+   `src/unified.rs:~181` suggests the `−∞` lower branch was patched
+   rather than re-derived. NaN in `log_σ_o` confirms this branch is broken.
+2. `grad_log_sigma` for the pair Thurstone term has wrong sign / scale.
+   Visible as σ running away when ratings are added but staying sane
+   in BT-only mode.
+3. `tau` monotonicity sort after each update step can clobber the
+   gradient direction for any tau that wasn't violating monotonicity.
+
+What still works: `pair_log_likelihood` / `rating_log_likelihood` /
+`total_log_likelihood` operate correctly on any `UnifiedFit` regardless
+of how it was produced. H3 pilot evaluation can use these against fits
+from the reference implementations under `/mnt/v/repos/iqa-tools/`
+(pwcmp + a Pérez-Ortiz cumulative-link port) until the in-tree solver
+is rewritten.
+
+Production: v0.1 squintly uses `src/bt.rs::fit` (BT-Davidson), which
+converges correctly. The threshold staircase covers the rating modality
+independently. The unified solver is not on any v0.1 hot path.

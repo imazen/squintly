@@ -296,8 +296,14 @@ uncertainty in `θ`. Show that pair next. Implementations:
   tree + EIG.
 - **HR-active** — active version of [HodgeRank](https://arxiv.org/abs/1711.05957).
 
-Squintly's [`src/asap.rs`](../src/asap.rs) is an ASAP-style implementation; status
-"impl-not-yet-wired" in README §3.
+Squintly ships an ASAP-style implementation: [`src/asap.rs`](../src/asap.rs) computes
+binary-outcome entropy under the current BT MAP; [`src/sampling.rs`](../src/sampling.rs)
+`select_pair_with_eig` does the BT fit + candidate filtering;
+[`src/handlers.rs`](../src/handlers.rs) `enhance_pair_with_asap` wires it into every
+non-golden pair trial. Below `ASAP_MIN_OBS = 8` prior comparisons on a source the
+sampler falls back to the random adjacent pair (the prior dominates and EIG is
+approximately uniform, so the fit-then-pick overhead buys nothing). Integration
+tested in [`tests/asap_wire.rs`](../tests/asap_wire.rs).
 
 ### Predictive sampling (PS-PC)
 

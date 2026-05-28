@@ -27,7 +27,7 @@ the bulk of web image traffic.
 | Code | Rust+axum backend, Vite+vanilla-TS frontend embedded via `rust-embed`, SQLite via `sqlx`, deploy via Railway + Docker. |
 | Study | **v0.2 protocol pre-registered** in [`docs/STUDY.md`](docs/STUDY.md) — H1–H5 hypotheses, holdout discipline, decision rules for zensim v48 ship locked. |
 | Jargon | New to IQA? Start with [`docs/GLOSSARY.md`](docs/GLOSSARY.md) — every term, unit, method, and stat in this README, in plain English, with links to the underlying papers. |
-| Phase | **v0.2 finishing** — backend + frontend mostly wired; main remaining chunk is **ASAP active sampler → `next_trial`** ([§3 amplifier #1](#3-how-we-amplify-human-effort-15-levers)) + end-to-end smoke on real phone. |
+| Phase | **v0.2 finishing** — ASAP active sampler now wired into `next_trial` ([§3 amplifier #1](#3-how-we-amplify-human-effort-15-levers)). Remaining: end-to-end smoke on a real phone + nightly per-observer η batch (#9). |
 | Pilot | Planned: 100 sessions once v0.2 ships ([§8 phases](#8-phases)). |
 
 ---
@@ -90,7 +90,7 @@ Ranked by ROI for converged-cells-per-human-hour. Status legend: ✅ done · �
 
 | # | Lever | Status | Where | Plan |
 |---|---|---|---|---|
-| **1** | **Active sampling (ASAP EIG)** — pick next pair by expected information gain | 🟡 | `src/asap.rs` (106 LOC), `src/sampling.rs` (533 LOC) | **v0.2 critical**: wire `asap::next_pair` into `handlers::next_trial` once BT posterior has ≥ 50 trials. Expected speedup vs random: **≥ 5× to per-cell CI ≤ 0.5 JOD** (H4 in STUDY.md). |
+| **1** | **Active sampling (ASAP EIG)** — pick next pair by expected information gain | ✅ | `src/asap.rs`, `src/sampling.rs` (`select_pair_with_eig`), `src/handlers.rs` (`enhance_pair_with_asap`), `tests/asap_wire.rs` | Wired into `next_trial` for non-golden pairs: on each pair request, refit BT-Davidson (σ_prior=1.0) over historical pair responses for the source and pick the highest-EIG adjacent non-trivial pair. Falls back to the random adjacent pair when comparisons < `ASAP_MIN_OBS=8`. Validate the ≥ 5× speedup-vs-random H4 prediction in pilot. |
 | **2** | **Viewing-conditions captured per trial** (DPR, intrinsic-to-device, calibrated CSS-px/mm, ambient, distance, gamut) | ✅ | `migrations/0001_init.sql`, `web/src/conditions.ts`, `web/src/calibration.ts` | — |
 | **3** | **Staircase thresholds** (Levitt 1971 transformed up–down, 79.4 / 70.7 / 50 % for notice / dislike / hate) | ✅ | `src/staircase.rs` (233 LOC) | tune step-halving cadence after pilot |
 | **4** | **Trivial-triplet filter** — pre-filter pairs the metric ensemble unanimously predicts (≥ 95 % preference); humans never see them | ✅ | [`docs/methodology.md`](docs/methodology.md) §3.4, `src/sampling.rs` | verify firing rate in pilot |
@@ -106,9 +106,10 @@ Ranked by ROI for converged-cells-per-human-hour. Status legend: ✅ done · �
 | **14** | **Boosted Triplet Comparison (BTC)** — quadratic boosting `h(d) = γ₁d + γ₂d²` for high-fidelity near-JND sensitivity | 🔵 | not yet | v0.3 optional add for the q ≥ 80 band; expected ~3× discrimination ([AIC-3 2410.09501](https://arxiv.org/abs/2410.09501)) |
 | **15** | **Hybrid expert + crowd** — route highest-EIG pairs to expert raters | ⚫ | not in scope for v1 (squintly is anonymous by design); zensim-level hybrid possible later via a separate study |
 
-The first 8 are either done or one-chunk-from-done. **#1 (ASAP→next_trial) is the
-single highest-impact piece left in v0.2** — without it we are random-sampling
-expensive humans.
+The first 11 are done; **#1 (ASAP→next_trial) shipped** as part of the
+glossary commit's follow-up. The remaining v0.2 work is the end-to-end smoke
+test on a real phone plus the nightly grading batch (#9 TODO at
+`src/grading.rs:340`).
 
 ---
 

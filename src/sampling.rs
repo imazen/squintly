@@ -364,6 +364,60 @@ pub fn is_trivial_pair(a: &EncodingMeta, b: &EncodingMeta) -> bool {
     hi / lo > 4.0
 }
 
+/// Minimum number of usable pair observations on a source before ASAP EIG
+/// kicks in. Below this we keep the random adjacent pair — the BT posterior
+/// is dominated by the Gaussian prior and EIG is approximately uniform, so
+/// adding fit-then-pick overhead buys nothing.
+pub const ASAP_MIN_OBS: usize = 8;
+
+/// ASAP EIG-based pair selection over a sorted-by-quality encoding list for
+/// one (source, codec). Inputs:
+///
+/// - `sorted_encodings` — same-codec encodings of a single source, sorted by
+///   ascending `quality` (so adjacency = nearest-quality neighbours).
+/// - `comparisons` — pair observations indexed against `sorted_encodings`
+///   positions.
+///
+/// Behaviour:
+///
+/// 1. Fit BT-Davidson (anchor = highest-quality index) with σ_prior = 1.0 —
+///    matches pwcmp's standalone-paper recommendation. Fit is sync and fast
+///    (≤ low-hundreds of iterations on the few-thousand-comparisons-per-source
+///    regime we expect).
+/// 2. Build the candidate set = adjacent `(i, i+1)` pairs filtered through
+///    `is_trivial_pair` (mirrors `pick_trial::try_pair`).
+/// 3. Pick the candidate maximising `asap::eig` under the fitted β with σ =
+///    1.0 (the natural BT log-strength unit; matches the Gaussian prior).
+///
+/// Returns `None` when too few observations, when fewer than two encodings,
+/// or when no candidate survives the trivial-pair filter — caller falls
+/// back to the random adjacent pair from `pick_trial::try_pair`.
+pub fn select_pair_with_eig(
+    sorted_encodings: &[&crate::coefficient::EncodingMeta],
+    comparisons: &[crate::bt::Comparison],
+    min_obs: usize,
+) -> Option<(usize, usize)> {
+    if sorted_encodings.len() < 2 || comparisons.len() < min_obs {
+        return None;
+    }
+    // Reference / highest-quality encoding is the BT anchor (β = 0). We
+    // sorted ascending, so it's the last index.
+    let anchor = sorted_encodings.len() - 1;
+    let fit = crate::bt::fit(sorted_encodings.len(), comparisons, anchor, 1.0);
+
+    let mut cands: Vec<(usize, usize)> = Vec::new();
+    for i in 0..sorted_encodings.len() - 1 {
+        if !is_trivial_pair(sorted_encodings[i], sorted_encodings[i + 1]) {
+            cands.push((i, i + 1));
+        }
+    }
+    if cands.is_empty() {
+        return None;
+    }
+    let mut r = rng();
+    crate::asap::pick_max_eig(&fit.beta, 1.0, &cands, &mut r)
+}
+
 fn pick_staircase_target(r: &mut impl rand::Rng) -> &'static str {
     // Roughly equal weight, slight bias toward `notice` since it converges slowest.
     match r.random_range(0..10) {
@@ -457,6 +511,80 @@ mod tests {
             is_trivial_pair(&small_jpeg, &big_avif),
             "20x bytes ratio is trivial"
         );
+    }
+
+    #[test]
+    fn select_pair_with_eig_targets_undecided_neighbours() {
+        use crate::bt::{Comparison, Outcome};
+
+        // Five same-codec encodings at q ∈ {20, 40, 60, 80, 95}. Bytes scale
+        // monotonically so no pair is trivial.
+        let make = |id: &str, q: f32, b: u64| crate::coefficient::EncodingMeta {
+            id: id.into(),
+            source_hash: "h".into(),
+            codec: "mozjpeg".into(),
+            quality: Some(q),
+            effort: None,
+            bytes: b,
+        };
+        let encs = vec![
+            make("q20", 20.0, 4_000),
+            make("q40", 40.0, 8_000),
+            make("q60", 60.0, 14_000),
+            make("q80", 80.0, 22_000),
+            make("q95", 95.0, 40_000),
+        ];
+        let sorted: Vec<&crate::coefficient::EncodingMeta> = encs.iter().collect();
+
+        // Observations: (q20, q40) and (q60, q80) are well-resolved (high
+        // index always wins), but (q40, q60) is split — that's the EIG-max
+        // pair we want ASAP to surface.
+        let mut comps: Vec<Comparison> = Vec::new();
+        for _ in 0..10 {
+            comps.push(Comparison {
+                a: 0,
+                b: 1,
+                outcome: Outcome::BWins,
+            });
+            comps.push(Comparison {
+                a: 2,
+                b: 3,
+                outcome: Outcome::BWins,
+            });
+        }
+        for _ in 0..5 {
+            comps.push(Comparison {
+                a: 1,
+                b: 2,
+                outcome: Outcome::AWins,
+            });
+            comps.push(Comparison {
+                a: 1,
+                b: 2,
+                outcome: Outcome::BWins,
+            });
+        }
+        let pick = select_pair_with_eig(&sorted, &comps, ASAP_MIN_OBS);
+        assert_eq!(
+            pick,
+            Some((1, 2)),
+            "ASAP should target the undecided neighbour pair"
+        );
+    }
+
+    #[test]
+    fn select_pair_with_eig_returns_none_under_min_obs() {
+        let e = |id: &str, q: f32| crate::coefficient::EncodingMeta {
+            id: id.into(),
+            source_hash: "h".into(),
+            codec: "mozjpeg".into(),
+            quality: Some(q),
+            effort: None,
+            bytes: 10_000,
+        };
+        let encs = [e("a", 40.0), e("b", 60.0)];
+        let sorted: Vec<&crate::coefficient::EncodingMeta> = encs.iter().collect();
+        assert!(select_pair_with_eig(&sorted, &[], ASAP_MIN_OBS).is_none());
     }
 
     #[test]

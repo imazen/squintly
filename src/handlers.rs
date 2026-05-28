@@ -19,11 +19,12 @@ use crate::auth::{
     EmailMessage, ResendConfig, TOKEN_TTL_MS, generate_token, hash_token, looks_like_email,
     send_magic_link,
 };
-use crate::coefficient::{CoefficientSource, Manifest};
+use crate::coefficient::{CoefficientSource, EncodingMeta, Manifest};
 use crate::db::now_ms;
 use crate::grading::{InlineGradeInput, compute_response_flags, grade_session};
 use crate::sampling::{
-    AnchorEntry, AnchorPool, SamplerConfig, SourceFlagMap, TrialPlan, pick_trial,
+    ASAP_MIN_OBS, AnchorEntry, AnchorPool, SamplerConfig, SourceFlagMap, TrialPlan, pick_trial,
+    select_pair_with_eig,
 };
 use crate::streaks::{
     StreakState, advance_streak, crossed_streak_milestone, crossed_trial_milestone,
@@ -331,6 +332,143 @@ pub struct TrialEncoding {
     pub bytes: u64,
 }
 
+/// Replace the encodings in a `TrialPlan::Pair` with the highest-EIG adjacent
+/// pair from the source's same-codec encoding ladder, using the BT-Davidson
+/// fit over historical pair responses for that source. Silently returns the
+/// input plan unchanged for:
+///
+/// - Single trials (ASAP has nothing to optimise).
+/// - Golden / honeypot pair trials (their job is QC, not information gain).
+/// - Sources with fewer than `ASAP_MIN_OBS` usable comparisons.
+/// - DB errors (we log via `tracing` and keep the random pick).
+async fn enhance_pair_with_asap(
+    pool: &SqlitePool,
+    manifest: &Manifest,
+    plan: TrialPlan,
+) -> TrialPlan {
+    let TrialPlan::Pair {
+        source,
+        a,
+        b,
+        is_golden,
+        expected_choice,
+        held_out,
+    } = plan
+    else {
+        return plan;
+    };
+    // Golden pairs are anchored on a fixed expected_choice — overriding the
+    // encodings would invalidate the QC contract.
+    if is_golden {
+        return TrialPlan::Pair {
+            source,
+            a,
+            b,
+            is_golden,
+            expected_choice,
+            held_out,
+        };
+    }
+    let codec = a.codec.clone();
+
+    // Build the sorted ladder of same-codec encodings for this source.
+    let mut sorted: Vec<EncodingMeta> = manifest
+        .encodings_for(&source.hash)
+        .into_iter()
+        .filter(|e| e.codec == codec)
+        .cloned()
+        .collect();
+    if sorted.len() < 2 {
+        return TrialPlan::Pair {
+            source,
+            a,
+            b,
+            is_golden,
+            expected_choice,
+            held_out,
+        };
+    }
+    sorted.sort_by(|x, y| {
+        x.quality
+            .unwrap_or(0.0)
+            .partial_cmp(&y.quality.unwrap_or(0.0))
+            .unwrap()
+    });
+    let id_to_idx: std::collections::HashMap<String, usize> = sorted
+        .iter()
+        .enumerate()
+        .map(|(i, e)| (e.id.clone(), i))
+        .collect();
+
+    // Pull prior pair responses for this source. Excludes held-out trials so
+    // ASAP cannot leak the held-out condition bin into the active sample.
+    // The 5000-row cap is a soft circuit-breaker; in practice we expect tens
+    // of comparisons per source, hundreds at most.
+    let rows: Vec<(String, Option<String>, String)> = match sqlx::query_as(
+        "SELECT t.a_encoding_id, t.b_encoding_id, r.choice \
+         FROM responses r \
+         JOIN trials t ON t.id = r.trial_id \
+         WHERE t.kind = 'pair' \
+           AND t.source_hash = ? \
+           AND t.held_out = 0 \
+           AND t.b_encoding_id IS NOT NULL \
+         LIMIT 5000",
+    )
+    .bind(&source.hash)
+    .fetch_all(pool)
+    .await
+    {
+        Ok(rows) => rows,
+        Err(e) => {
+            tracing::warn!(error = %e, source = %source.hash, "ASAP: pair-response query failed; falling back to random pair");
+            return TrialPlan::Pair {
+                source,
+                a,
+                b,
+                is_golden,
+                expected_choice,
+                held_out,
+            };
+        }
+    };
+
+    let comps: Vec<crate::bt::Comparison> = rows
+        .into_iter()
+        .filter_map(|(aid, bid_opt, choice)| {
+            let bid = bid_opt?;
+            let i = *id_to_idx.get(&aid)?;
+            let j = *id_to_idx.get(&bid)?;
+            let outcome = match choice.as_str() {
+                "a" => crate::bt::Outcome::AWins,
+                "b" => crate::bt::Outcome::BWins,
+                "tie" => crate::bt::Outcome::Tie,
+                _ => return None,
+            };
+            Some(crate::bt::Comparison { a: i, b: j, outcome })
+        })
+        .collect();
+
+    let sorted_refs: Vec<&EncodingMeta> = sorted.iter().collect();
+    let Some((i, j)) = select_pair_with_eig(&sorted_refs, &comps, ASAP_MIN_OBS) else {
+        return TrialPlan::Pair {
+            source,
+            a,
+            b,
+            is_golden,
+            expected_choice,
+            held_out,
+        };
+    };
+    TrialPlan::Pair {
+        source,
+        a: sorted[i].clone(),
+        b: sorted[j].clone(),
+        is_golden,
+        expected_choice,
+        held_out,
+    }
+}
+
 pub async fn next_trial(
     State(state): State<SharedState>,
     Query(q): Query<NextTrialQuery>,
@@ -356,6 +494,13 @@ pub async fn next_trial(
         Some(&*flags),
     )
     .ok_or_else(|| AppError::Conflict("no trials available — empty manifest or no encodings match this session's supported codecs".into()))?;
+
+    // ASAP active-sampling override: when `pick_trial` returns a non-golden Pair
+    // and we have enough prior pair responses on this source to fit BT, replace
+    // the random adjacent pair with the highest-EIG adjacent pair. Falls back
+    // silently if the fit is under-determined.
+    let plan = enhance_pair_with_asap(&state.pool, &manifest, plan).await;
+
     let trial_id = Uuid::new_v4().to_string();
     let served_at = now_ms();
 

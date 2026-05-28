@@ -4,6 +4,8 @@
 **Last revised:** 2026-05-28.
 **Cross-refs:** [`SPEC.md`](../SPEC.md), [`docs/methodology.md`](methodology.md),
 [`docs/participant-grading.md`](participant-grading.md), [`docs/motivation-and-compensation.md`](motivation-and-compensation.md).
+**Jargon-free intro:** [`docs/GLOSSARY.md`](GLOSSARY.md) explains every term, unit, method,
+and statistic below in plain English with hyperlinks to the underlying research.
 
 This document fixes the **research questions, hypotheses, design, methods, success criteria,
 and analysis plan** that the squintly data collection is designed to answer. The point of

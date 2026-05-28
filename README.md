@@ -26,6 +26,7 @@ the bulk of web image traffic.
 |---|---|
 | Code | Rust+axum backend, Vite+vanilla-TS frontend embedded via `rust-embed`, SQLite via `sqlx`, deploy via Railway + Docker. |
 | Study | **v0.2 protocol pre-registered** in [`docs/STUDY.md`](docs/STUDY.md) — H1–H5 hypotheses, holdout discipline, decision rules for zensim v48 ship locked. |
+| Jargon | New to IQA? Start with [`docs/GLOSSARY.md`](docs/GLOSSARY.md) — every term, unit, method, and stat in this README, in plain English, with links to the underlying papers. |
 | Phase | **v0.2 finishing** — backend + frontend mostly wired; main remaining chunk is **ASAP active sampler → `next_trial`** ([§3 amplifier #1](#3-how-we-amplify-human-effort-15-levers)) + end-to-end smoke on real phone. |
 | Pilot | Planned: 100 sessions once v0.2 ships ([§8 phases](#8-phases)). |
 
@@ -375,6 +376,9 @@ spans. No third-party telemetry.
 - [`SPEC.md`](SPEC.md) — full v0.1 spec (data model, schema, threshold/BT math).
 - [`docs/STUDY.md`](docs/STUDY.md) — formal pre-registration: research questions,
   hypotheses, design, analysis plan, decision rules.
+- [`docs/GLOSSARY.md`](docs/GLOSSARY.md) — **layperson glossary** of every term, unit,
+  method, and statistic this README and STUDY.md use, with hyperlinks to all the
+  underlying research papers, datasets, and tools.
 - [`docs/methodology.md`](docs/methodology.md) — methods reference internal to squintly.
 - [`docs/participant-grading.md`](docs/participant-grading.md) — session-grade + weight
   policy.

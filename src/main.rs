@@ -316,6 +316,18 @@ async fn main() -> Result<()> {
         .layer(CorsLayer::permissive());
 
     let bind = resolve_bind(cli.bind);
+    // Provenance is only useful if it's real. A build that lost its build
+    // script still runs, but every export it writes is unattributable — say so
+    // loudly at boot rather than letting "unknown" reach a TSV unnoticed.
+    if handlers::BUILD_COMMIT == "unknown" {
+        tracing::warn!(
+            "build_commit is \"unknown\" — build.rs did not run (check the Dockerfile \
+             COPYs build.rs, or pass SQUINTLY_BUILD_COMMIT). Exports from this build \
+             cannot be traced to a source revision."
+        );
+    } else {
+        tracing::info!(build_commit = handlers::BUILD_COMMIT, "build provenance");
+    }
     tracing::info!(addr = %bind, "squintly listening");
     let listener = tokio::net::TcpListener::bind(bind).await?;
     axum::serve(listener, app).await?;

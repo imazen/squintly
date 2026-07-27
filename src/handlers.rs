@@ -792,7 +792,14 @@ pub async fn proxy_encoding(
 /// for off-tree builds (cargo-install, vendored). Every export manifest
 /// carries this so "is this data still valid?" stays a single grep
 /// against the source tree, not a forensic audit (CLAUDE.md ML-data §2).
-pub const BUILD_COMMIT: &str = env!("SQUINTLY_BUILD_COMMIT");
+/// `option_env!`, not `env!`: the latter is a hard compile error when the
+/// build script didn't run, which cannot deliver the fallback this doc
+/// promises. A missing commit should degrade the provenance string, never
+/// brick the build (it did exactly that in Docker for two months).
+pub const BUILD_COMMIT: &str = match option_env!("SQUINTLY_BUILD_COMMIT") {
+    Some(c) => c,
+    None => "unknown",
+};
 
 /// Per-export schema version. Bump when an export TSV's columns or
 /// semantics change so downstream consumers can refuse stale shapes.

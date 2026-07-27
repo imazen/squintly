@@ -20,10 +20,18 @@ WORKDIR /app
 # and produced "could not find module" failures even after the real src/ was
 # copied in. The honest, slow-but-correct path is the default.
 COPY Cargo.toml Cargo.lock ./
+# build.rs is REQUIRED: it sets SQUINTLY_BUILD_COMMIT, which handlers.rs bakes
+# into every export manifest. Omitting it silently drops the build script, and
+# every export then reports build_commit="unknown" (before 2026-07-27 it broke
+# the build outright — that shipped an undeployable main from 2026-05-28 to
+# 2026-07-27). SQUINTLY_BUILD_COMMIT can also be passed as a build arg by CI.
+COPY build.rs ./
 COPY src/ ./src/
 COPY migrations/ ./migrations/
 COPY tests/ ./tests/
 COPY --from=web /web/dist ./web/dist
+ARG SQUINTLY_BUILD_COMMIT
+ENV SQUINTLY_BUILD_COMMIT=${SQUINTLY_BUILD_COMMIT}
 RUN cargo build --release --bin squintly \
  && strip target/release/squintly
 

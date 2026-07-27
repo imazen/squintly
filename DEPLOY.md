@@ -1,9 +1,17 @@
 # Deploy Squintly to Railway
 
-> **Live deployment (2026-05-04)**: https://squintly-production.up.railway.app
-> on Railway Hobby plan, ~$7-9/month with 5GB volume. Currently configured
-> with `SQUINTLY_COEFFICIENT_HTTP=https://coefficient.example.com` (placeholder).
-> Set the real coefficient URL when coefficient itself is deployed.
+> **Live deployment**: https://squintly-production.up.railway.app on Railway
+> Hobby plan, ~$7-9/month with 5GB volume.
+>
+> **Two known limitations of the live instance, both real:**
+> 1. `SQUINTLY_COEFFICIENT_HTTP` is still the `coefficient.example.com`
+>    placeholder, so the manifest is empty and **the rating flow serves no
+>    trials** (`/api/trial/next` → 409). The welcome / calibration / suggest
+>    screens work; the curator works once a manifest is POSTed (see §14).
+> 2. Deploys were **silently broken from 2026-05-28 to 2026-07-27** — the
+>    Dockerfile didn't `COPY build.rs`, so `env!("SQUINTLY_BUILD_COMMIT")`
+>    failed to compile and every `railway up` errored while the May 7 build
+>    kept serving. Fixed 2026-07-27; see §13 for the guard.
 
 Single Rust service + persistent volume for the SQLite DB. Modeled on
 [interleaved's deployment flow](../interleaved/DEPLOY.md). Coefficient should be
@@ -159,3 +167,52 @@ The volume is shared across deployments, so a roll-back doesn't lose data.
 | 500 on `/api/trial/next` | Empty manifest | Coefficient has no sources — check coefficient itself. |
 | DB resets between deploys | Volume not mounted | Run `railway volume add --mount-path /data` and redeploy. |
 | Cargo build OOM | Default Railway builder memory cap | Bump build resources in the Railway dashboard or pre-build locally and push the image. |
+| `environment variable SQUINTLY_BUILD_COMMIT not defined at compile time` | Dockerfile lost its `COPY build.rs` | Restore it. `build.rs` emits `cargo:rustc-env=SQUINTLY_BUILD_COMMIT`; without the file the build script never runs. |
+| Deploy "succeeds" but the site never changes | The *previous* deploy failed and Railway kept serving the last good image | `railway deployment list` — check the top entry says SUCCESS, not FAILED. A failed `railway up --detach` exits 0. |
+
+## 13. Always `docker build` before deploying
+
+Railway builds from the `Dockerfile`, so a Dockerfile-only break is **invisible
+to `cargo test` and `just ci`** — both build from the working tree, where
+`build.rs` obviously exists. That is precisely how main stayed undeployable for
+two months: every `railway up` failed, `railway up --detach` still exited 0, and
+the old image kept serving a healthy `/api/stats`.
+
+`just railway-deploy` now depends on `just docker-build`, so the container build
+is exercised locally first. If you deploy by another route, run `just
+docker-build` yourself.
+
+Provenance check after any deploy — this is the cheap way to confirm the running
+image is the one you think it is:
+
+```bash
+curl -s https://squintly-production.up.railway.app/api/export/pareto.manifest.json \
+  | python3 -c 'import json,sys; print(json.load(sys.stdin)["build_commit"])'
+```
+
+It must print the commit you deployed. `unknown` means the build script didn't
+run (the binary also logs a startup warning in that case); anything else means
+you are looking at an older image.
+
+## 14. Loading a curator corpus into the live instance
+
+The curator needs candidates; it doesn't need coefficient. Point it at the
+public R2 corpus (30 MB JSONL, content-addressed blobs at
+`blobs/{sha[:2]}/{sha[2:4]}/{sha}`):
+
+```bash
+R2=https://pub-7c5c57fd3e0842f0b147946928891d40.r2.dev
+curl -s "$R2/manifest.jsonl" -H 'range: bytes=0-262144' \
+  | head -n 200 > /tmp/slice.jsonl
+python3 - "$R2" <<'PY'
+import json, sys, urllib.request
+body = open('/tmp/slice.jsonl').read()
+req = urllib.request.Request(
+    'https://squintly-production.up.railway.app/api/curator/manifest',
+    data=json.dumps({'kind': 'jsonl', 'body': body, 'blob_url_base': sys.argv[1]}).encode(),
+    headers={'content-type': 'application/json'})
+print(urllib.request.urlopen(req).read().decode())
+PY
+```
+
+`POST /api/curator/manifest` upserts, so re-loading the same slice is a no-op.

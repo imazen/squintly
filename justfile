@@ -25,9 +25,11 @@ ci:
     cargo test --all-targets
     cd web && npx tsc --noEmit
 
-# Build the Docker image locally.
+# Build the Docker image locally. Passes the git commit through as a build arg
+# so the image's export manifests carry real provenance (build.rs also derives
+# it from git, but the .git dir is dockerignored).
 docker-build:
-    docker build -t squintly:local .
+    docker build --build-arg SQUINTLY_BUILD_COMMIT=$(git rev-parse HEAD) -t squintly:local .
 
 ## End-to-end Playwright suite (production-shape: built frontend embedded in
 ## the release binary, mock coefficient on a side channel).
@@ -88,5 +90,9 @@ railway-vars:
     @echo "  RUST_LOG=info,squintly=info"
     @echo "  SQUINTLY_DB=/data/squintly.db   # already set in Dockerfile"
 
-railway-deploy:
+# Deploy to Railway. ALWAYS docker-build first: Railway builds from the
+# Dockerfile, and a Dockerfile-only break (e.g. a missing COPY) is invisible to
+# `cargo test` / `just ci`. That exact gap left main undeployable for two
+# months — see DEPLOY.md §13.
+railway-deploy: docker-build
     railway up --detach

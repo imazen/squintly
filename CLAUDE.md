@@ -80,9 +80,44 @@ just test
 
 ## Known Bugs
 
-(none yet)
+### Live instance serves no trials
+
+`SQUINTLY_COEFFICIENT_HTTP` on Railway is still the `coefficient.example.com`
+placeholder, so the manifest is empty and `/api/trial/next` returns 409. The
+rating flow cannot be exercised in production until a real coefficient (or a
+baked `SQUINTLY_COEFFICIENT_PATH` corpus) is wired in. Welcome / calibration /
+suggest work; curator works once a manifest is POSTed (DEPLOY.md §14).
+
+### Unknown `/api/*` paths return HTML with the extension's content-type
+
+The SPA catch-all serves `index.html` for unmatched routes, and the content-type
+is guessed from the *request path*, so `GET /api/nope.json` answers `200` +
+`content-type: application/json` with an HTML body. Harmless in the browser,
+confusing for API clients probing for a route's existence — it's why a missing
+endpoint reads as "present but unparseable" rather than 404.
 
 ## Resolved bug log
+
+### Docker/Railway deploys broken for two months (fixed 2026-07-27)
+
+`src/handlers.rs` read the git commit with `env!("SQUINTLY_BUILD_COMMIT")` (set
+by `build.rs`), but the **Dockerfile never copied `build.rs`** — so the build
+script didn't run in the container and the crate failed to compile. Landed with
+the build_commit feature on 2026-05-28; the last successful deploy was
+2026-05-07, so `main` was undeployable for ~2 months while the stale May image
+kept serving a healthy `/api/stats`.
+
+Why it hid so well: `cargo test` / `just ci` build from the working tree where
+`build.rs` exists, so they were always green; `railway up --detach` exits 0 even
+when the build later fails; and the healthcheck passed because the *old* image
+was still running. Nothing in the local loop touched the Dockerfile.
+
+Fixes: `COPY build.rs` (+ a `SQUINTLY_BUILD_COMMIT` build arg) in the
+Dockerfile; `option_env!(...).unwrap_or("unknown")` so a missing build script
+degrades provenance instead of bricking the build (which is what the doc comment
+already claimed); a startup `warn!` when the commit is `unknown`; and
+`just railway-deploy` now depends on `just docker-build`. Verify any deploy with
+the `build_commit` check in DEPLOY.md §13.
 
 ### unified.rs solver diverged on synthetic data (fixed 2026-05-28)
 

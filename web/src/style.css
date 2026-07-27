@@ -81,6 +81,12 @@ p, label { line-height: 1.4; color: var(--fg); }
      observer is being asked to judge. Occluding the stimulus is a measurement
      problem, not just a cosmetic one. */
   grid-template-rows: auto 1fr auto auto;
+  /* An implicit `auto` column is sized from its items' content and will happily
+     exceed the container: a long corpus·license label in .progress stretched
+     the column to 352px inside a 304px screen, pushing the menu button and the
+     B response off-screen. minmax(0, 1fr) pins the column to the container and
+     lets the ellipsis do its job. */
+  grid-template-columns: minmax(0, 1fr);
   height: 100dvh;
   gap: 8px;
   padding: max(8px, env(safe-area-inset-top)) 8px max(8px, env(safe-area-inset-bottom));
@@ -320,6 +326,7 @@ input[type="range"] {
 .curator-screen {
   display: grid;
   grid-template-rows: auto auto auto auto auto auto auto auto;
+  grid-template-columns: minmax(0, 1fr); /* see .trial — auto columns overflow */
   gap: 8px;
   min-height: 100dvh;
   padding: max(8px, env(safe-area-inset-top)) 8px max(8px, env(safe-area-inset-bottom));

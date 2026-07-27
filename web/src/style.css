@@ -128,6 +128,7 @@ p, label { line-height: 1.4; color: var(--fg); }
   align-items: center;
   justify-content: center;
   touch-action: none;
+  cursor: grab;
   /* Grid/flex items default to min-width:auto, i.e. they refuse to shrink
      below their content's min-content width. With a real stimulus that is the
      image's intrinsic width (up to 2400px), so the trial grid — and the layout
@@ -137,13 +138,17 @@ p, label { line-height: 1.4; color: var(--fg); }
   min-width: 0;
   min-height: 0;
 }
+.viewport.panning { cursor: grabbing; }
 .viewport img {
   display: block;
-  max-width: 100%;
-  max-height: 100%;
-  /* Default: render at intrinsic 1:1 device pixels.
-     We override width/height inline to enforce that. */
+  /* No max-width/max-height. The stimulus renders at exactly 1:1 device pixels
+     and is panned when it overflows — a CSS clamp here would silently resample
+     it, which is the thing trial.ts goes out of its way to prevent. Explicit
+     width/height are set inline on load. */
   pointer-events: none;
+  /* Nearest-neighbour on the off-chance anything ever scales it: a blurry
+     resample would hide exactly the artefacts under test. */
+  image-rendering: pixelated;
 }
 .reveal-hint {
   justify-self: center;

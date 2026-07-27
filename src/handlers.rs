@@ -648,6 +648,22 @@ pub struct ResponseReq {
     pub reveal_count: i64,
     pub reveal_ms_total: i64,
     pub zoom_used: bool,
+    /// Panning telemetry. The stimulus renders at a hard minimum of 1:1 device
+    /// pixels, so anything larger than the screen is only partly visible and
+    /// `image_displayed_*` no longer describes what the observer looked at.
+    /// Defaulted so an older client still records a valid response.
+    #[serde(default)]
+    pub pan_count: i64,
+    #[serde(default)]
+    pub pan_distance_css: f64,
+    #[serde(default)]
+    pub pannable_w_css: f64,
+    #[serde(default)]
+    pub pannable_h_css: f64,
+    #[serde(default)]
+    pub visible_w_css: f64,
+    #[serde(default)]
+    pub visible_h_css: f64,
     pub viewport_w_css: i64,
     pub viewport_h_css: i64,
     pub orientation: String,
@@ -707,8 +723,9 @@ pub async fn record_response(
         "INSERT INTO responses (trial_id, choice, dwell_ms, reveal_count, reveal_ms_total, \
          zoom_used, viewport_w_css, viewport_h_css, orientation, image_displayed_w_css, \
          image_displayed_h_css, intrinsic_to_device_ratio, pixels_per_degree, response_flags, \
-         responded_at) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+         responded_at, pan_count, pan_distance_css, pannable_w_css, pannable_h_css, \
+         visible_w_css, visible_h_css) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&trial_id)
     .bind(&req.choice)
@@ -725,6 +742,12 @@ pub async fn record_response(
     .bind(req.pixels_per_degree)
     .bind(flags.join())
     .bind(now_ms())
+    .bind(req.pan_count)
+    .bind(req.pan_distance_css)
+    .bind(req.pannable_w_css)
+    .bind(req.pannable_h_css)
+    .bind(req.visible_w_css)
+    .bind(req.visible_h_css)
     .execute(&state.pool)
     .await?;
 

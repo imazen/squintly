@@ -78,6 +78,15 @@ export interface ResponseReq {
   reveal_count: number;
   reveal_ms_total: number;
   zoom_used: boolean;
+  /// Panning, recorded because the stimulus is displayed at a hard minimum of
+  /// 1:1 device pixels — anything bigger than the screen is only partly
+  /// visible, so `image_displayed_*` no longer describes what was looked at.
+  pan_count: number;
+  pan_distance_css: number;
+  pannable_w_css: number;
+  pannable_h_css: number;
+  visible_w_css: number;
+  visible_h_css: number;
   viewport_w_css: number;
   viewport_h_css: number;
   orientation: 'portrait' | 'landscape';

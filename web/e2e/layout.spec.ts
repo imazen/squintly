@@ -28,10 +28,15 @@ async function expectNoViewportExpansion(page: Page, screen: string) {
     // meaningful even though overflow-x: clip pins scrollWidth to the
     // viewport.
     const jutting: string[] = [];
-    const insideHScroller = (el: HTMLElement): boolean => {
+    // An element is only a *problem* if it escapes the screen while still
+    // visible. Any ancestor that clips or scrolls horizontally makes the
+    // overflow intentional: thumbnail strips scroll, and the trial viewport
+    // clips a stimulus that is deliberately larger than the screen because it
+    // renders at 1:1 device pixels and is panned rather than shrunk.
+    const insideHClipper = (el: HTMLElement): boolean => {
       for (let p = el.parentElement; p; p = p.parentElement) {
         const o = getComputedStyle(p).overflowX;
-        if (o === 'auto' || o === 'scroll') return true;
+        if (o !== 'visible') return true;
       }
       return false;
     };
@@ -40,9 +45,7 @@ async function expectNoViewportExpansion(page: Page, screen: string) {
       const cs = getComputedStyle(el);
       if (cs.display === 'none' || cs.visibility === 'hidden') return;
       if (el.closest('details:not([open])')) return;
-      // Content inside a deliberate horizontal scroll container (thumbnail
-      // strips) is reachable by scrolling that container — not clipped.
-      if (insideHScroller(el)) return;
+      if (insideHClipper(el)) return;
       if (r.width > 0 && r.right > vw + 1) {
         const id = el.id ? `#${el.id}` : '';
         jutting.push(`${el.tagName.toLowerCase()}${id} right=${Math.round(r.right)}`);
@@ -78,24 +81,37 @@ test.describe('no horizontal overflow on any screen', () => {
     await page.waitForSelector('.rating-panel, .pair-panel', { timeout: 10_000 });
     await expectNoViewportExpansion(page, 'trial');
 
-    // The stimulus must never occlude itself or push the grid wide. `.viewport`
-    // is a grid item, so without min-width:0 it refuses to shrink below the
-    // image's intrinsic width — with a real 2400px source that blew the layout
-    // viewport open until the load handler set an explicit width. The 1x1 mock
-    // images can't reproduce it, so assert the invariant directly.
+    // The stimulus itself is ALLOWED to exceed the screen: it renders at a hard
+    // minimum of 1:1 device pixels and is panned, never shrunk. What must hold
+    // is that `.viewport` clips it — the container stays on-screen, so an
+    // oversized stimulus cannot push the page wide or cover the controls.
+    // `.viewport` is a grid item, and without min-width:0 it refuses to shrink
+    // below the image's intrinsic width, which is exactly how a 2400px source
+    // blew the layout open.
     const stim = await page.evaluate(() => {
       const img = document.querySelector<HTMLImageElement>('#stimulus');
       const hint = document.querySelector<HTMLElement>('.reveal-hint');
-      if (!img || !hint) return null;
+      const vp = document.querySelector<HTMLElement>('#viewport');
+      if (!img || !hint || !vp) return null;
       const i = img.getBoundingClientRect();
       const h = hint.getBoundingClientRect();
+      const v = vp.getBoundingClientRect();
       const overlaps = !(h.bottom <= i.top || h.top >= i.bottom || h.right <= i.left || h.left >= i.right);
-      return { imgRight: i.right, hintOverlapsStimulus: overlaps };
+      return {
+        viewportRight: v.right,
+        viewportOverflowHidden: getComputedStyle(vp).overflow !== 'visible',
+        stimulusExceedsViewport: i.width > v.width + 1,
+        hintOverlapsStimulus: overlaps,
+      };
     });
     expect(stim, 'trial screen should have a stimulus and a hint').not.toBeNull();
-    expect(stim!.imgRight, 'stimulus painted past the viewport').toBeLessThanOrEqual(
+    expect(stim!.viewportRight, 'the stimulus container painted past the screen').toBeLessThanOrEqual(
       page.viewportSize()!.width + 1,
     );
+    expect(
+      stim!.viewportOverflowHidden,
+      'the viewport must clip an oversized stimulus rather than let it escape',
+    ).toBe(true);
     expect(
       stim!.hintOverlapsStimulus,
       'the hint pill is covering the stimulus the observer is judging',

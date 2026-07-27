@@ -115,6 +115,11 @@ function buildManifest() {
     { hash: 'src01', width: 256, height: 256, size_bytes: 24_000, corpus: 'test', filename: 'a.png' },
     { hash: 'src02', width: 1024, height: 1024, size_bytes: 310_000, corpus: 'test', filename: 'b.png' },
     { hash: 'src03', width: 512, height: 384, size_bytes: 61_000, corpus: 'test', filename: 'c.png' },
+    // Deliberately larger than any test viewport at its DPR. The stimulus is
+    // displayed at a hard 1:1 device pixels, so this is the only source that
+    // exercises the panning path — without it the 1:1/pan invariants are
+    // untestable and would regress unnoticed.
+    { hash: 'src04', width: 3000, height: 2200, size_bytes: 2_400_000, corpus: 'test', filename: 'big.png' },
   ];
   const codecs: Array<{ name: string; mime: string; ext: string }> = [
     { name: 'mozjpeg', mime: 'image/jpeg', ext: 'jpeg' },

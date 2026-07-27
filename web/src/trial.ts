@@ -11,6 +11,11 @@ interface TrialState {
   revealMsTotal: number;
   revealStartedAt: number | null;
   zoomUsed: boolean;
+  /// Distinct drag gestures, and total travel. With 1:1 display mandatory, a
+  /// stimulus larger than the screen is only partly visible at any moment, so
+  /// whether the observer explored it is part of the response.
+  panCount: number;
+  panDistanceCss: number;
 }
 
 export interface TrialController {
@@ -45,6 +50,8 @@ export function startTrials(root: HTMLElement, sessionId: string): TrialControll
       revealMsTotal: 0,
       revealStartedAt: null,
       zoomUsed: false,
+      panCount: 0,
+      panDistanceCss: 0,
     };
 
     const isPair = trial.kind === 'pair';
@@ -72,28 +79,71 @@ export function startTrials(root: HTMLElement, sessionId: string): TrialControll
     const menu = root.querySelector<HTMLButtonElement>('#menu')!;
     menu.addEventListener('click', () => openMenu());
 
-    // Display the encoding-under-test (or A for pair) at intrinsic 1:1 device-px size
-    // when feasible; otherwise scale-to-fit to viewport while preserving aspect.
+    // ---- 1:1 device pixels, mandatory ------------------------------------
+    //
+    // The stimulus is rendered at exactly one image pixel per device pixel
+    // (CSS size = intrinsic / dpr), and NEVER smaller. Anything larger than
+    // the viewport is explored by dragging, not shrunk to fit.
+    //
+    // This used to `Math.min(1, …)` down to whatever fitted. That silently
+    // resampled the stimulus in the browser, so the observer was rating the
+    // *browser's* downscale of the encode rather than the encode — the
+    // artefacts under test get averaged away, and the effect is strongest
+    // exactly where the study cares most (high-DPR phones, large sources).
+    // Whatever number came back was not a measurement of the codec.
+    //
+    // Zooming in beyond 1:1 is acceptable; going below it is not.
     const dpr = window.devicePixelRatio ?? 1;
+    const pan = { x: 0, y: 0 }; // CSS px offset from the centred crop
+    const panLimit = { x: 0, y: 0 };
     let currentSrc: 'a' | 'b' | 'ref' = 'a';
+
+    const clampPan = () => {
+      pan.x = Math.max(-panLimit.x, Math.min(panLimit.x, pan.x));
+      pan.y = Math.max(-panLimit.y, Math.min(panLimit.y, pan.y));
+    };
+    const applyPan = () => {
+      img.style.transform = `translate(${pan.x}px, ${pan.y}px)`;
+    };
+
     const setSrc = (which: 'a' | 'b' | 'ref') => {
       currentSrc = which;
       img.src = which === 'ref' ? trial.source_url : which === 'a' ? trial.a.url : trial.b!.url;
     };
+
     img.addEventListener('load', () => {
-      const w = img.naturalWidth;
-      const h = img.naturalHeight;
-      // Intrinsic-to-device target: 1.0 → CSS px = intrinsic / dpr.
-      // Cap at the viewport dimensions.
+      const cssW = img.naturalWidth / dpr;
+      const cssH = img.naturalHeight / dpr;
+      img.style.width = `${cssW}px`;
+      img.style.height = `${cssH}px`;
+      img.style.maxWidth = 'none'; // the stylesheet's max-width:100% would re-shrink it
+      img.style.maxHeight = 'none';
       const rect = viewport.getBoundingClientRect();
-      const targetCssW = w / dpr;
-      const targetCssH = h / dpr;
-      const scale = Math.min(1, rect.width / targetCssW, rect.height / targetCssH);
-      img.style.width = `${targetCssW * scale}px`;
-      img.style.height = `${targetCssH * scale}px`;
+      // The image is centred by the flex viewport, so it can travel half the
+      // overflow in each direction from centre.
+      panLimit.x = Math.max(0, (cssW - rect.width) / 2);
+      panLimit.y = Math.max(0, (cssH - rect.height) / 2);
+      // Deliberately does NOT reset `pan`: swapping encoded↔reference (or
+      // A↔B) must hold the observer on the same region, or they are comparing
+      // two different parts of the picture.
+      clampPan();
+      applyPan();
+      updateHint();
       if (state.shownAt === 0) state.shownAt = performance.now();
     });
     setSrc('a');
+
+    const isPannable = () => panLimit.x > 0.5 || panLimit.y > 0.5;
+
+    let isB = false;
+    function updateHint() {
+      if (currentSrc === 'ref') {
+        hint.textContent = 'showing original';
+        return;
+      }
+      const explore = isPannable() ? ' · drag to explore' : '';
+      hint.textContent = isPair ? `${isB ? 'B' : 'A'}${explore}` : `hold to compare with original${explore}`;
+    }
 
     // Hold-to-reveal: while held, show reference. On release, show the encoding.
     const startReveal = () => {
@@ -101,8 +151,8 @@ export function startTrials(root: HTMLElement, sessionId: string): TrialControll
       state.revealStartedAt = performance.now();
       state.revealCount += 1;
       root.querySelector('.trial')?.classList.add('revealing');
-      hint.textContent = 'showing original';
       setSrc('ref');
+      updateHint();
     };
     const endReveal = () => {
       if (state.revealStartedAt !== null) {
@@ -110,25 +160,82 @@ export function startTrials(root: HTMLElement, sessionId: string): TrialControll
         state.revealStartedAt = null;
       }
       root.querySelector('.trial')?.classList.remove('revealing');
-      hint.textContent = isPair ? 'tap A or B' : 'hold to compare with original';
-      setSrc('a');
+      setSrc(isB ? 'b' : 'a');
+      updateHint();
     };
-    // For pair trials, the hold gesture toggles A↔B instead. (Reference is implicit;
-    // observers compare A and B for closeness to the source — we still want them to
-    // *see* the reference, so a tap-to-reveal short press is added to the menu.)
-    if (!isPair) {
-      viewport.addEventListener('pointerdown', startReveal);
-      viewport.addEventListener('pointerup', endReveal);
-      viewport.addEventListener('pointercancel', endReveal);
-      viewport.addEventListener('pointerleave', endReveal);
-    } else {
-      let isB = false;
-      viewport.addEventListener('pointerdown', () => {
+
+    // Drag pans; a press that doesn't move is still a tap/hold. Both gestures
+    // share the viewport, so movement past a small threshold is what separates
+    // them — otherwise every pan would also toggle A/B or fire a reveal.
+    const DRAG_THRESHOLD_CSS = 6;
+    let pointerId: number | null = null;
+    let startX = 0;
+    let startY = 0;
+    let lastX = 0;
+    let lastY = 0;
+    let dragging = false;
+
+    viewport.addEventListener('pointerdown', (e: PointerEvent) => {
+      if (pointerId !== null) return;
+      pointerId = e.pointerId;
+      startX = lastX = e.clientX ?? 0;
+      startY = lastY = e.clientY ?? 0;
+      dragging = false;
+      // Single-stimulus reveal is a press-and-hold, so it starts immediately;
+      // panning while revealed is intentional (explore the reference).
+      // Ordered before the capture call, and the capture is guarded: a throw
+      // from setPointerCapture must never cost the observer the reveal.
+      if (!isPair) startReveal();
+      try {
+        viewport.setPointerCapture(e.pointerId);
+      } catch {
+        /* no capture (synthetic or already-released pointer); drag still works */
+      }
+    });
+
+    viewport.addEventListener('pointermove', (e: PointerEvent) => {
+      if (e.pointerId !== pointerId) return;
+      if (!dragging) {
+        const moved = Math.hypot(e.clientX - startX, e.clientY - startY);
+        if (moved < DRAG_THRESHOLD_CSS) return;
+        dragging = true;
+        state.panCount += 1;
+        if (isPannable()) viewport.classList.add('panning');
+      }
+      if (!isPannable()) return;
+      const dx = e.clientX - lastX;
+      const dy = e.clientY - lastY;
+      lastX = e.clientX;
+      lastY = e.clientY;
+      pan.x += dx;
+      pan.y += dy;
+      state.panDistanceCss += Math.hypot(dx, dy);
+      clampPan();
+      applyPan();
+    });
+
+    const endPointer = (e: PointerEvent) => {
+      if (e.pointerId !== pointerId) return;
+      pointerId = null;
+      try {
+        viewport.releasePointerCapture(e.pointerId);
+      } catch {
+        /* already released */
+      }
+      if (!isPair) {
+        endReveal();
+      } else if (!dragging) {
+        // Pair trials toggle A↔B on tap. On pointerUP, not down, so a drag
+        // that starts on the image pans instead of flipping the stimulus.
         isB = !isB;
         setSrc(isB ? 'b' : 'a');
-        hint.textContent = isB ? 'B' : 'A';
-      });
-    }
+        updateHint();
+      }
+      dragging = false;
+      viewport.classList.remove('panning');
+    };
+    viewport.addEventListener('pointerup', endPointer);
+    viewport.addEventListener('pointercancel', endPointer);
 
     // Wheel/pinch zoom detection (we don't actually zoom — we just record).
     viewport.addEventListener('wheel', () => { state.zoomUsed = true; }, { passive: true });
@@ -156,7 +263,7 @@ export function startTrials(root: HTMLElement, sessionId: string): TrialControll
     panel.querySelectorAll<HTMLButtonElement>('button').forEach((b) => {
       b.addEventListener('click', () => {
         const choice = b.dataset.r ?? b.dataset.c!;
-        submit(choice, state, trial, img);
+        submit(choice, state, trial, img, viewport);
       });
     });
   };
@@ -166,6 +273,7 @@ export function startTrials(root: HTMLElement, sessionId: string): TrialControll
     state: TrialState,
     trial: TrialPayload,
     img: HTMLImageElement,
+    viewport: HTMLElement,
   ) => {
     if (state.revealStartedAt !== null) {
       state.revealMsTotal += performance.now() - state.revealStartedAt;
@@ -180,6 +288,9 @@ export function startTrials(root: HTMLElement, sessionId: string): TrialControll
         reveal_count: state.revealCount,
         reveal_ms_total: Math.round(state.revealMsTotal),
         zoom_used: state.zoomUsed,
+        pan_count: state.panCount,
+        pan_distance_css: Math.round(state.panDistanceCss),
+        ...panGeometry(img, viewport),
         ...cond,
       });
     } catch (e) {
@@ -268,4 +379,22 @@ function escapeHtml(s: string): string {
 
 function escapeAttr(s: string): string {
   return escapeHtml(s);
+}
+
+/**
+ * How much of the stimulus the observer could actually see, and how much of it
+ * was off-screen. With 1:1 display mandatory a large stimulus does not fit, so
+ * "displayed size" alone no longer says what was looked at.
+ */
+function panGeometry(img: HTMLImageElement, viewport: HTMLElement) {
+  const i = img.getBoundingClientRect();
+  const v = viewport.getBoundingClientRect();
+  const visibleW = Math.max(0, Math.min(i.right, v.right) - Math.max(i.left, v.left));
+  const visibleH = Math.max(0, Math.min(i.bottom, v.bottom) - Math.max(i.top, v.top));
+  return {
+    pannable_w_css: Math.round(Math.max(0, i.width - v.width)),
+    pannable_h_css: Math.round(Math.max(0, i.height - v.height)),
+    visible_w_css: Math.round(visibleW),
+    visible_h_css: Math.round(visibleH),
+  };
 }

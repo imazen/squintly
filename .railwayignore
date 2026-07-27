@@ -1,0 +1,26 @@
+# Upload filter for `railway up --no-gitignore`.
+#
+# Why --no-gitignore is needed: the Railway CLI honours .gitignore when it
+# builds the upload tarball, and demo-corpus/ is deliberately gitignored (119 MB
+# of generated image blobs, far past the 30 KB commit limit). Uploading with the
+# default behaviour silently shipped a build context WITHOUT the corpus, the
+# Dockerfile's COPY landed an empty directory, and the deployed site served
+# `manifest_sources=0` — a green deploy that quietly did nothing.
+#
+# So we disable the .gitignore filter and re-exclude the heavy paths here. Keep
+# this in sync with .dockerignore for anything that must never reach the build.
+target/
+.git/
+.jj/
+web/node_modules/
+web/dist/
+web/test-results/
+web/playwright-report/
+.workongoing
+.env
+.env.local
+*.db
+*.db-shm
+*.db-wal
+*.log
+**/.DS_Store

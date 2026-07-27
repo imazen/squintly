@@ -60,8 +60,8 @@ export function startTrials(root: HTMLElement, sessionId: string): TrialControll
         </div>
         <div class="viewport" id="viewport">
           <img id="stimulus" alt="" decoding="async" />
-          <div class="reveal-hint" id="hint">${isPair ? 'tap A or B' : 'hold to compare with original'}</div>
         </div>
+        <div class="reveal-hint" id="hint">${isPair ? 'tap A or B' : 'hold to compare with original'}</div>
         <div id="panel"></div>
       </div>
     `;
@@ -100,7 +100,7 @@ export function startTrials(root: HTMLElement, sessionId: string): TrialControll
       if (currentSrc === 'ref') return;
       state.revealStartedAt = performance.now();
       state.revealCount += 1;
-      viewport.classList.add('revealing');
+      root.querySelector('.trial')?.classList.add('revealing');
       hint.textContent = 'showing original';
       setSrc('ref');
     };
@@ -109,7 +109,7 @@ export function startTrials(root: HTMLElement, sessionId: string): TrialControll
         state.revealMsTotal += performance.now() - state.revealStartedAt;
         state.revealStartedAt = null;
       }
-      viewport.classList.remove('revealing');
+      root.querySelector('.trial')?.classList.remove('revealing');
       hint.textContent = isPair ? 'tap A or B' : 'hold to compare with original';
       setSrc('a');
     };

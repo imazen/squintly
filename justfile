@@ -102,5 +102,9 @@ railway-vars:
 # every export reports build_commit="unknown".
 railway-deploy: docker-build
     railway variables --set "SQUINTLY_BUILD_COMMIT=$(git rev-parse HEAD)" --skip-deploys
-    railway up --detach
+    # --no-gitignore is REQUIRED: demo-corpus/ is gitignored, and the CLI honours
+    # .gitignore when tarring the upload, so the default silently ships a build
+    # context with no corpus and the site serves manifest_sources=0. The heavy
+    # paths are re-excluded by .railwayignore.
+    railway up --detach --no-gitignore
     @echo "verify once live:  curl -s https://squintly-production.up.railway.app/api/export/pareto.manifest.json | python3 -c 'import json,sys; print(json.load(sys.stdin)[\"build_commit\"])'"

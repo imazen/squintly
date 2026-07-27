@@ -77,6 +77,29 @@ test.describe('no horizontal overflow on any screen', () => {
 
     await page.waitForSelector('.rating-panel, .pair-panel', { timeout: 10_000 });
     await expectNoViewportExpansion(page, 'trial');
+
+    // The stimulus must never occlude itself or push the grid wide. `.viewport`
+    // is a grid item, so without min-width:0 it refuses to shrink below the
+    // image's intrinsic width — with a real 2400px source that blew the layout
+    // viewport open until the load handler set an explicit width. The 1x1 mock
+    // images can't reproduce it, so assert the invariant directly.
+    const stim = await page.evaluate(() => {
+      const img = document.querySelector<HTMLImageElement>('#stimulus');
+      const hint = document.querySelector<HTMLElement>('.reveal-hint');
+      if (!img || !hint) return null;
+      const i = img.getBoundingClientRect();
+      const h = hint.getBoundingClientRect();
+      const overlaps = !(h.bottom <= i.top || h.top >= i.bottom || h.right <= i.left || h.left >= i.right);
+      return { imgRight: i.right, hintOverlapsStimulus: overlaps };
+    });
+    expect(stim, 'trial screen should have a stimulus and a hint').not.toBeNull();
+    expect(stim!.imgRight, 'stimulus painted past the viewport').toBeLessThanOrEqual(
+      page.viewportSize()!.width + 1,
+    );
+    expect(
+      stim!.hintOverlapsStimulus,
+      'the hint pill is covering the stimulus the observer is judging',
+    ).toBe(false);
   });
 
   test('suggest form', async ({ page }) => {

@@ -75,7 +75,12 @@ p, label { line-height: 1.4; color: var(--fg); }
 /* Trial screen */
 .trial {
   display: grid;
-  grid-template-rows: auto 1fr auto;
+  /* progress · viewport · hint · panel. The hint gets its own row rather than
+     floating inside the viewport: it used to be absolutely positioned over the
+     stimulus, so on any image that filled the frame it covered the pixels the
+     observer is being asked to judge. Occluding the stimulus is a measurement
+     problem, not just a cosmetic one. */
+  grid-template-rows: auto 1fr auto auto;
   height: 100dvh;
   gap: 8px;
   padding: max(8px, env(safe-area-inset-top)) 8px max(8px, env(safe-area-inset-bottom));
@@ -117,6 +122,14 @@ p, label { line-height: 1.4; color: var(--fg); }
   align-items: center;
   justify-content: center;
   touch-action: none;
+  /* Grid/flex items default to min-width:auto, i.e. they refuse to shrink
+     below their content's min-content width. With a real stimulus that is the
+     image's intrinsic width (up to 2400px), so the trial grid — and the layout
+     viewport with it — blew past a 304 CSS px screen until the load handler
+     assigned an explicit width. Invisible against 1x1 mock images; obvious the
+     moment the imazen-26 corpus was wired in. */
+  min-width: 0;
+  min-height: 0;
 }
 .viewport img {
   display: block;
@@ -127,19 +140,18 @@ p, label { line-height: 1.4; color: var(--fg); }
   pointer-events: none;
 }
 .reveal-hint {
-  position: absolute;
-  bottom: 8px; left: 50%;
-  transform: translateX(-50%);
-  background: rgba(0,0,0,0.5);
+  justify-self: center;
+  max-width: 100%;
+  background: var(--card);
   border: 1px solid var(--border);
   border-radius: 999px;
   padding: 6px 14px;
   font-size: 0.85rem;
-  color: var(--fg);
+  color: var(--muted);
   pointer-events: none;
-  opacity: 0.85;
+  text-align: center;
 }
-.viewport.revealing .reveal-hint { background: rgba(74, 209, 255, 0.2); border-color: var(--accent); color: var(--accent); }
+.trial.revealing .reveal-hint { border-color: var(--accent); color: var(--accent); }
 
 /* Rating panel: 4 big buttons in single column on portrait, two rows on landscape */
 .rating-panel {

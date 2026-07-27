@@ -18,15 +18,16 @@ web component from `~/work/efficient-ui/`. No framework.
   the conditions that produced it. We never aggregate them away in storage.
 - **Anonymous only.** No login, no email, no IP logging beyond a hashed bucket. The
   observer ID is a UUID in localStorage.
-- **Trial mix is 65% single-stimulus rating / 35% pairwise by default** —
-  `SamplerConfig::p_single = 0.65`, matching docs/STUDY.md §4.2 (Type S 70%
-  early / 50% late). This line previously read "2AFC by default", which was
-  simply untrue of the code and misled imazen/squintly#4 into assuming pairwise
-  was the native path.
-  For a rank-agreement study that needs forced choice only, set
-  `SQUINTLY_PAIRWISE_ONLY=1` — it suppresses ratings, honeypots and anchors
-  (all three are single-stimulus) and 409s rather than falling back to a
-  rating. Verified: 40/40 pair.
+- **Studies are selected at runtime; the trial mix belongs to the study.**
+  `src/studies.rs` — `main` (65% single-stimulus / 35% pairwise, matching
+  docs/STUDY.md §4.2) and `ssim2-nonphoto` (forced choice only, for
+  imazen/squintly#4). Observers pick on the welcome screen; `sessions.study_id`
+  records it and `responses.tsv` carries it, so the two are separable in
+  analysis. CLAUDE.md previously claimed "2AFC by default" — untrue of the
+  code, and it misled #4 into assuming pairwise was the native path.
+  Note `p_single = 0` does NOT give a forced-choice run: the sampler falls back
+  to a single when no non-trivial pair exists, and honeypots and anchors are
+  themselves single-stimulus. Use the study (or `SQUINTLY_PAIRWISE_ONLY=1`).
 - **Source-informing-sweep rule applies.** Sampling MUST cover all 4 size buckets and
   weight low-q encodings. See `src/sampling.rs`.
 

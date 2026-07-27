@@ -315,36 +315,49 @@ about.
 in `src/main.rs`. A stale value there is why the live site served zero trials
 for months — check it first if the manifest is empty.
 
-### Running a forced-choice (2AFC) validation
+### Studies (runtime selection)
 
-`imazen/squintly#4` — validating SSIMULACRA2 as the non-photo oracle — needs
-**pairwise only**. SROCC against a metric is a rank-agreement test on forced
-choice; an ACR rating is a different quantity and pooling the two would mix
+One deployment hosts several named studies at once; observers pick one on the
+welcome screen. The registry is `src/studies.rs` — compiled in, not configured,
+for the same reason the license registry is: studies are part of the
+pre-registration and a typo in an env var should not be able to invent one.
+
+| id | trial stream | for |
+|---|---|---|
+| `main` (default) | 65% single-stimulus ratings / 35% pairwise — `docs/STUDY.md` §4.2 | the v0.2 crowd study |
+| `ssim2-nonphoto` | forced choice only | imazen/squintly#4, SSIMULACRA2 as the non-photo oracle |
+
+The sampler config belongs to the **study**, not the process, because the two
+measure different things: SROCC against a metric is a rank-agreement test on
+2AFC, while an ACR rating is a different quantity. Pooling them would put two
 scales in one analysis.
 
-The default deployment is **65% single-stimulus ratings / 35% pairwise**
-(`SamplerConfig::p_single = 0.65`, matching `docs/STUDY.md` §4.2). For a
-validation run:
-
 ```bash
-railway variables --set "SQUINTLY_PAIRWISE_ONLY=1"
+curl -s $BASE/api/studies | python3 -m json.tool     # what's offered
+railway variables --set "SQUINTLY_DEFAULT_STUDY=main"  # default for new sessions
 ```
 
-Setting `SQUINTLY_P_SINGLE=0` is **not** equivalent and will quietly leak
-ratings into the dataset: `pick_trial` falls back to a single whenever a source
-has no non-trivial adjacent pair, and honeypots and anchors are themselves
-single-stimulus and injected ahead of the main draw. `SQUINTLY_PAIRWISE_ONLY`
-suppresses all three and 409s instead of degrading. The startup log states the
-mode; confirm with:
+- `sessions.study_id` (migration 0013) records the choice; every trial and
+  response inherits it, and `responses.tsv` carries `study_id` — without it the
+  two studies are indistinguishable after the fact.
+- An unknown `study_id` on `POST /api/session` returns **400** with the known
+  list. It is not coerced to the default: running a different protocol than the
+  caller asked for would silently mix incompatible data.
+- `SQUINTLY_PAIRWISE_ONLY=1` still works, as an alias selecting
+  `ssim2-nonphoto` as the default study.
+
+**Why `p_single = 0` is not a substitute for the forced-choice study.** Three
+paths still emit ratings: `pick_trial` falls back with
+`try_pair().or_else(try_single)` when a source has no non-trivial adjacent
+pair, and honeypots and anchors are themselves single-stimulus, injected ahead
+of the main draw. The study sets `pairwise_only`, which suppresses all three
+and 409s rather than degrading. Confirm on a live deployment:
 
 ```bash
 for i in $(seq 1 20); do
   curl -s "$BASE/api/trial/next?session_id=$SID" | python3 -c 'import json,sys;print(json.load(sys.stdin)["kind"])'
-done | sort | uniq -c     # expect: 20 pair
+done | sort | uniq -c     # ssim2-nonphoto: expect 20 pair
 ```
-
-Related knobs, all read once at startup: `SQUINTLY_P_SINGLE`,
-`SQUINTLY_P_HONEYPOT`, `SQUINTLY_P_ANCHOR`.
 
 Still outstanding for that study (issue #4 work item 4, "solo expert mode"):
 fixed `session_weight = 1.0`, honeypots as telemetry rather than

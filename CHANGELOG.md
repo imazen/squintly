@@ -96,6 +96,16 @@
   `SQUINTLY_ALLOW_PRIVATE_BLOB_HOSTS=1` there.
 
 ### Added
+- **Runtime study selection** (cbdf7945). One deployment hosts several named
+  studies (`src/studies.rs`) and observers pick one on the welcome screen:
+  `main` (65/35 rating/pairwise, the pre-registered crowd study) and
+  `ssim2-nonphoto` (forced choice only, for imazen/squintly#4). The sampler
+  config belongs to the study, not the process — an ACR rating and a 2AFC
+  judgement are different quantities and must not be pooled. Migration 0013
+  adds `sessions.study_id`; `responses.tsv` carries it (appended, with
+  `schema_version` 1 → 2) so the studies are separable in analysis. An unknown
+  `study_id` returns 400 rather than being coerced. `GET /api/studies` lists
+  what's offered.
 - **`SQUINTLY_PAIRWISE_ONLY=1` — forced-choice-only trial stream** (37005db9).
   Needed for rank-agreement studies (imazen/squintly#4): SROCC against a metric
   is a 2AFC test and an ACR rating is a different quantity. Strict on purpose —

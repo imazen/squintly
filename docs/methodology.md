@@ -67,7 +67,7 @@ early-session toward singles.
 **Overridable per deployment** (`SamplerConfig::from_env`, read once at
 startup): `SQUINTLY_P_SINGLE`, `SQUINTLY_P_HONEYPOT`, `SQUINTLY_P_ANCHOR`.
 
-**`SQUINTLY_PAIRWISE_ONLY=1` — forced-choice only.** Required for a
+**Selected per study, at runtime** (`src/studies.rs`; the observer picks on the welcome screen and `sessions.study_id` records it). The `ssim2-nonphoto` study is **forced choice only.** Required for a
 rank-agreement study such as validating SSIMULACRA2 as the non-photo oracle
 (imazen/squintly#4): SROCC against a metric needs 2AFC, and an ACR rating is a
 different quantity that must not be pooled into the same analysis.

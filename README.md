@@ -335,9 +335,10 @@ Full study design + decision rules: [`docs/STUDY.md`](docs/STUDY.md).
 The amplifier table in [§3](#3-how-we-amplify-human-effort-15-levers) is the authoritative
 checklist of what's done vs planned. The next-most-impactful tractable chunks:
 
-1. **End-to-end smoke on a real phone** (v0.2 exit gate). The Playwright e2e tests run
-   in CI but a human-on-Galaxy-Fold-7 walkthrough catches everything the headless
-   browser misses.
+1. **End-to-end smoke on a real phone** (v0.2 exit gate). The Playwright e2e suite
+   runs locally (`just e2e`; the repo has no CI workflow yet) but a
+   human-on-Galaxy-Fold-7 walkthrough catches everything the headless browser
+   misses.
 2. **pwcmp LOO + Pérez-Ortiz 2019 per-observer ACR fits** (amplifier #9 deep dive).
    The nightly `observer_grades` aggregation already fills the trial-weighted golden
    pass rate, even-odd consistency, geometric-mean weight, and trusted-pool promotion;

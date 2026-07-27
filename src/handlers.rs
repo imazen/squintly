@@ -715,6 +715,10 @@ pub async fn record_response(
         is_golden: is_golden == 1,
         expected_choice: expected_choice.as_deref(),
         image_displayed_w_css: req.image_displayed_w_css,
+        image_displayed_h_css: req.image_displayed_h_css,
+        visible_w_css: req.visible_w_css,
+        visible_h_css: req.visible_h_css,
+        pan_count: req.pan_count,
         intrinsic_w,
         dpr: dpr_row.0,
     });

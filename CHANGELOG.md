@@ -3,6 +3,17 @@
 ## [Unreleased]
 
 ### Fixed
+- **The stimulus was being downscaled to fit, which invalidated the rating**
+  (2e386795). `trial.ts` scaled with `Math.min(1, …)`, so any stimulus larger
+  than the viewport was resampled by the browser and the observer rated *that*
+  instead of the encode — averaging away the artefacts under test, worst on
+  high-DPR phones with large sources (~4x shrink on a 304 CSS px cover
+  display). Display is now a hard minimum of 1:1 device pixels, with panning to
+  explore anything bigger; measured at exactly 1.000 on every trial. Pan is
+  preserved across encoded↔reference and A↔B swaps, so the same region is
+  compared. Migration 0012 records `pan_count`, `pan_distance_css`,
+  `pannable_*` and `visible_*`, because `image_displayed_*` no longer describes
+  what was on screen.
 - **The trial hint pill covered the stimulus** (82ad86ba). The
   "hold to compare with original" / "tap A or B" pill was absolutely positioned
   inside the viewport, so any image that filled the frame was partly hidden

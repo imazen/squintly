@@ -108,15 +108,17 @@ two specs in `curator.spec.ts` guard it. Fixing the bucket's CORS config would
 be a fine *additional* step but must not be the only defence — the proxy works
 regardless of who owns the bucket.
 
-### S-bucket stimuli render very small at 1:1 device pixels
+### Small stimuli are small on purpose
 
-`trial.ts` displays the stimulus at intrinsic 1:1 device pixels, which is the
-point of the study. A consequence: an S-bucket source (240px max dimension) is
-~80 CSS px on a DPR-3 phone and ~91 on the Z Fold inner display — a small patch
-in a large black viewport. That is *correct* per the design, but whether an
-80 CSS px stimulus yields a usable judgement is a study-design question, not a
-layout bug. Decide before the pilot; changing it means changing either the
-bucket targets in `build_demo_corpus.py` or the 1:1 rule itself.
+`trial.ts` renders the stimulus at a hard minimum of **1:1 device pixels** and
+never downscales — anything larger than the screen is panned. So an S-bucket
+source (240px) really is ~80 CSS px on a DPR-3 phone, and an XL source really
+does need dragging to see. Both are correct, and neither may be "fixed" by
+scaling to fit: a display downscale means the observer is rating the browser's
+resample rather than the encode. `trial.spec.ts` asserts the 1:1 ratio on every
+trial; `responses.intrinsic_to_device_ratio` records it per response.
+
+Zooming in beyond 1:1 is acceptable. Going below it is not.
 
 ### Unknown `/api/*` paths return HTML with the extension's content-type
 

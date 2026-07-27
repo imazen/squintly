@@ -48,6 +48,14 @@ pub struct InlineGradeInput<'a> {
     pub image_displayed_w_css: f64,
     pub intrinsic_w: i64,
     pub dpr: f64,
+    /// Visible slice of the stimulus, and whether the observer explored it.
+    /// The stimulus renders at a hard 1:1 device pixels and is panned rather
+    /// than shrunk, so "could they see what they were rating" is a question
+    /// about the visible *area*, not about display scale.
+    pub image_displayed_h_css: f64,
+    pub visible_w_css: f64,
+    pub visible_h_css: f64,
+    pub pan_count: i64,
 }
 
 pub fn compute_response_flags(input: &InlineGradeInput<'_>) -> ResponseFlags {
@@ -70,9 +78,22 @@ pub fn compute_response_flags(input: &InlineGradeInput<'_>) -> ResponseFlags {
             }
         }
     }
-    let on_screen_intrinsic_w = input.image_displayed_w_css * input.dpr;
-    if on_screen_intrinsic_w < (input.intrinsic_w as f64) * 0.5 {
-        out.flags.push("viewport_clipped");
+    // `viewport_clipped` used to mean "the browser shrank this below half its
+    // intrinsic width". Under mandatory 1:1 display that can never happen —
+    // displayed_w * dpr == intrinsic_w by construction — so the old test was
+    // dead code and the gate silently passed everything.
+    //
+    // The concern it encoded is still real, just relocated: an oversized
+    // stimulus is now only partly on screen. Flag a response where the observer
+    // saw less than half the stimulus AND never dragged to see the rest — they
+    // rated a crop they did not choose. Panning at all clears it; exploring is
+    // the intended behaviour, not a defect.
+    if input.image_displayed_w_css > 0.0 && input.image_displayed_h_css > 0.0 {
+        let seen_w = (input.visible_w_css / input.image_displayed_w_css).clamp(0.0, 1.0);
+        let seen_h = (input.visible_h_css / input.image_displayed_h_css).clamp(0.0, 1.0);
+        if seen_w * seen_h < 0.5 && input.pan_count == 0 {
+            out.flags.push("viewport_clipped");
+        }
     }
     out
 }
@@ -494,6 +515,10 @@ mod tests {
             is_golden: false,
             expected_choice: None,
             image_displayed_w_css: 360.0,
+            image_displayed_h_css: 360.0,
+            visible_w_css: 360.0,
+            visible_h_css: 360.0,
+            pan_count: 0,
             intrinsic_w: 1080,
             dpr: 3.0,
         });
@@ -511,6 +536,10 @@ mod tests {
             is_golden: true,
             expected_choice: Some("4"),
             image_displayed_w_css: 360.0,
+            image_displayed_h_css: 360.0,
+            visible_w_css: 360.0,
+            visible_h_css: 360.0,
+            pan_count: 0,
             intrinsic_w: 1080,
             dpr: 3.0,
         });
@@ -519,6 +548,43 @@ mod tests {
 
     #[test]
     fn flags_viewport_clipped() {
+        // Oversized stimulus, only a sliver on screen, and the observer never
+        // dragged: they rated a crop they did not choose.
+        let base = |visible_w: f64, pan: i64| InlineGradeInput {
+            kind: "single",
+            dwell_ms: 2000,
+            reveal_count: 1,
+            choice: "2",
+            is_golden: false,
+            expected_choice: None,
+            image_displayed_w_css: 800.0,
+            image_displayed_h_css: 600.0,
+            visible_w_css: visible_w,
+            visible_h_css: 600.0,
+            pan_count: pan,
+            intrinsic_w: 2400,
+            dpr: 3.0,
+        };
+        assert!(compute_response_flags(&base(300.0, 0)).flags.contains(&"viewport_clipped"));
+        // Panning clears it — exploring is the intended behaviour under the
+        // 1:1 display rule, not a defect.
+        assert!(!compute_response_flags(&base(300.0, 3)).flags.contains(&"viewport_clipped"));
+        // Fully visible stimulus is never flagged.
+        assert!(!compute_response_flags(&base(800.0, 0)).flags.contains(&"viewport_clipped"));
+    }
+
+    /// Under mandatory 1:1 the OLD rule (displayed_w * dpr < 0.5 * intrinsic_w)
+    /// can never fire, because displayed_w * dpr == intrinsic_w by
+    /// construction. Guard that the flag still means something.
+    #[test]
+    fn viewport_clipped_is_not_dead_under_1to1_display() {
+        let intrinsic_w: f64 = 2400.0;
+        let dpr: f64 = 3.0;
+        let displayed_w = intrinsic_w / dpr; // what trial.ts now always sets
+        assert!(
+            (displayed_w * dpr - intrinsic_w).abs() < 0.001,
+            "1:1 display means the old scale-based test is vacuous"
+        );
         let f = compute_response_flags(&InlineGradeInput {
             kind: "single",
             dwell_ms: 2000,
@@ -526,9 +592,13 @@ mod tests {
             choice: "2",
             is_golden: false,
             expected_choice: None,
-            image_displayed_w_css: 100.0,
-            intrinsic_w: 4096,
-            dpr: 2.0,
+            image_displayed_w_css: displayed_w,
+            image_displayed_h_css: 600.0,
+            visible_w_css: 288.0, // a phone-width slice of an 800px-wide stimulus
+            visible_h_css: 600.0,
+            pan_count: 0,
+            intrinsic_w: intrinsic_w as i64,
+            dpr,
         });
         assert!(f.flags.contains(&"viewport_clipped"));
     }

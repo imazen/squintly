@@ -79,13 +79,21 @@
   `SQUINTLY_ALLOW_PRIVATE_BLOB_HOSTS=1` there.
 
 ### Added
-- **The rating flow serves real trials** (2661193c, 6e46b17b). A generated
-  imazen-26 SplitStore (`scripts/build_demo_corpus.py`) is baked into the image
-  and selected via `SQUINTLY_COEFFICIENT_PATH`: 32 sources spanning all four
-  size buckets, 512 encodings across `libjpeg-turbo` / `jpegli` / `libwebp` /
-  `libavif`, on a low-q-weighted ladder. Four new `licensing.rs` policies label
-  each trial truthfully (US-gov PD, archival PD, operator-owned,
-  screenshots-research-only). See DEPLOY.md §15.
+- **The rating flow serves real trials** (2661193c, 7c8aea13). A generated
+  imazen-26 store (`scripts/build_demo_corpus.py`) — 32 sources spanning all
+  four size buckets, 512 encodings across `libjpeg-turbo` / `jpegli` /
+  `libwebp` / `libavif`, on a low-q-weighted ladder. Four new `licensing.rs`
+  policies label each trial truthfully (US-gov PD, archival PD,
+  operator-owned, screenshots-research-only).
+- **The corpus is hosted on public R2, not baked into the image** (7c8aea13).
+  `HttpCoefficient` issues only three GETs and object keys may contain slashes,
+  so a public bucket serves the whole store with no server:
+  `https://codec-corpus.r2.imazen.org/squintly/demo-corpus/imazen26-v1`. Image
+  222 MB → 100 MB, no 121 MB build-context upload per deploy, and swapping the
+  corpus is one env var instead of a rebuild. `HttpCoefficient` now preserves a
+  path prefix on the base URL (it previously joined `/api/...` with a leading
+  slash, which resolves against the origin and silently drops the prefix).
+  `scripts/publish_corpus_r2.py` + `just publish-corpus`. See DEPLOY.md §15.
 - **`POST /api/curator/candidates/delete`** (dd47a8bd) — admin-gated removal of
   a candidate and its decisions. The pool was previously append-only: manifests
   upsert, and a `reject` is per-`curator_id`, so a bad row surfaced forever for

@@ -108,12 +108,17 @@ two specs in `curator.spec.ts` guard it. Fixing the bucket's CORS config would
 be a fine *additional* step but must not be the only defence — the proxy works
 regardless of who owns the bucket.
 
-### Demo corpus is baked into the image (~119 MB per deploy)
+### Demo corpus is a hand-built subset, not the canonical imazen-26
 
-The live site serves trials from a generated imazen-26 SplitStore COPYed into
-the image (DEPLOY.md §15), because Railway cannot seed a volume. Cost: a
-~121 MB build-context upload on every `railway up`. Moving it to R2 removes
-that; see DEPLOY.md §15 "Better long-term".
+The live site serves trials from a small generated store on public R2
+(DEPLOY.md §15): 32 sources built from the *local* `/mnt/v/imazen-26` folders.
+`codec-corpus/imazen-26-png-v3/` on R2 is the canonical, better-stratified
+version (21 numbered strata, 2639 objects) with plots, mobile/web screenshots,
+AI-generated imagery and patent scans as first-class strata — exactly what
+imazen/squintly#4 needs and what the local layout does not separate. Filenames
+there encode category and dimensions, so a selection can be made from a key
+listing without downloading 15 GiB. Moving `build_demo_corpus.py` onto that
+taxonomy is the obvious next upgrade.
 
 ### Unknown `/api/*` paths return HTML with the extension's content-type
 

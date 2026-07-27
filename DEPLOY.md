@@ -294,6 +294,18 @@ Screenshots (`screen-ui`) are excluded from the default selection: they are
 captures of third-party sites, fine for local measurement but a redistribution
 question on a public bucket. Add them with `--include ... screen-ui` locally.
 
+### Why `codec-corpus` and not `coefficient`
+
+There is a public `coefficient` bucket, and the name is tempting. Don't use it:
+it is the coefficient system's **live operational store** — 77k objects, 8.6 GiB
+of `jobs/`, `claims/`, `partials/`, `heartbeats/`, `binaries/`. Publishing a
+demo corpus into another system's working bucket is how unrelated things start
+breaking each other.
+
+`codec-corpus` is the corpus-images bucket, and squintly already uses it: the
+curator's `manifest.jsonl` and the `suggestions/` store both live there. It also
+already holds `imazen-26-png-v3/` (below).
+
 ### The canonical corpus already on R2
 
 `codec-corpus/imazen-26-png-v3/` holds a richer, better-stratified imazen-26

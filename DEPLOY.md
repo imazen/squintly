@@ -232,3 +232,49 @@ PY
 ```
 
 `POST /api/curator/manifest` upserts, so re-loading the same slice is a no-op.
+
+## 15. The imazen-26 demo corpus
+
+The rating flow needs a coefficient store; coefficient itself is a distributed
+benchmarking framework with no image corpus checked out locally, so the live
+site instead serves a generated SplitStore built from `/mnt/v/imazen-26`.
+
+```bash
+# Rebuild it (only needed when the selection or ladder changes):
+python3 scripts/build_demo_corpus.py --out demo-corpus --per-bucket 1 \
+    --qualities 15 30 45 75 --clean
+
+just railway-deploy      # docker-build (bakes demo-corpus/) then railway up
+```
+
+`demo-corpus/` is gitignored except its README — it is ~119 MB of image blobs.
+The directory is committed empty so the Dockerfile's `COPY demo-corpus/` always
+resolves; an empty corpus simply yields an empty manifest, which is the
+pre-existing behaviour.
+
+What the builder guarantees, and why (all from CLAUDE.md):
+
+| Rule | How it is enforced |
+|---|---|
+| All four `export.rs` size buckets (S/M/L/XL) | Each source is emitted at four target dimensions; the script exits non-zero if a bucket ends up empty |
+| Low-q weighted ladder | Default `15 30 45 60 80 92` — most rungs at/below q60, where web compression actually lives |
+| Non-photo weighted | Documents, archival scans, icons and charts are first-class categories (imazen/squintly#4) |
+| Truthful codec names | `libjpeg-turbo`, `jpegli`, `libwebp`, `libavif` — the actual encoder, never a stand-in |
+| Honest licensing | Four separate policies in `src/licensing.rs`; only public-domain / operator-owned folders are selected by default, because a public deployment redistributes these bytes |
+
+**`SQUINTLY_COEFFICIENT_HTTP` wins over `SQUINTLY_COEFFICIENT_PATH`** in
+`src/main.rs`. It must be unset for the baked corpus to be used — a stale value
+there is exactly why the live site served zero trials for months.
+
+Screenshots (`screen-ui`) are excluded from the default selection: they are
+captures of third-party sites, fine for local measurement but a redistribution
+question in production. Add them with `--include ... screen-ui` for local runs.
+
+### Better long-term: host it on R2
+
+Baking costs a ~121 MB build-context upload on every deploy. R2 avoids that
+entirely — upload the store with object keys shaped exactly like coefficient's
+HTTP API (`api/manifest`, `api/sources/{hash}/image`,
+`api/encodings/{id}/image`) and point `SQUINTLY_COEFFICIENT_HTTP` at the public
+bucket base. That needs a public-bucket decision, so it hasn't been done
+unilaterally.

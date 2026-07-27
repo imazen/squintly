@@ -108,13 +108,12 @@ two specs in `curator.spec.ts` guard it. Fixing the bucket's CORS config would
 be a fine *additional* step but must not be the only defence — the proxy works
 regardless of who owns the bucket.
 
-### Live instance serves no trials
+### Demo corpus is baked into the image (~119 MB per deploy)
 
-`SQUINTLY_COEFFICIENT_HTTP` on Railway is still the `coefficient.example.com`
-placeholder, so the manifest is empty and `/api/trial/next` returns 409. The
-rating flow cannot be exercised in production until a real coefficient (or a
-baked `SQUINTLY_COEFFICIENT_PATH` corpus) is wired in. Welcome / calibration /
-suggest work; curator works once a manifest is POSTed (DEPLOY.md §14).
+The live site serves trials from a generated imazen-26 SplitStore COPYed into
+the image (DEPLOY.md §15), because Railway cannot seed a volume. Cost: a
+~121 MB build-context upload on every `railway up`. Moving it to R2 removes
+that; see DEPLOY.md §15 "Better long-term".
 
 ### Unknown `/api/*` paths return HTML with the extension's content-type
 

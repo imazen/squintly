@@ -3,6 +3,14 @@
 ## [Unreleased]
 
 ### Fixed
+- **The sampler served exactly one codec for every trial** (2661193c).
+  `pick_trial` chose a codec with `by_codec.iter().max_by_key(|(_, v)| v.len())`
+  over a `BTreeMap`; on a balanced ladder every codec ties and `max_by_key`
+  returns the last maximum in key order, so the alphabetically-last codec won
+  deterministically — measured 27/27 `libwebp` on imazen-26, with
+  `libjpeg-turbo`, `jpegli` and `libavif` never shown. That would have emptied
+  every cross-codec comparison in `pareto.tsv`. Codec choice is now random,
+  weighted by rung count.
 - **Deploys were silently broken for two months** (6a7de807). The Dockerfile
   never `COPY`ed `build.rs`, so `env!("SQUINTLY_BUILD_COMMIT")` failed to
   compile in the container and every `railway up` errored while the 2026-05-07
@@ -61,6 +69,13 @@
   `SQUINTLY_ALLOW_PRIVATE_BLOB_HOSTS=1` there.
 
 ### Added
+- **The rating flow serves real trials** (2661193c, 6e46b17b). A generated
+  imazen-26 SplitStore (`scripts/build_demo_corpus.py`) is baked into the image
+  and selected via `SQUINTLY_COEFFICIENT_PATH`: 32 sources spanning all four
+  size buckets, 512 encodings across `libjpeg-turbo` / `jpegli` / `libwebp` /
+  `libavif`, on a low-q-weighted ladder. Four new `licensing.rs` policies label
+  each trial truthfully (US-gov PD, archival PD, operator-owned,
+  screenshots-research-only). See DEPLOY.md §15.
 - **`POST /api/curator/candidates/delete`** (dd47a8bd) — admin-gated removal of
   a candidate and its decisions. The pool was previously append-only: manifests
   upsert, and a `reject` is per-`curator_id`, so a bad row surfaced forever for

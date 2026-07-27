@@ -123,7 +123,6 @@ async fn asap_wire_targets_least_decided_pair() -> Result<()> {
         suggestions: squintly::suggestion_store::SuggestionStore::LocalDisk(
             squintly::suggestion_store::LocalDiskStore::new(tempfile::tempdir()?.keep()),
         ),
-        sampler: Default::default(),
     });
 
     // We need a real session row to satisfy the trial → session FK and the

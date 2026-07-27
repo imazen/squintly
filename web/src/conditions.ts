@@ -75,6 +75,7 @@ export function captureTrial(
 }
 
 const OBSERVER_KEY = 'squintly:observer_id';
+const STUDY_KEY = 'squintly:study_id';
 const CALIB_KEY = 'squintly:calibration';
 const PROFILE_KEY = 'squintly:profile';
 
@@ -114,4 +115,23 @@ export function loadProfile(): Profile {
 }
 export function saveProfile(p: Profile): void {
   localStorage.setItem(PROFILE_KEY, JSON.stringify(p));
+}
+
+
+/** Which study the observer last chose. Null = use the deployment default. */
+export function loadStudyId(): string | null {
+  try {
+    return localStorage.getItem(STUDY_KEY);
+  } catch {
+    return null;
+  }
+}
+
+export function saveStudyId(id: string | null): void {
+  try {
+    if (id) localStorage.setItem(STUDY_KEY, id);
+    else localStorage.removeItem(STUDY_KEY);
+  } catch {
+    // private mode; the deployment default applies
+  }
 }

@@ -23,7 +23,7 @@ use crate::coefficient::{CoefficientSource, EncodingMeta, Manifest};
 use crate::db::now_ms;
 use crate::grading::{InlineGradeInput, compute_response_flags, grade_session};
 use crate::sampling::{
-    ASAP_MIN_OBS, AnchorEntry, AnchorPool, SamplerConfig, SourceFlagMap, TrialPlan, pick_trial,
+    ASAP_MIN_OBS, AnchorEntry, AnchorPool, SourceFlagMap, TrialPlan, pick_trial,
     select_pair_with_eig,
 };
 use crate::streaks::{
@@ -39,10 +39,6 @@ pub struct AppState {
     /// Storage backend for public-suggestion uploads. R2 in production,
     /// local-disk fallback for dev/tests. See `src/suggestion_store.rs`.
     pub suggestions: crate::suggestion_store::SuggestionStore,
-    /// Trial mix (single vs pairwise, honeypot/anchor rates). Read from the
-    /// environment once at startup so a validation run can be pure 2AFC
-    /// without a rebuild — see SamplerConfig::from_env.
-    pub sampler: SamplerConfig,
 }
 
 pub type SharedState = Arc<AppState>;
@@ -120,6 +116,12 @@ pub struct CreateSessionReq {
     /// Theme picked for this session. Optional; falls back to corpus default.
     pub theme_slug: Option<String>,
 
+    /// Which named study this session contributes to (`src/studies.rs`).
+    /// Unknown ids are rejected rather than silently coerced — the study
+    /// determines the trial stream, so quietly running a different one would
+    /// put incompatible data in the same table.
+    pub study_id: Option<String>,
+
     /// Codecs the browser natively decodes, captured by the client-side probe.
     /// e.g. ["jpeg", "png", "webp", "avif"]. The sampler filters trials to this
     /// set so we never serve a codec the observer can't natively render.
@@ -131,6 +133,9 @@ pub struct CreateSessionReq {
 pub struct CreateSessionResp {
     pub observer_id: String,
     pub session_id: String,
+    /// Echoed so the client can show which study it joined (and detect that a
+    /// requested one was substituted).
+    pub study_id: String,
     pub streak_days: u32,
     pub streak_outcome: &'static str, // "advanced" | "frozen" | "reset" | "same_day" | "skipped"
     pub freezes_remaining: u32,
@@ -147,6 +152,16 @@ pub async fn create_session(
     };
     let session_id = Uuid::new_v4().to_string();
     let now = now_ms();
+
+    let study = match req.study_id.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        Some(id) => crate::studies::by_id(id).ok_or_else(|| {
+            AppError::BadRequest(format!(
+                "unknown study_id {id:?}; known: {:?}",
+                crate::studies::STUDIES.iter().map(|s| s.id).collect::<Vec<_>>()
+            ))
+        })?,
+        None => crate::studies::default_study(),
+    };
 
     sqlx::query(
         "INSERT OR IGNORE INTO observers (id, created_at, user_agent, age_bracket, vision_corrected) \
@@ -243,8 +258,8 @@ pub async fn create_session(
         "INSERT INTO sessions (id, observer_id, started_at, device_pixel_ratio, \
          screen_width_css, screen_height_css, color_gamut, dynamic_range_high, prefers_dark, \
          pointer_type, timezone, viewing_distance_cm, ambient_light, css_px_per_mm, notes, \
-         theme_slug, supported_codecs, codec_probe_cached, manifest_snapshot_id) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+         theme_slug, supported_codecs, codec_probe_cached, manifest_snapshot_id, study_id) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&session_id)
     .bind(&observer_id)
@@ -265,6 +280,7 @@ pub async fn create_session(
     .bind(supported_codecs_csv.as_deref())
     .bind(req.codec_probe_cached.unwrap_or(false) as i64)
     .bind(manifest_snapshot_id.as_deref())
+    .bind(study.id)
     .execute(&state.pool)
     .await?;
 
@@ -276,6 +292,7 @@ pub async fn create_session(
     Ok(Json(CreateSessionResp {
         observer_id,
         session_id,
+        study_id: study.id.to_string(),
         streak_days,
         streak_outcome,
         freezes_remaining,
@@ -494,21 +511,36 @@ pub async fn next_trial(
     Query(q): Query<NextTrialQuery>,
 ) -> Result<Json<TrialPayload>, AppError> {
     // Read the session's supported_codecs and filter the sampler accordingly.
-    let codecs_csv: Option<(Option<String>,)> =
-        sqlx::query_as("SELECT supported_codecs FROM sessions WHERE id = ?")
+    let row: Option<(Option<String>, String)> =
+        sqlx::query_as("SELECT supported_codecs, study_id FROM sessions WHERE id = ?")
             .bind(&q.session_id)
             .fetch_optional(&state.pool)
             .await?;
+    let (codecs_csv, study_id) = match row {
+        Some((c, s)) => (c, s),
+        None => (None, crate::studies::DEFAULT_STUDY_ID.to_string()),
+    };
     let allowed: Option<std::collections::HashSet<String>> = codecs_csv
-        .and_then(|(s,)| s)
         .map(|s| s.split(',').map(str::trim).map(str::to_lowercase).collect());
+
+    // The study owns the trial mix. A session recorded under a study that no
+    // longer exists in the binary keeps working on the default rather than
+    // 500ing, but says so — silently swapping protocols mid-study would be
+    // worse than a loud log.
+    let sampler = match crate::studies::by_id(&study_id) {
+        Some(s) => s.sampler,
+        None => {
+            tracing::warn!(study_id, "session references an unknown study; using default mix");
+            crate::studies::default_study().sampler
+        }
+    };
 
     let manifest = state.manifest.read().await;
     let anchors = state.anchors.read().await;
     let flags = state.source_flags.read().await;
     let plan = pick_trial(
         &manifest,
-        &state.sampler,
+        &sampler,
         allowed.as_ref(),
         Some(&*anchors),
         Some(&*flags),
@@ -817,6 +849,12 @@ pub async fn proxy_encoding(
     Ok((StatusCode::OK, headers, Bytes::from(bytes)).into_response())
 }
 
+/// The studies an observer may join. Unlisted ones are omitted; they are still
+/// selectable by id for operator runs.
+pub async fn list_studies() -> Json<Vec<&'static crate::studies::Study>> {
+    Json(crate::studies::listed())
+}
+
 // ---------- export ----------
 
 /// Build-time git commit baked in via `build.rs`. Every export manifest
@@ -840,7 +878,11 @@ fn schema_version(kind: ExportKind) -> u32 {
     match kind {
         ExportKind::Pareto => 1,
         ExportKind::Thresholds => 1,
-        ExportKind::Responses => 1,
+        // v2 (2026-07-27): appended `study_id` (runtime study selection) plus
+        // the pan/visible-area telemetry that the 1:1 display rule made
+        // necessary. Appended rather than inserted so positional consumers
+        // keep working; the bump is here so strict ones can refuse.
+        ExportKind::Responses => 2,
         ExportKind::Unified => 1,
     }
 }
@@ -1614,6 +1656,18 @@ impl IntoResponse for AppError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// New export columns must come with a schema bump, or a downstream
+    /// consumer has no way to tell a v1 file from a v2 one.
+    #[test]
+    fn responses_schema_version_reflects_the_appended_columns() {
+        assert_eq!(
+            schema_version(ExportKind::Responses),
+            2,
+            "study_id + pan/visible telemetry were added; bump when columns change"
+        );
+        assert_eq!(schema_version(ExportKind::Pareto), 1, "pareto is unchanged");
+    }
 
     #[test]
     fn export_manifest_hashes_body_and_counts_rows() {

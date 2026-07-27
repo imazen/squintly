@@ -99,6 +99,7 @@ pub enum TrialPlan {
     },
 }
 
+#[derive(Debug, Clone, Copy)]
 pub struct SamplerConfig {
     /// Probability of sampling a Single (threshold) trial. Default 0.65.
     ///

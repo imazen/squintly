@@ -26,6 +26,7 @@ pub mod staircase;
 pub mod stats;
 pub mod streaks;
 pub mod suggestion_store;
+pub mod studies;
 pub mod suggestions;
 pub mod unified;
 pub mod variant_gen;

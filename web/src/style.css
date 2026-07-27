@@ -937,3 +937,37 @@ input[type="range"] {
     min-height: 50vh;
   }
 }
+
+/* ---------- Study picker (welcome screen) ---------- */
+.study-picker {
+  width: 100%;
+  max-width: 600px;
+  margin: 8px auto 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 8px;
+  text-align: left;
+}
+.study-picker-label {
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.study-option {
+  display: grid;
+  gap: 4px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  text-align: left;
+  min-width: 0;
+}
+.study-option.on {
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+.study-name { font-weight: 600; }
+.study-summary { font-size: 0.85rem; line-height: 1.35; }
+.study-style {
+  font-size: 0.75rem;
+  color: var(--accent);
+}

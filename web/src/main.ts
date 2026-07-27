@@ -1,7 +1,7 @@
 // Squintly entrypoint. Routes between welcome → calibration → profile → trials.
 // Also hosts the curator-mode tab (corpus development).
 
-import { createSession } from './api';
+import { createSession, listStudies, type Study } from './api';
 import { openSignInModal } from './auth-modal';
 import { renderCalibration } from './calibration';
 import { runCalibration } from './calibration-onboarding';
@@ -11,8 +11,10 @@ import {
   getObserverId,
   loadCalibration,
   loadProfile,
+  loadStudyId,
   saveCalibration,
   saveProfile,
+  saveStudyId,
   setObserverId,
   type Profile,
 } from './conditions';
@@ -34,6 +36,17 @@ async function welcome(): Promise<void> {
 
   const progressSummary = await renderProgressSummary();
 
+  // Studies are fetched rather than hard-coded so the picker can never drift
+  // from what the server will actually accept.
+  let studies: Study[] = [];
+  try {
+    studies = await listStudies();
+  } catch {
+    // Offer nothing rather than a stale guess; the server default applies.
+  }
+  const chosen = pickStudy(studies, loadStudyId());
+  const studyPicker = studies.length > 1 ? renderStudyPicker(studies, chosen) : '';
+
   root.innerHTML = `
     <div class="screen center" data-screen="welcome">
       ${renderTabBar('rate', { onCurator: () => {}, onRate: () => {}, onCalibrate: () => {}, onSuggest: () => {} })}
@@ -43,6 +56,7 @@ async function welcome(): Promise<void> {
       <p>~5 minutes; the more you do, the more bytes everyone saves.</p>
       <p class="muted">No login required. We record only screen and rating data.</p>
       ${banner}
+      ${studyPicker}
       ${progressSummary}
       <button id="begin" class="primary">Begin</button>
       <p class="muted" style="margin-top:8px;">
@@ -66,6 +80,7 @@ async function welcome(): Promise<void> {
       });
     },
   });
+  bindStudyPicker(root, studies);
   void renderCreditsBody();
   root.querySelector<HTMLAnchorElement>('#signin-link')!.addEventListener('click', (e) => {
     e.preventDefault();
@@ -81,6 +96,48 @@ async function welcome(): Promise<void> {
     } else {
       profileForm(support);
     }
+  });
+}
+
+
+/**
+ * Resolve which study is selected: the stored choice if the server still
+ * offers it, otherwise the first listed one. A stored id that has since been
+ * retired must not be sent — the server rejects unknown ids rather than
+ * silently substituting, which is right, but the UI shouldn't provoke it.
+ */
+function pickStudy(studies: Study[], stored: string | null): Study | null {
+  if (!studies.length) return null;
+  return studies.find((s) => s.id === stored) ?? studies[0];
+}
+
+function renderStudyPicker(studies: Study[], chosen: Study | null): string {
+  return `
+    <div class="study-picker" id="study-picker">
+      <div class="study-picker-label muted">Choose what to help with</div>
+      ${studies
+        .map(
+          (s) => `
+        <button class="study-option${s.id === chosen?.id ? ' on' : ''}" data-study="${escapeAttr(s.id)}">
+          <span class="study-name">${escapeHtml(s.label)}</span>
+          <span class="study-summary muted">${escapeHtml(s.summary)}</span>
+          <span class="study-style">${escapeHtml(s.trial_style)}</span>
+        </button>`,
+        )
+        .join('')}
+    </div>`;
+}
+
+function bindStudyPicker(root: HTMLElement, studies: Study[]): void {
+  if (studies.length < 2) return;
+  root.querySelectorAll<HTMLButtonElement>('.study-option').forEach((b) => {
+    b.addEventListener('click', () => {
+      const id = b.dataset.study;
+      if (!id) return;
+      saveStudyId(id);
+      root.querySelectorAll('.study-option').forEach((x) => x.classList.remove('on'));
+      b.classList.add('on');
+    });
   });
 }
 
@@ -203,8 +260,12 @@ async function beginSession(
       local_date: new Date().toISOString().slice(0, 10),
       supported_codecs: [...support.supported],
       codec_probe_cached: support.cached,
+      study_id: loadStudyId(),
     });
     setObserverId(resp.observer_id);
+    // Record what the server actually joined us to, so a retired study id in
+    // localStorage self-heals instead of failing on every future session.
+    saveStudyId(resp.study_id);
     // Run calibration before real trials. Soft-fail allowed — even on a low
     // score we let them rate. See docs/methodology.md §3.7.
     await new Promise<void>((res) => {

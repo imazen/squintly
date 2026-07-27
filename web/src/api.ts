@@ -21,11 +21,15 @@ export interface CreateSessionReq {
   local_date?: string | null;
   supported_codecs?: string[];
   codec_probe_cached?: boolean;
+  /// Which named study to join (`GET /api/studies`). Omitted = the
+  /// deployment's default. An unknown id is rejected, not coerced.
+  study_id?: string | null;
 }
 
 export interface CreateSessionResp {
   observer_id: string;
   session_id: string;
+  study_id: string;
   streak_days: number;
   streak_outcome: 'advanced' | 'frozen' | 'reset' | 'same_day' | 'skipped';
   freezes_remaining: number;
@@ -69,6 +73,20 @@ export async function nextTrial(session_id: string): Promise<TrialPayload> {
   const u = `/api/trial/next?session_id=${encodeURIComponent(session_id)}`;
   const r = await fetch(u);
   if (!r.ok) throw new Error(`nextTrial ${r.status}`);
+  return r.json();
+}
+
+export interface Study {
+  id: string;
+  label: string;
+  summary: string;
+  trial_style: string;
+  unlisted: boolean;
+}
+
+export async function listStudies(): Promise<Study[]> {
+  const r = await fetch('/api/studies');
+  if (!r.ok) throw new Error(`listStudies ${r.status}`);
   return r.json();
 }
 

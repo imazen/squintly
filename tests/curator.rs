@@ -52,7 +52,6 @@ async fn boot_app() -> Result<(SocketAddr, sqlx::SqlitePool)> {
         suggestions: squintly::suggestion_store::SuggestionStore::LocalDisk(
             squintly::suggestion_store::LocalDiskStore::new(dir),
         ),
-        sampler: Default::default(),
     });
     let api = Router::new()
         .route("/curator/stream/next", get(curator::stream_next))

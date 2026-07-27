@@ -145,23 +145,16 @@ async fn main() -> Result<()> {
     let suggestions =
         squintly::suggestion_store::SuggestionStore::from_env(suggestions_local_default);
 
-    // Trial mix. Logged loudly because a pairwise-only run looks identical to a
-    // normal one from the outside until you read the responses table.
-    let sampler = squintly::sampling::SamplerConfig::from_env();
-    if sampler.pairwise_only {
-        tracing::info!(
-            "PAIRWISE-ONLY mode: single-stimulus ratings, honeypots and anchors are \
-             all suppressed. /api/trial/next returns 409 when no source can produce a \
-             non-trivial pair, rather than falling back to a rating."
-        );
-    } else {
-        tracing::info!(
-            p_single = sampler.p_single,
-            p_honeypot = sampler.p_honeypot,
-            p_anchor = sampler.p_anchor,
-            "trial mix"
-        );
-    }
+    // Which study new sessions join unless the client names one. Logged because
+    // a forced-choice study looks identical from the outside until you read the
+    // responses table.
+    let default_study = squintly::studies::default_study();
+    tracing::info!(
+        default_study = default_study.id,
+        pairwise_only = default_study.sampler.pairwise_only,
+        available = ?squintly::studies::STUDIES.iter().map(|s| s.id).collect::<Vec<_>>(),
+        "studies"
+    );
 
     let state = Arc::new(AppState {
         pool,
@@ -170,7 +163,6 @@ async fn main() -> Result<()> {
         anchors: tokio::sync::RwLock::new(anchors),
         source_flags: tokio::sync::RwLock::new(source_flags),
         suggestions,
-        sampler,
     });
 
     // Spawn the nightly observer_grades batch. Fires once on startup so a
@@ -304,6 +296,7 @@ async fn main() -> Result<()> {
             get(handlers::export_unified_manifest),
         )
         .route("/stats", get(handlers::stats))
+        .route("/studies", get(handlers::list_studies))
         .route("/manifest/refresh", post(handlers::refresh_manifest))
         // Curator mode (corpus development).
         .route("/curator/stream/next", get(curator::stream_next))

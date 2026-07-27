@@ -309,10 +309,24 @@ already holds `imazen-26-png-v3/` (below).
 ### The canonical corpus already on R2
 
 `codec-corpus/imazen-26-png-v3/` holds a richer, better-stratified imazen-26
-(21 numbered strata, 2639 objects, 15.5 GiB) including plots, mobile/web
-screenshots, AI-generated imagery and patent scans — strata the local
-`/mnt/v/imazen-26` layout does not separate. Filenames encode category and
-dimensions (`5300_noaa_..._2550x3300.sdr.png`), so a selection can be made from
-a key listing without downloading the corpus. Moving the builder onto that
-taxonomy would directly improve imazen/squintly#4 coverage; it is the obvious
-next upgrade and is not done yet.
+(21 numbered strata + a `nope/` reject bin, 2639 objects, 15.5 GiB) including
+plots, mobile/web screenshots, AI-generated imagery and patent scans — strata
+the local `/mnt/v/imazen-26` layout does not separate. Moving
+`build_demo_corpus.py` onto it would directly improve imazen/squintly#4
+coverage. **Not done yet**; measured groundwork so the next attempt is short:
+
+```bash
+rclone lsf r2:codec-corpus/imazen-26-png-v3 --files-only -R > v3-keys.txt
+```
+
+- **Dimensions parse from the filename for 2639/2639 keys (100%)** — pattern
+  `..._<W>x<H>.sdr.png`, e.g. `5300_noaa_nhc-verification-report-2024_page1_p01_2550x3300.sdr.png`.
+  A stratified selection can therefore be made from the key listing alone; only
+  the chosen files need downloading, not 15.5 GiB.
+- **Size distribution is top-heavy**: XL 1263, L 1296, M 78, S 2. The four
+  `export.rs` buckets still have to be produced by downscaling, exactly as the
+  current builder does — do not expect to find natural S/M sources.
+- **Exclude `nope/`** (404 objects) — it is a reject bin, not a stratum.
+- Licensing must be re-derived per stratum before publishing to a public
+  bucket; `unsplash-*`, `met-museum` and `art-institute` are not the same terms
+  as the US-government and operator-owned material.

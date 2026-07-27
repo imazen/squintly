@@ -70,6 +70,10 @@ function send(res: ServerResponse, status: number, body: Buffer | string, conten
   res.statusCode = status;
   res.setHeader('content-type', contentType);
   res.setHeader('cache-control', 'public, max-age=300');
+  // The frontend loads blobs with crossOrigin=anonymous (canvas needs
+  // untainted pixels for the threshold encoder); real R2 sends CORS headers,
+  // so the mock must too or every canvas path silently fails in e2e.
+  res.setHeader('access-control-allow-origin', '*');
   res.end(body);
 }
 

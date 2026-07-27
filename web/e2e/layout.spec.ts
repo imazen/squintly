@@ -28,11 +28,21 @@ async function expectNoViewportExpansion(page: Page, screen: string) {
     // meaningful even though overflow-x: clip pins scrollWidth to the
     // viewport.
     const jutting: string[] = [];
+    const insideHScroller = (el: HTMLElement): boolean => {
+      for (let p = el.parentElement; p; p = p.parentElement) {
+        const o = getComputedStyle(p).overflowX;
+        if (o === 'auto' || o === 'scroll') return true;
+      }
+      return false;
+    };
     document.querySelectorAll<HTMLElement>('body *').forEach((el) => {
       const r = el.getBoundingClientRect();
       const cs = getComputedStyle(el);
       if (cs.display === 'none' || cs.visibility === 'hidden') return;
       if (el.closest('details:not([open])')) return;
+      // Content inside a deliberate horizontal scroll container (thumbnail
+      // strips) is reachable by scrolling that container — not clipped.
+      if (insideHScroller(el)) return;
       if (r.width > 0 && r.right > vw + 1) {
         const id = el.id ? `#${el.id}` : '';
         jutting.push(`${el.tagName.toLowerCase()}${id} right=${Math.round(r.right)}`);
@@ -94,6 +104,13 @@ test.describe('no horizontal overflow on any screen', () => {
     await page.locator('#take').click();
     await expect(page.locator('[data-screen="curate"]')).toBeVisible();
     await expectNoViewportExpansion(page, 'curator-curate');
+
+    // Open the thumbnail preview strip — its status line once embedded an
+    // unbreakable blob URL that widened the viewport on phones.
+    await page.locator('.curator-chip:not([disabled])').first().click();
+    await page.locator('#preview-wrap summary').click();
+    await page.waitForTimeout(300);
+    await expectNoViewportExpansion(page, 'curator-curate-preview-strip');
 
     await page.locator('#find-thr').click();
     await expect(page.locator('[data-screen="threshold"]')).toBeVisible();

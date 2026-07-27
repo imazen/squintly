@@ -114,7 +114,11 @@ async function diagnose(page: Page): Promise<Omit<ScreenReport, 'screen' | 'file
 
     for (const el of interactive) {
       el.scrollIntoView({ block: 'center', inline: 'nearest' });
-      const r = el.getBoundingClientRect();
+      // Inline elements wrapped onto multiple lines have a bounding box whose
+      // center can fall in the gap between line boxes — measure the first
+      // line box instead, like a real tap on the link text.
+      const rects = el.getClientRects();
+      const r = rects.length > 1 ? rects[0] : el.getBoundingClientRect();
       const cx = r.x + r.width / 2;
       const cy = r.y + r.height / 2;
       if (r.width < 40 || r.height < 40) {

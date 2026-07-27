@@ -12,13 +12,13 @@
 }
 * { box-sizing: border-box; }
 html, body {
-  /* Mobile Chrome widens the layout viewport to the document's widest
-     transient state and never shrinks it back (shrink-to-fit ICB) — one
-     over-wide frame during a screen swap leaves the page permanently
-     pannable sideways. Clipping the root makes expansion impossible.
-     overflow-x: clip (not hidden) avoids creating a scroll container.
-     Real per-screen overflow bugs stay visible to e2e: layout.spec.ts
-     asserts element right-edges, which clipping does not mask. */
+  /* Blocks horizontal panning when something paints past the right edge.
+     NOTE (measured 2026-07-27): this does NOT stop mobile Chrome from
+     widening the layout viewport when content min-content exceeds the
+     device width — the shrink-to-fit ICB is computed before root clipping.
+     The real defence is keeping every element's min-content within the
+     narrowest supported viewport (304 CSS px, Z Fold 7 cover); e2e
+     layout.spec.ts enforces that per screen. */
   overflow-x: clip;
 }
 html, body, main {
@@ -171,6 +171,10 @@ p, label { line-height: 1.4; color: var(--fg); }
 @media (orientation: landscape) and (min-height: 480px) {
   .rating-panel { grid-template-columns: repeat(4, 1fr); }
 }
+
+/* Multi-line inline links: inline-block makes the element own the full
+   two-line box, so a tap between the lines still lands on the link. */
+#signin-link { display: inline-block; }
 
 .scrim {
   position: fixed; inset: 0;
@@ -530,9 +534,16 @@ input[type="range"] {
   text-overflow: ellipsis;
   white-space: nowrap;
   padding: 6px 6px;
+  min-height: 36px;
   font-size: 0.75rem;
   border-radius: 999px;
   background: transparent;
+}
+/* On the Z Fold cover (304 CSS px) the longer screen titles starve the tab
+   bar down to sliver-width buttons. The tab bar + screen content identify
+   the mode; drop the title there. */
+@media (max-width: 340px) {
+  .curator-title { display: none; }
 }
 .curator-tabbar button.on {
   background: var(--accent);
@@ -725,9 +736,19 @@ input[type="range"] {
   overflow-x: auto;
   padding: 8px 0;
   align-items: flex-end;
+  /* A scroll container still propagates its content's min-content width to
+     the document (which widens phone viewports) — containment sizes the
+     strip from its parent and lets the thumbnails scroll inside. */
+  contain: inline-size;
 }
 .curator-preview-strip[data-empty="true"] {
   padding: 12px 4px;
+}
+/* Error/status lines can embed blob URLs — break anywhere so an unbreakable
+   token can't widen the layout viewport on phones. */
+.curator-preview-strip p,
+.curator-gen-status {
+  overflow-wrap: anywhere;
 }
 .curator-thumb {
   margin: 0;

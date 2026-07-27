@@ -1,3 +1,4 @@
-# The demo corpus is generated, not committed — see scripts/build_demo_corpus.py.
-# This directory exists so the Dockerfile COPY always has a target; when it is
-# empty the binary boots with an empty manifest exactly as before.
+# Local build output of scripts/build_demo_corpus.py — gitignored except this
+# file. It is NOT part of the Docker image: the corpus is published to public
+# R2 as a static coefficient store and selected with SQUINTLY_COEFFICIENT_HTTP.
+# See DEPLOY.md §15.

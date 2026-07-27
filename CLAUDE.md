@@ -80,6 +80,21 @@ just test
 
 ## Known Bugs
 
+### Curator write endpoints are unauthenticated on a public instance
+
+`POST /api/curator/manifest`, `/api/curator/decision`, `/api/curator/threshold`
+and `/api/curator/generate-variant` take no token — only `load-r2-public` and
+`backfill-dims` call `require_curator_admin`. On the public Railway deployment
+that means anyone can inject candidates, record decisions, and drive variant
+generation. The SSRF that fell out of this is now closed (`guard_blob_url`,
+2026-07-27), but the underlying posture is unresolved: the curator is a
+*researcher* tool exposed on an *anonymous-participant* origin.
+
+Options, none chosen yet: gate every `/api/curator/*` mutation behind
+`SQUINTLY_SUGGESTION_ADMIN_TOKEN`; serve the curator from a separate
+deployment; or accept junk-injection risk and treat `curator_candidates` as
+untrusted at export time. **Decide before advertising the live URL widely.**
+
 ### R2 corpus blobs have no CORS — canvas paths must use the proxy
 
 The canonical bucket (`pub-…​.r2.dev`) serves blobs with **no**

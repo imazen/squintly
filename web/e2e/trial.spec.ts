@@ -34,10 +34,21 @@ test.describe('trial loop', () => {
     await completeProfileAndStart(page);
     await awaitAnyTrialPanel(page);
 
-    if (!(await page.locator('.rating-panel').isVisible())) {
-      // pair trial — skip; we'll get a single eventually but this test is single-only.
-      test.skip(true, 'first trial happened to be a pair');
+    // Trial type is sampler-chosen, so the first one may be a pair. Advance
+    // until a single-stimulus trial appears rather than skipping the test:
+    // a runtime self-skip is a silent pass that asserts nothing (global
+    // CLAUDE.md, "NO GRACEFUL SKIPS"). If none shows up in 15 trials the
+    // sampler is broken and this must fail loudly.
+    let found = false;
+    for (let i = 0; i < 15; i++) {
+      if (await page.locator('.rating-panel').isVisible()) {
+        found = true;
+        break;
+      }
+      await submitOneTrial(page, { pair: 'tie' });
+      await awaitAnyTrialPanel(page);
     }
+    expect(found, 'no single-stimulus trial served in 15 trials').toBe(true);
 
     const img = page.locator('#stimulus');
     const initialSrc = await img.getAttribute('src');

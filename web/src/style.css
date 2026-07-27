@@ -82,7 +82,8 @@ p, label { line-height: 1.4; color: var(--fg); }
   background: transparent;
   border: 1px solid var(--border);
   border-radius: 999px;
-  padding: 4px 12px;
+  padding: 8px 14px;
+  min-height: 40px; /* thumb-sized tap target on phones */
   font-size: 0.85rem;
 }
 .trial-license {
@@ -203,10 +204,20 @@ input[type="range"] {
 }
 .squintly-tabs button {
   flex: 1;
-  padding: 8px 12px;
+  /* min-width: 0 lets the pills shrink below their label's min-content width
+     on very narrow screens (Z Fold cover is 304 CSS px) instead of forcing
+     the whole page to scroll sideways. */
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 8px 8px;
   font-size: 0.85rem;
   border-radius: 999px;
   background: transparent;
+}
+@media (max-width: 340px) {
+  .squintly-tabs button { font-size: 0.75rem; padding: 8px 4px; }
 }
 .squintly-tabs button.on {
   background: var(--accent);
@@ -245,8 +256,17 @@ input[type="range"] {
   vertical-align: top;
   padding: 6px 4px;
   border-bottom: 1px solid var(--border);
+  /* Let long labels/URLs break — the table's min-content width otherwise
+     exceeds narrow phone viewports and zooms the whole page out on open. */
+  overflow-wrap: anywhere;
 }
-.credits-table a { color: var(--accent); }
+.credits-table a {
+  color: var(--accent);
+  /* inline-block + padding grows the tap target without changing layout much;
+     bare inline links in the table were ~15 CSS px tall on phones. */
+  display: inline-block;
+  padding: 6px 2px;
+}
 
 /* ---------- Curator UI ---------- */
 .curator-screen {
@@ -259,18 +279,37 @@ input[type="range"] {
 .curator-stream { grid-template-rows: auto 1fr auto auto; }
 .curator-header {
   display: flex;
+  /* flex-wrap matters even though nothing visibly wraps: a NOwrap flex row
+     propagates the SUM of its children's min-content widths up to the
+     document, and mobile Chrome then widens the layout viewport to fit
+     (google "shrink-to-fit ICB") — the whole page pans sideways at 304 CSS
+     px. A wrapping container propagates only the largest child instead; the
+     children still shrink at layout time so the row stays single-line. */
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
   font-size: 0.95rem;
 }
-.curator-title { font-weight: 600; }
+/* The header must never force horizontal page scroll: title ellipsizes, the
+   tab bar shrinks, and the exit button keeps its full hit target. On the
+   Z Fold 7 cover display (304 CSS px) the min-content sum used to exceed the
+   viewport, which pushed the × under the tab bar and made it untappable. */
+.curator-title {
+  font-weight: 600;
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .curator-exit {
   background: transparent;
   border: 1px solid var(--border);
   border-radius: 999px;
-  width: 32px;
-  height: 32px;
+  flex: 0 0 auto;
+  width: 40px;
+  height: 40px;
   padding: 0;
   font-size: 1.1rem;
   line-height: 1;
@@ -340,7 +379,10 @@ input[type="range"] {
 }
 .curator-groups {
   display: grid;
-  grid-template-columns: repeat(2, 1fr);
+  /* minmax(0, 1fr), not bare 1fr: the group labels' min-content width is
+     wider than half a Z Fold cover screen, and bare 1fr won't shrink below
+     it — the grid (and the page) overflowed sideways at 304 CSS px. */
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
 }
 .curator-group-btn {
@@ -377,7 +419,7 @@ input[type="range"] {
 }
 .curator-action-row {
   display: grid;
-  grid-template-columns: auto 1fr 1fr;
+  grid-template-columns: auto minmax(0, 1fr) minmax(0, 1fr);
   gap: 8px;
 }
 .curator-preview {
@@ -461,11 +503,16 @@ input[type="range"] {
   display: flex;
   gap: 4px;
   flex: 1;
+  min-width: 0;
   margin: 0 8px;
 }
 .curator-tabbar button {
   flex: 1;
-  padding: 4px 10px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 6px 6px;
   font-size: 0.75rem;
   border-radius: 999px;
   background: transparent;
@@ -522,6 +569,7 @@ input[type="range"] {
 }
 .curator-status-row {
   display: flex;
+  flex-wrap: wrap; /* see .curator-header — keeps min-content off the ICB */
   align-items: center;
   justify-content: space-between;
   gap: 8px;
@@ -755,10 +803,13 @@ input[type="range"] {
 }
 
 /* ---------- Z Fold 7 layouts ----------
-   Cover display (folded): ~904 CSS px wide, 2316 tall. Same layout as a phone.
-   Inner display (unfolded): ~1968 CSS px wide × 2184 tall. Use a side-by-side
-   layout for curate (image left, controls right) since width is generous.
-   The breakpoint at 720px catches mid-size foldables in portrait too. */
+   All numbers are CSS px (device px ÷ DPR):
+   Cover display (folded): 904×2316 device @ ~3x → ~304×772 CSS. Very narrow —
+   single-column, and every flex/grid child must be allowed to shrink
+   (min-width: 0 / minmax(0, 1fr)) or the page scrolls sideways.
+   Inner display (unfolded): 1968×2184 device @ ~2.625x → ~749×832 CSS.
+   Square-ish small tablet — the 720px portrait breakpoint below catches it
+   and gives curate a side-by-side layout (image left, controls right). */
 @media (min-width: 720px) and (orientation: portrait) {
   .curator-curate {
     grid-template-columns: 1fr 1fr;
@@ -788,11 +839,16 @@ input[type="range"] {
   .curator-split { min-height: 60vh; }
 }
 
-/* Inner Z Fold 7 (1968 CSS px) — extra tall, use vertical split for threshold */
-@media (min-width: 1600px) and (orientation: portrait) {
+/* Very narrow screens (Z Fold cover, small phones): the side-by-side
+   threshold split leaves each panel ~150 CSS px wide — too cramped to judge
+   1:1 pixels. Stack the two panels vertically instead; each gets the full
+   width and the tall cover display has the height to spare.
+   (An earlier rule here targeted min-width: 1600px "for the inner display" —
+   that was device px; the inner display is ~749 CSS px, so it never fired.) */
+@media (max-width: 479px) {
   .curator-split {
     grid-template-columns: 1fr;
     grid-template-rows: 1fr 1fr;
-    min-height: 70vh;
+    min-height: 50vh;
   }
 }

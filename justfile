@@ -48,10 +48,10 @@ e2e-zfold:
 e2e-curator-live:
     cd web && CURATOR_R2_LIVE=1 npx playwright test e2e/curator.spec.ts e2e/curator-r2-live.spec.ts
 
-# Smoke-run the docker image (binds to localhost:3030; uses an in-memory store at /tmp/squintly-docker).
+# Smoke-run the docker image (binds to localhost:3030; scratch store under ~/tmp).
 docker-run:
-    mkdir -p /tmp/squintly-docker
-    docker run --rm -p 3030:3030 -v /tmp/squintly-docker:/data \
+    mkdir -p ~/tmp/squintly-docker
+    docker run --rm -p 3030:3030 -v ~/tmp/squintly-docker:/data \
         -e SQUINTLY_COEFFICIENT_HTTP=http://host.docker.internal:8081 \
         squintly:local
 

@@ -70,6 +70,9 @@ export default async function globalSetup() {
         RUST_LOG: 'warn,squintly=info',
         // The e2e DB is wiped per run — never mirror it to the Tower NAS.
         SQUINTLY_DISABLE_TOWER_MIRROR: '1',
+        // The mock coefficient serves blobs from 127.0.0.1, which the SSRF
+        // guard blocks by default. Opt in here only; never on a public deploy.
+        SQUINTLY_ALLOW_PRIVATE_BLOB_HOSTS: '1',
       },
       stdio: ['ignore', 'inherit', 'inherit'],
     },

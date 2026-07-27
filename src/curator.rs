@@ -747,6 +747,9 @@ pub async fn generate_variant(
         .timeout(std::time::Duration::from_secs(60))
         .build()
         .map_err(|e| AppError::Anyhow(anyhow::anyhow!("http client: {e}")))?;
+    // Same SSRF exposure as blob_proxy — this endpoint is unauthenticated and
+    // the stored blob_url came from an unauthenticated manifest POST.
+    guard_blob_url(&blob_url).await?;
     let bytes = crate::variant_gen::fetch_source(&http, &blob_url)
         .await
         .map_err(|e| AppError::Anyhow(anyhow::anyhow!(e.to_string())))?;
@@ -1767,6 +1770,117 @@ fn ct_eq_str(a: &str, b: &str) -> bool {
     diff == 0
 }
 
+/// Guard every server-side fetch of a candidate `blob_url` against SSRF.
+///
+/// **`blob_url` is attacker-controlled.** `POST /api/curator/manifest` is
+/// deliberately unauthenticated (anyone may propose a corpus), and it stores
+/// whatever `blob_url_base` the caller supplies. Any endpoint that then fetches
+/// that URL *from the server* — `blob_proxy` here, and `generate_variant` —
+/// would otherwise let a stranger aim our egress at `169.254.169.254`,
+/// `127.0.0.1:*`, or anything else inside the deployment's network, and (via
+/// the proxy) read the response back verbatim. On a public instance that is a
+/// straightforward SSRF.
+///
+/// Defence, in order: scheme must be http/https; the host must pass the
+/// allowlist when one is configured; and every address the host resolves to
+/// must be publicly routable. DNS is resolved here and re-resolved by the HTTP
+/// client, so a determined rebind can still race us — the allowlist is the
+/// primary control, the IP check is the backstop for when it isn't set.
+///
+/// `SQUINTLY_BLOB_HOST_ALLOWLIST` — comma-separated hostnames; empty/unset
+/// means "any public host".
+/// `SQUINTLY_ALLOW_PRIVATE_BLOB_HOSTS=1` — opt back into loopback/private
+/// targets. Required for local dev and e2e, where the mock coefficient serves
+/// blobs from 127.0.0.1. Never set it on a public deployment.
+pub async fn guard_blob_url(raw: &str) -> Result<(), AppError> {
+    let u = url::Url::parse(raw)
+        .map_err(|e| AppError::BadRequest(format!("unusable blob url {raw:?}: {e}")))?;
+    if !matches!(u.scheme(), "http" | "https") {
+        return Err(AppError::BadRequest(format!(
+            "blob url scheme {:?} not allowed (http/https only)",
+            u.scheme()
+        )));
+    }
+    let host = u
+        .host_str()
+        .ok_or_else(|| AppError::BadRequest("blob url has no host".into()))?
+        .to_ascii_lowercase();
+
+    let allowlist: Vec<String> = std::env::var("SQUINTLY_BLOB_HOST_ALLOWLIST")
+        .unwrap_or_default()
+        .split(',')
+        .map(|s| s.trim().to_ascii_lowercase())
+        .filter(|s| !s.is_empty())
+        .collect();
+    if !allowlist.is_empty() && !allowlist.contains(&host) {
+        return Err(AppError::BadRequest(format!(
+            "blob host {host:?} is not in SQUINTLY_BLOB_HOST_ALLOWLIST"
+        )));
+    }
+
+    if std::env::var("SQUINTLY_ALLOW_PRIVATE_BLOB_HOSTS")
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false)
+    {
+        return Ok(());
+    }
+
+    let port = u.port_or_known_default().unwrap_or(443);
+    let addrs = tokio::net::lookup_host((host.as_str(), port))
+        .await
+        .map_err(|e| AppError::BadRequest(format!("cannot resolve blob host {host:?}: {e}")))?;
+    let mut any = false;
+    for addr in addrs {
+        any = true;
+        if !is_publicly_routable(addr.ip()) {
+            return Err(AppError::BadRequest(format!(
+                "blob host {host:?} resolves to non-public address {} — refusing to fetch",
+                addr.ip()
+            )));
+        }
+    }
+    if !any {
+        return Err(AppError::BadRequest(format!(
+            "blob host {host:?} resolved to no addresses"
+        )));
+    }
+    Ok(())
+}
+
+/// Conservative "is this address on the public internet" test. Anything we
+/// aren't sure about is treated as private.
+fn is_publicly_routable(ip: std::net::IpAddr) -> bool {
+    match ip {
+        std::net::IpAddr::V4(v4) => {
+            !(v4.is_loopback()
+                || v4.is_private()
+                || v4.is_link_local()
+                || v4.is_unspecified()
+                || v4.is_broadcast()
+                || v4.is_multicast()
+                || v4.is_documentation()
+                // 100.64.0.0/10 carrier-grade NAT
+                || (v4.octets()[0] == 100 && (64..=127).contains(&v4.octets()[1]))
+                // 192.0.0.0/24 IETF protocol assignments
+                || (v4.octets()[0] == 192 && v4.octets()[1] == 0 && v4.octets()[2] == 0)
+                // 0.0.0.0/8
+                || v4.octets()[0] == 0)
+        }
+        std::net::IpAddr::V6(v6) => {
+            if v6.is_loopback() || v6.is_unspecified() || v6.is_multicast() {
+                return false;
+            }
+            // IPv4-mapped/compatible: judge by the embedded v4 address.
+            if let Some(v4) = v6.to_ipv4_mapped() {
+                return is_publicly_routable(std::net::IpAddr::V4(v4));
+            }
+            let seg = v6.segments();
+            // fc00::/7 unique-local, fe80::/10 link-local
+            !((seg[0] & 0xfe00) == 0xfc00 || (seg[0] & 0xffc0) == 0xfe80)
+        }
+    }
+}
+
 /// Sniff an image mime from magic bytes. The canonical R2 bucket serves every
 /// blob as `application/octet-stream`; `<img>` sniffs happily but `<canvas>`
 /// and downstream tooling are better served by the real type.
@@ -1794,12 +1908,14 @@ fn sniff_image_mime(b: &[u8]) -> &'static str {
 /// entirely and works for any `blob_url_base` (R2, a local mock, whatever a
 /// future store is), instead of depending on bucket configuration we may not
 /// control.
+///
+/// Requiring a known sha narrows *which* URLs can be fetched but does **not**
+/// make them trustworthy — the manifest endpoint is unauthenticated, so the
+/// stored URL is attacker-supplied. `guard_blob_url` is what makes this safe.
 pub async fn blob_proxy(
     State(state): State<SharedState>,
     axum::extract::Path(sha256): axum::extract::Path<String>,
 ) -> Result<Response, AppError> {
-    // Only ever proxy URLs we already stored — never an attacker-supplied one.
-    // This is a closed redirect: the sha must name a known candidate.
     let row = sqlx::query("SELECT blob_url FROM curator_candidates WHERE sha256 = ?1")
         .bind(&sha256)
         .fetch_optional(&state.pool)
@@ -1808,6 +1924,7 @@ pub async fn blob_proxy(
         return Err(AppError::NotFound(format!("no candidate {sha256}")));
     };
     let blob_url: String = row.try_get("blob_url")?;
+    guard_blob_url(&blob_url).await?;
 
     let resp = reqwest::Client::new()
         .get(&blob_url)
@@ -2037,6 +2154,68 @@ mod tests {
         };
         let g = bpp_gate(&c);
         assert!(matches!(g.verdict, BppVerdict::Ok), "got {:?}", g.verdict);
+    }
+
+    #[test]
+    fn publicly_routable_rejects_every_internal_range() {
+        use std::net::IpAddr;
+        for bad in [
+            "127.0.0.1",      // loopback
+            "169.254.169.254", // cloud metadata — the classic SSRF target
+            "10.0.0.5",
+            "172.16.0.1",
+            "192.168.1.1",
+            "0.0.0.0",
+            "100.64.0.1", // CGNAT
+            "::1",
+            "fd00::1",  // unique-local
+            "fe80::1",  // link-local
+            "::ffff:127.0.0.1", // v4-mapped loopback
+        ] {
+            let ip: IpAddr = bad.parse().unwrap();
+            assert!(!is_publicly_routable(ip), "{bad} must not be routable");
+        }
+        for good in ["1.1.1.1", "104.18.0.1", "2606:4700::1111"] {
+            let ip: IpAddr = good.parse().unwrap();
+            assert!(is_publicly_routable(ip), "{good} should be routable");
+        }
+    }
+
+    /// One test, not several: the guard is configured by process-global env
+    /// vars, and cargo runs tests in parallel threads — split across several
+    /// `#[test]`s they race each other's `set_var`/`remove_var`.
+    #[tokio::test]
+    async fn guard_blocks_ssrf_targets_and_honours_config() {
+        // SAFETY: single test owning these vars for its duration (see above).
+        unsafe { std::env::remove_var("SQUINTLY_ALLOW_PRIVATE_BLOB_HOSTS") };
+        unsafe { std::env::remove_var("SQUINTLY_BLOB_HOST_ALLOWLIST") };
+
+        // Scheme + internal-target rejection.
+        assert!(guard_blob_url("file:///etc/passwd").await.is_err());
+        assert!(guard_blob_url("gopher://evil/x").await.is_err());
+        assert!(guard_blob_url("http://127.0.0.1:8080/x").await.is_err());
+        assert!(
+            guard_blob_url("http://169.254.169.254/latest/meta-data/")
+                .await
+                .is_err(),
+            "cloud metadata endpoint must be refused"
+        );
+
+        // Opt-in restores local development / e2e against the mock.
+        unsafe { std::env::set_var("SQUINTLY_ALLOW_PRIVATE_BLOB_HOSTS", "1") };
+        assert!(
+            guard_blob_url("http://127.0.0.1:18081/blobs/aa")
+                .await
+                .is_ok()
+        );
+
+        // Allowlist filters by host regardless of routability.
+        unsafe { std::env::set_var("SQUINTLY_BLOB_HOST_ALLOWLIST", "good.example") };
+        assert!(guard_blob_url("https://good.example/x").await.is_ok());
+        assert!(guard_blob_url("https://bad.example/x").await.is_err());
+
+        unsafe { std::env::remove_var("SQUINTLY_BLOB_HOST_ALLOWLIST") };
+        unsafe { std::env::remove_var("SQUINTLY_ALLOW_PRIVATE_BLOB_HOSTS") };
     }
 
     #[test]

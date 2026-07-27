@@ -46,7 +46,25 @@
   frontend's `crossOrigin=anonymous` canvas loads (threshold split, preview
   strip) silently failed against it before, painting black.
 
+### Security
+- **SSRF in the curator's server-side blob fetches** (25d898b7). `POST
+  /api/curator/manifest` is unauthenticated and stores a caller-supplied
+  `blob_url_base`, so any endpoint that fetched that URL server-side aimed the
+  deployment's egress wherever a stranger pointed it — demonstrated
+  unauthenticated against a running server: manifest POST with
+  `blob_url_base: http://169.254.169.254`, then `GET /api/curator/blob/{sha}`
+  returned the metadata response verbatim. `generate-variant` (also
+  unauthenticated) had the same exposure already. `curator::guard_blob_url` now
+  gates both: http/https only, `SQUINTLY_BLOB_HOST_ALLOWLIST` when set, and
+  every resolved address must be publicly routable. Set the allowlist on any
+  public deployment (DEPLOY.md §3); never set
+  `SQUINTLY_ALLOW_PRIVATE_BLOB_HOSTS=1` there.
+
 ### Added
+- **`POST /api/curator/candidates/delete`** (dd47a8bd) — admin-gated removal of
+  a candidate and its decisions. The pool was previously append-only: manifests
+  upsert, and a `reject` is per-`curator_id`, so a bad row surfaced forever for
+  everyone else.
 - **`e2e/layout.spec.ts`** — per-screen guard across all four device
   projects: layout viewport must equal device width, no horizontal scroll,
   no element painted past the right edge (deliberate horizontal scrollers

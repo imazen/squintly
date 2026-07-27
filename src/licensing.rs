@@ -128,6 +128,60 @@ pub const GENERATED_BUILT: LicensePolicy = LicensePolicy {
     attribution_required: true,
 };
 
+// ---- imazen-26 -------------------------------------------------------------
+// The corpus is a *mix*: per-folder provenance is recorded in
+// /mnt/v/imazen-26/PROVENANCE.md (100 URLs HEAD-verified 2026-05-28). Splitting
+// it into three policies rather than one keeps the badge on each trial honest —
+// a US-government document and a third-party screenshot do not share terms.
+
+pub const IMAZEN26_USGOV_PD: LicensePolicy = LicensePolicy {
+    id: "imazen26-usgov-pd",
+    label: "US Government (public domain)",
+    spdx_or_status: "public-domain",
+    summary: "Works of the US federal government (NASA, NOAA, NPS, IRS, USPTO, Federal Register). Public domain under 17 U.S.C. §105.",
+    terms_url: "https://www.usa.gov/government-copyright",
+    redistribute_bytes: true,
+    commercial_training: true,
+    attribution_required: false,
+};
+
+pub const IMAZEN26_PUBLIC_DOMAIN: LicensePolicy = LicensePolicy {
+    id: "imazen26-public-domain",
+    label: "Public domain (archival scans)",
+    spdx_or_status: "public-domain",
+    summary: "Out-of-copyright works digitised by the Internet Archive / Library of Congress, plus CC0 icon sets.",
+    terms_url: "https://github.com/imazen/squintly/blob/main/DEPLOY.md#15-the-imazen-26-demo-corpus",
+    redistribute_bytes: true,
+    commercial_training: true,
+    attribution_required: false,
+};
+
+pub const IMAZEN26_OWNED: LicensePolicy = LicensePolicy {
+    id: "imazen26-owned",
+    label: "Operator's own photographs",
+    spdx_or_status: "owned",
+    summary: "Photographs taken by the study operator, contributed to this corpus.",
+    terms_url: "https://github.com/imazen/squintly/blob/main/DEPLOY.md#15-the-imazen-26-demo-corpus",
+    redistribute_bytes: true,
+    commercial_training: true,
+    attribution_required: false,
+};
+
+/// Screenshots of third-party sites. Useful research material — squintly#4
+/// specifically needs screen/UI content — but redistributing the bytes is a
+/// different question from measuring against them, so this policy says so
+/// rather than quietly claiming more than we have.
+pub const IMAZEN26_SCREENSHOTS: LicensePolicy = LicensePolicy {
+    id: "imazen26-screenshots",
+    label: "Screenshots (research only)",
+    spdx_or_status: "research-fair-use",
+    summary: "Screenshots of third-party web pages, captured for quality measurement. Not cleared for redistribution.",
+    terms_url: "https://github.com/imazen/squintly/blob/main/DEPLOY.md#15-the-imazen-26-demo-corpus",
+    redistribute_bytes: false,
+    commercial_training: false,
+    attribution_required: true,
+};
+
 pub const MIXED_RESEARCH: LicensePolicy = LicensePolicy {
     id: "mixed-research",
     label: "Mixed (research only)",
@@ -146,10 +200,41 @@ const ALL_POLICIES: &[&LicensePolicy] = &[
     &FLICKR_PHOTO,
     &GITHUB_REPRO,
     &GENERATED_BUILT,
+    &IMAZEN26_USGOV_PD,
+    &IMAZEN26_PUBLIC_DOMAIN,
+    &IMAZEN26_OWNED,
+    &IMAZEN26_SCREENSHOTS,
     &MIXED_RESEARCH,
 ];
 
 const REGISTRY: &[Entry] = &[
+    // imazen-26 entries come first: `lookup` is prefix-based and first-match,
+    // and these corpus names are the more specific ones.
+    Entry {
+        match_prefixes: &[
+            "imazen26-office-documents",
+            "imazen26-nasa",
+            "imazen26-noaa",
+            "imazen26-parks",
+        ],
+        policy: &IMAZEN26_USGOV_PD,
+    },
+    Entry {
+        match_prefixes: &[
+            "imazen26-illustration-scans",
+            "imazen26-icons",
+            "imazen26-loc",
+        ],
+        policy: &IMAZEN26_PUBLIC_DOMAIN,
+    },
+    Entry {
+        match_prefixes: &["imazen26-photo-own"],
+        policy: &IMAZEN26_OWNED,
+    },
+    Entry {
+        match_prefixes: &["imazen26-screen-ui"],
+        policy: &IMAZEN26_SCREENSHOTS,
+    },
     Entry {
         match_prefixes: &["unsplash"],
         policy: &UNSPLASH,

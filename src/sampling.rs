@@ -33,6 +33,41 @@ pub fn codec_browser_family(codec: &str) -> &'static str {
     }
 }
 
+/// Choose one codec's encodings at random, weighted by how many quality rungs
+/// it carries.
+///
+/// This replaces `by_codec.iter().max_by_key(|(_, v)| v.len())`. `by_codec` is
+/// a BTreeMap, so on a *balanced* ladder — every codec with the same number of
+/// rungs, i.e. what a well-formed corpus looks like — every codec ties and
+/// `max_by_key` returns the last maximum in key order. The sampler then served
+/// the alphabetically-last codec for every single trial (measured: 27/27
+/// `libwebp` on imazen-26), silently voiding every cross-codec comparison.
+///
+/// Weighting by rung count keeps the original preference for the
+/// better-sampled ladder while degenerating to uniform when they're equal.
+fn choose_codec<'a, 'b>(
+    by_codec: &'b std::collections::BTreeMap<&'a str, Vec<&'a EncodingMeta>>,
+    min_encodings: usize,
+    r: &mut impl Rng,
+) -> Option<&'b Vec<&'a EncodingMeta>> {
+    let eligible: Vec<&Vec<&EncodingMeta>> = by_codec
+        .values()
+        .filter(|v| v.len() >= min_encodings)
+        .collect();
+    if eligible.is_empty() {
+        return None;
+    }
+    let total: usize = eligible.iter().map(|v| v.len()).sum();
+    let mut pick = r.random_range(0..total);
+    for v in eligible {
+        if pick < v.len() {
+            return Some(v);
+        }
+        pick -= v.len();
+    }
+    None
+}
+
 fn codec_allowed(codec: &str, allowed: Option<&HashSet<String>>) -> bool {
     let Some(allowed) = allowed else { return true };
     let family = codec_browser_family(codec);
@@ -192,10 +227,8 @@ pub fn pick_trial(
         }
         let held_out_src = flags.map(|f| f.is_held_out(&src.hash)).unwrap_or(false);
         let try_single = || -> Option<TrialPlan> {
-            let (_, codec_encs) = by_codec.iter().max_by_key(|(_, v)| v.len())?;
-            if codec_encs.is_empty() {
-                return None;
-            }
+            let mut r_codec = rng();
+            let codec_encs = choose_codec(&by_codec, 1, &mut r_codec)?;
             let mut by_q: Vec<&EncodingMeta> = codec_encs.to_vec();
             by_q.sort_by(|a, b| {
                 a.quality
@@ -226,10 +259,8 @@ pub fn pick_trial(
             // good candidates; cross-codec pairs need a bytes-ratio sanity
             // check (see is_trivial_pair). v0.1 picks adjacent same-codec
             // pairs only, which are by construction non-trivial.
-            let (_, codec_encs) = by_codec
-                .iter()
-                .filter(|(_, v)| v.len() >= 2)
-                .max_by_key(|(_, v)| v.len())?;
+            let mut r_codec = rng();
+            let codec_encs = choose_codec(&by_codec, 2, &mut r_codec)?;
             let mut sorted: Vec<&EncodingMeta> = codec_encs.to_vec();
             sorted.sort_by(|a, b| {
                 a.quality
@@ -658,4 +689,79 @@ mod tests {
             }
         }
     }
+
+    /// Regression: the sampler must spread trials across every codec the
+    /// observer can decode, not lock onto one.
+    ///
+    /// `by_codec` is a BTreeMap, and codec selection used
+    /// `max_by_key(|(_, v)| v.len())`. On a *balanced* ladder — every codec
+    /// carrying the same number of quality rungs, which is what a well-formed
+    /// corpus looks like — every codec ties, and `max_by_key` returns the LAST
+    /// maximum in iteration order, i.e. the alphabetically-last codec, every
+    /// single time. Measured against the imazen-26 corpus before the fix:
+    /// 27 of 27 served trials were `libwebp`, and libavif / libjpeg-turbo /
+    /// jpegli were never shown at all. That silently voids every cross-codec
+    /// comparison the study exists to make.
+    #[test]
+    fn pick_trial_spreads_across_codecs_on_a_balanced_ladder() {
+        use crate::coefficient::{EncodingMeta, Manifest, SourceMeta};
+        use std::collections::HashSet;
+
+        let codecs = ["jpegli", "libavif", "libjpeg-turbo", "libwebp"];
+        let mut encodings = Vec::new();
+        for c in codecs {
+            for (i, q) in [15.0f32, 30.0, 45.0, 60.0, 80.0, 92.0].iter().enumerate() {
+                encodings.push(EncodingMeta {
+                    id: format!("{c}-{i}"),
+                    source_hash: "h".into(),
+                    codec: c.into(),
+                    quality: Some(*q),
+                    effort: None,
+                    bytes: 1000 + (i as u64) * 500,
+                });
+            }
+        }
+        let manifest = Manifest {
+            sources: vec![SourceMeta {
+                hash: "h".into(),
+                width: 1024,
+                height: 768,
+                size_bytes: 0,
+                corpus: None,
+                filename: None,
+            }],
+            encodings,
+        };
+        let mut allowed = HashSet::new();
+        for f in ["jpeg", "webp", "avif"] {
+            allowed.insert(f.to_string());
+        }
+
+        let mut seen: HashSet<String> = HashSet::new();
+        for _ in 0..300 {
+            if let Some(plan) = pick_trial(
+                &manifest,
+                &SamplerConfig::default(),
+                Some(&allowed),
+                None,
+                None,
+            ) {
+                match plan {
+                    TrialPlan::Single { encoding, .. } => {
+                        seen.insert(encoding.codec.clone());
+                    }
+                    TrialPlan::Pair { a, b, .. } => {
+                        seen.insert(a.codec.clone());
+                        seen.insert(b.codec.clone());
+                    }
+                }
+            }
+        }
+        assert_eq!(
+            seen.len(),
+            4,
+            "expected all 4 decodable codecs across 300 trials, saw {seen:?}"
+        );
+    }
+
 }

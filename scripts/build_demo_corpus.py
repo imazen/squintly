@@ -8,8 +8,19 @@ Squintly consumes an image store through `--coefficient-path` (see
     <root>/blobs/sources/<sha>.png       source bytes (PNG)
     <root>/blobs/encodings/<id>.<ext>    encoded bytes
 
-This script produces exactly that from `/mnt/v/imazen-26`, so the rating flow
-can serve real trials instead of 409-ing on an empty manifest.
+It produces exactly that, so the rating flow serves real trials instead of
+409-ing on an empty manifest.
+
+Two sources, `--source r2` (default) and `--source local`:
+
+* **r2** — `codec-corpus/imazen-26-png-v3`, the canonical corpus. 21 numbered
+  strata that separate what imazen/squintly#4 actually needs: plots, mobile vs
+  web screenshots, AI clipart/illustrations/products, patent scans, manuscript
+  text vs illustrations. Dimensions parse out of the filename for every key
+  (2639/2639), so the selection is made from a key listing and only the chosen
+  origins are downloaded, not 15.5 GiB. `nope/` is a reject bin and is skipped.
+* **local** — the `/mnt/v/imazen-26` folders, which lump several of those
+  categories together. Kept for offline work.
 
 Selection rules this encodes (all from CLAUDE.md / squintly's own CLAUDE.md):
 
@@ -23,9 +34,9 @@ Selection rules this encodes (all from CLAUDE.md / squintly's own CLAUDE.md):
   line-art and charts, not just photographs; those categories are where
   SSIMULACRA2 is least validated.
 
-Licensing: only folders that are public domain or the user's own work are
-selected by default, because a public deployment redistributes these bytes.
-`--include` can widen that, but read `/mnt/v/imazen-26/PROVENANCE.md` first.
+Licensing for imazen-26 is settled and documented with the corpus itself
+(`PROVENANCE.md` + per-folder files). This script only maps each stratum onto a
+policy id in `src/licensing.rs` so the trial badge names the right terms.
 
 Codec names are the real encoder, never a stand-in ("Never falsify
 benchmark/codec names"). They also have to survive
@@ -33,14 +44,17 @@ benchmark/codec names"). They also have to survive
 below are both truthful and correctly classified.
 
 Usage:
-    python3 scripts/build_demo_corpus.py --out ~/tmp/squintly-corpus
-    python3 scripts/build_demo_corpus.py --out /data/corpus --per-bucket 4
+    python3 scripts/build_demo_corpus.py --out demo-corpus              # r2
+    python3 scripts/build_demo_corpus.py --out demo-corpus --per-stratum 2
+    python3 scripts/build_demo_corpus.py --out demo-corpus --source local
+Then publish it: `just publish-corpus <version>` (scripts/publish_corpus_r2.py).
 """
 
 from __future__ import annotations
 
 import argparse
 import hashlib
+import re
 import json
 import shutil
 import subprocess
@@ -106,6 +120,121 @@ BUCKETS: list[tuple[str, int]] = [
 # Low-q weighted: 5 rungs at/below 60, 2 above. See module docstring.
 DEFAULT_QUALITIES = [15, 30, 45, 60, 80, 92]
 
+# ---------------------------------------------------------------------------
+# Canonical corpus on R2 (`codec-corpus/imazen-26-png-v3`).
+#
+# Preferred over the local /mnt/v/imazen-26 folders: it is stratified into 21
+# numbered categories that separate exactly what imazen/squintly#4 needs —
+# plots, mobile vs web screenshots, AI-generated imagery, patent scans,
+# manuscript text vs illustrations — which the local layout lumps together.
+#
+# Filenames carry the dimensions (`..._<W>x<H>.sdr.png`, 2639/2639 keys parse),
+# so the selection is made from a key listing and only the chosen files are
+# downloaded rather than the full 15.5 GiB.
+# ---------------------------------------------------------------------------
+
+R2_CORPUS = "r2:codec-corpus/imazen-26-png-v3"
+
+# `nope/` is a reject bin, not a stratum.
+R2_EXCLUDE_STRATA = {"nope"}
+
+# stratum prefix -> (license_id, is_photo). Licensing for imazen-26 is settled
+# and documented with the corpus itself (PROVENANCE.md); this only picks which
+# policy id in src/licensing.rs the trial badge shows.
+R2_STRATA: dict[str, tuple[str, bool]] = {
+    "1000-lilith-photos-general": ("imazen26-owned", True),
+    "1200-lilith-interiors": ("imazen26-owned", True),
+    "1400-lilith-nature": ("imazen26-owned", True),
+    "1600-lilith-food": ("imazen26-owned", True),
+    "2000-unsplash-people": ("unsplash", True),
+    "2200-unsplash-renders": ("unsplash", False),
+    "2400-unsplash-textures": ("unsplash", True),
+    "3000-art-institute-of-chicago-photos": ("imazen26-public-domain", True),
+    "3300-met-museum-photos": ("imazen26-public-domain", True),
+    "5000-national-park-service-brochures": ("imazen26-usgov-pd", False),
+    "5200-epa-climate-impact-2021-report": ("imazen26-usgov-pd", False),
+    "5300-noaa-hurricane-documents": ("imazen26-usgov-pd", False),
+    "6000-lilith-scans-public-patents": ("imazen26-public-domain", False),
+    "6600-ia-scans-manuscript-illustrations": ("imazen26-public-domain", False),
+    "6800-ia-scans-manuscript-text": ("imazen26-public-domain", False),
+    "7000-lilith-plots": ("imazen26-owned", False),
+    "8000-lilith-mobile-screenshots": ("imazen26-screenshots", False),
+    "8100-lilith-web-screenshots": ("imazen26-screenshots", False),
+    "9000-lilith-ai-clipart": ("imazen26-owned", False),
+    "9094-lilith-ai-illustrations": ("imazen26-owned", False),
+    "9226-lilith-ai-products": ("imazen26-owned", False),
+}
+
+DIMS_RE = re.compile(r"_(\d{2,5})x(\d{2,5})\.")
+
+
+def r2_list_keys(remote: str) -> list[str]:
+    r = subprocess.run(
+        ["rclone", "lsf", remote, "--files-only", "-R"],
+        capture_output=True,
+        text=True,
+    )
+    if r.returncode != 0:
+        sys.exit(f"rclone lsf {remote} failed:\n{r.stderr[-1500:]}")
+    return [l.strip() for l in r.stdout.splitlines() if l.strip()]
+
+
+def r2_pick(remote: str, per_stratum: int, cache: Path) -> list[tuple[str, Path, str, bool]]:
+    """Select per stratum from the key listing, then download only those keys.
+
+    Prefers the *largest* source in each stratum: every size bucket is produced
+    by downscaling, so starting from the most pixels keeps the L/XL rungs true
+    downsamples rather than upscales of something smaller.
+    """
+    keys = r2_list_keys(remote)
+    print(f"  listed {len(keys)} keys from {remote}")
+    by_stratum: dict[str, list[tuple[int, str]]] = {}
+    unparsed = 0
+    for k in keys:
+        stratum = k.split("/")[0]
+        if stratum in R2_EXCLUDE_STRATA:
+            continue
+        if stratum not in R2_STRATA:
+            continue
+        m = DIMS_RE.search(k)
+        if not m:
+            unparsed += 1
+            continue
+        pixels = int(m.group(1)) * int(m.group(2))
+        by_stratum.setdefault(stratum, []).append((pixels, k))
+    if unparsed:
+        print(f"  ! {unparsed} keys had no parseable dimensions; skipped")
+
+    missing = sorted(set(R2_STRATA) - set(by_stratum))
+    if missing:
+        raise SystemExit(
+            f"strata matched nothing in {remote}: {missing}. Fix R2_STRATA rather "
+            f"than shipping a corpus that silently omits them."
+        )
+
+    picks: list[tuple[str, Path, str, bool]] = []
+    cache.mkdir(parents=True, exist_ok=True)
+    for stratum in sorted(by_stratum):
+        license_id, is_photo = R2_STRATA[stratum]
+        # Sort by pixels desc, then key for determinism, and spread the picks.
+        ranked = sorted(by_stratum[stratum], key=lambda t: (-t[0], t[1]))
+        chosen = ranked[: max(1, per_stratum)]
+        for _, key in chosen:
+            local = cache / key
+            if not local.exists():
+                local.parent.mkdir(parents=True, exist_ok=True)
+                r = subprocess.run(
+                    ["rclone", "copyto", f"{remote}/{key}", str(local)],
+                    capture_output=True,
+                    text=True,
+                )
+                if r.returncode != 0:
+                    print(f"  ! download failed for {key}: {r.stderr[-200:]}")
+                    continue
+            picks.append((stratum, local, license_id, is_photo))
+        print(f"  {stratum:44s} {len(chosen)} picked of {len(ranked)}")
+    return picks
+
 
 @dataclass
 class SourceMeta:
@@ -128,6 +257,21 @@ class EncodingMeta:
     codec_name: str
     quality: float
     encoded_size: int
+
+
+def origin_label(path: Path) -> str:
+    """Provenance string that works for both source modes."""
+    for root in (IMAZEN26,):
+        try:
+            return str(path.relative_to(root))
+        except ValueError:
+            pass
+    # R2 cache: report the object key, which is the real provenance.
+    parts = path.parts
+    if "imazen-26-png-v3" in parts:
+        i = parts.index("imazen-26-png-v3")
+        return "codec-corpus/" + "/".join(parts[i:])
+    return str(path)
 
 
 def sha256_bytes(b: bytes) -> str:
@@ -261,9 +405,29 @@ def main() -> int:
         help="quality ladder; keep it low-q weighted",
     )
     ap.add_argument("--clean", action="store_true", help="wipe --out first")
+    ap.add_argument(
+        "--source",
+        choices=["r2", "local"],
+        default="r2",
+        help="r2 (default): the canonical stratified imazen-26-png-v3 on "
+             "codec-corpus. local: the /mnt/v/imazen-26 folders.",
+    )
+    ap.add_argument("--r2-remote", default=R2_CORPUS)
+    ap.add_argument(
+        "--r2-cache",
+        type=Path,
+        default=Path("~/tmp/imazen26-v3-cache"),
+        help="where downloaded origin files are kept between runs",
+    )
+    ap.add_argument(
+        "--per-stratum",
+        type=int,
+        default=1,
+        help="r2 mode: origin files per stratum (each yields 4 size buckets)",
+    )
     args = ap.parse_args()
 
-    if not IMAZEN26.exists():
+    if args.source == "local" and not IMAZEN26.exists():
         return print(f"corpus not found at {IMAZEN26}", file=sys.stderr) or 1
 
     root: Path = args.out.expanduser()
@@ -275,8 +439,12 @@ def main() -> int:
     for d in (meta_dir, src_dir, enc_dir):
         d.mkdir(parents=True, exist_ok=True)
 
-    picks = pick_sources(args.include, args.per_bucket)
-    print(f"selected {len(picks)} origin files across {len(args.include)} categories")
+    if args.source == "r2":
+        picks = r2_pick(args.r2_remote, args.per_stratum, args.r2_cache.expanduser())
+        print(f"selected {len(picks)} origin files across {len(R2_STRATA)} strata")
+    else:
+        picks = pick_sources(args.include, args.per_bucket)
+        print(f"selected {len(picks)} origin files across {len(args.include)} categories")
 
     sources: list[SourceMeta] = []
     encodings: list[EncodingMeta] = []
@@ -323,7 +491,7 @@ def main() -> int:
                     license_id=license_id,
                     size_bucket=actual_bucket,
                     is_photo=is_photo,
-                    origin_path=str(path.relative_to(IMAZEN26)),
+                    origin_path=origin_label(path),
                 )
             )
             encodings.extend(encode_variants(final, im, enc_dir, sha, args.qualities))
@@ -347,9 +515,10 @@ def main() -> int:
     (root / "_CORPUS.json").write_text(
         json.dumps(
             {
-                "origin": str(IMAZEN26),
+                "source_mode": args.source,
+                "origin": args.r2_remote if args.source == "r2" else str(IMAZEN26),
                 "provenance": str(IMAZEN26 / "PROVENANCE.md"),
-                "categories": args.include,
+                "categories": sorted(R2_STRATA) if args.source == "r2" else args.include,
                 "qualities": args.qualities,
                 "sources": len(sources),
                 "encodings": len(encodings),

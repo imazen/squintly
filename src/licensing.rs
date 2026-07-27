@@ -129,10 +129,10 @@ pub const GENERATED_BUILT: LicensePolicy = LicensePolicy {
 };
 
 // ---- imazen-26 -------------------------------------------------------------
-// The corpus is a *mix*: per-folder provenance is recorded in
-// /mnt/v/imazen-26/PROVENANCE.md (100 URLs HEAD-verified 2026-05-28). Splitting
-// it into three policies rather than one keeps the badge on each trial honest —
-// a US-government document and a third-party screenshot do not share terms.
+// The corpus is a *mix*, and its licensing is settled and documented with the
+// corpus itself (PROVENANCE.md + per-folder files). Splitting it into several
+// policies rather than one keeps the badge on each trial honest — a
+// US-government document and a third-party screenshot do not share terms.
 
 pub const IMAZEN26_USGOV_PD: LicensePolicy = LicensePolicy {
     id: "imazen26-usgov-pd",
@@ -158,9 +158,9 @@ pub const IMAZEN26_PUBLIC_DOMAIN: LicensePolicy = LicensePolicy {
 
 pub const IMAZEN26_OWNED: LicensePolicy = LicensePolicy {
     id: "imazen26-owned",
-    label: "Operator's own photographs",
+    label: "Operator's own work",
     spdx_or_status: "owned",
-    summary: "Photographs taken by the study operator, contributed to this corpus.",
+    summary: "Photographs, plots and generated imagery produced by the study operator and contributed to this corpus.",
     terms_url: "https://github.com/imazen/squintly/blob/main/DEPLOY.md#15-the-imazen-26-demo-corpus",
     redistribute_bytes: true,
     commercial_training: true,
@@ -210,8 +210,20 @@ const ALL_POLICIES: &[&LicensePolicy] = &[
 const REGISTRY: &[Entry] = &[
     // imazen-26 entries come first: `lookup` is prefix-based and first-match,
     // and these corpus names are the more specific ones.
+    //
+    // Two naming schemes are covered. The numbered ones
+    // (`imazen26-5300-noaa-hurricane-documents`) come from the canonical
+    // stratified corpus `codec-corpus/imazen-26-png-v3`; the bare ones from the
+    // older local-folder build. `build_demo_corpus.py::R2_STRATA` declares the
+    // same mapping on the Python side — `every_v3_stratum_has_a_real_policy`
+    // below is the guard against the two drifting apart, because a stratum that
+    // falls through to MIXED_RESEARCH mislabels the badge on every one of its
+    // trials without failing anything.
     Entry {
         match_prefixes: &[
+            "imazen26-5000-",
+            "imazen26-5200-",
+            "imazen26-5300-",
             "imazen26-office-documents",
             "imazen26-nasa",
             "imazen26-noaa",
@@ -221,6 +233,11 @@ const REGISTRY: &[Entry] = &[
     },
     Entry {
         match_prefixes: &[
+            "imazen26-3000-",
+            "imazen26-3300-",
+            "imazen26-6000-",
+            "imazen26-6600-",
+            "imazen26-6800-",
             "imazen26-illustration-scans",
             "imazen26-icons",
             "imazen26-loc",
@@ -228,12 +245,26 @@ const REGISTRY: &[Entry] = &[
         policy: &IMAZEN26_PUBLIC_DOMAIN,
     },
     Entry {
-        match_prefixes: &["imazen26-photo-own"],
+        match_prefixes: &[
+            "imazen26-1000-",
+            "imazen26-1200-",
+            "imazen26-1400-",
+            "imazen26-1600-",
+            "imazen26-7000-",
+            "imazen26-9000-",
+            "imazen26-9094-",
+            "imazen26-9226-",
+            "imazen26-photo-own",
+        ],
         policy: &IMAZEN26_OWNED,
     },
     Entry {
-        match_prefixes: &["imazen26-screen-ui"],
+        match_prefixes: &["imazen26-8000-", "imazen26-8100-", "imazen26-screen-ui"],
         policy: &IMAZEN26_SCREENSHOTS,
+    },
+    Entry {
+        match_prefixes: &["imazen26-2000-", "imazen26-2200-", "imazen26-2400-"],
+        policy: &UNSPLASH,
     },
     Entry {
         match_prefixes: &["unsplash"],
@@ -302,4 +333,61 @@ mod tests {
         let q = by_id(p.id);
         assert_eq!(q.id, p.id);
     }
+
+    /// Every stratum of the canonical corpus must resolve to a real policy.
+    ///
+    /// The trial badge is derived with `lookup(source.corpus)` — the
+    /// `license_id` the builder writes into its meta files is not read by
+    /// `coefficient::SourceMeta` at all. So a stratum missing from REGISTRY
+    /// does not fail anything; it silently labels every trial from that
+    /// stratum "Mixed (research only)", which is both wrong and the sort of
+    /// wrong nobody notices.
+    ///
+    /// Keep this list in sync with `scripts/build_demo_corpus.py::R2_STRATA`.
+    #[test]
+    fn every_v3_stratum_has_a_real_policy() {
+        let strata = [
+            "1000-lilith-photos-general",
+            "1200-lilith-interiors",
+            "1400-lilith-nature",
+            "1600-lilith-food",
+            "2000-unsplash-people",
+            "2200-unsplash-renders",
+            "2400-unsplash-textures",
+            "3000-art-institute-of-chicago-photos",
+            "3300-met-museum-photos",
+            "5000-national-park-service-brochures",
+            "5200-epa-climate-impact-2021-report",
+            "5300-noaa-hurricane-documents",
+            "6000-lilith-scans-public-patents",
+            "6600-ia-scans-manuscript-illustrations",
+            "6800-ia-scans-manuscript-text",
+            "7000-lilith-plots",
+            "8000-lilith-mobile-screenshots",
+            "8100-lilith-web-screenshots",
+            "9000-lilith-ai-clipart",
+            "9094-lilith-ai-illustrations",
+            "9226-lilith-ai-products",
+        ];
+        for s in strata {
+            let corpus = format!("imazen26-{s}");
+            let p = lookup(&corpus);
+            assert_ne!(
+                p.id, MIXED_RESEARCH.id,
+                "stratum {corpus} fell through to the research-only fallback; \
+                 add it to REGISTRY"
+            );
+        }
+    }
+
+    /// Spot-check that the grouping is actually right, not merely non-fallback.
+    #[test]
+    fn v3_strata_map_to_the_expected_policies() {
+        assert_eq!(lookup("imazen26-5300-noaa-hurricane-documents").id, "imazen26-usgov-pd");
+        assert_eq!(lookup("imazen26-6800-ia-scans-manuscript-text").id, "imazen26-public-domain");
+        assert_eq!(lookup("imazen26-7000-lilith-plots").id, "imazen26-owned");
+        assert_eq!(lookup("imazen26-8100-lilith-web-screenshots").id, "imazen26-screenshots");
+        assert_eq!(lookup("imazen26-2000-unsplash-people").id, "unsplash");
+    }
+
 }

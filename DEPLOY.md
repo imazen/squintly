@@ -327,6 +327,6 @@ rclone lsf r2:codec-corpus/imazen-26-png-v3 --files-only -R > v3-keys.txt
   `export.rs` buckets still have to be produced by downscaling, exactly as the
   current builder does — do not expect to find natural S/M sources.
 - **Exclude `nope/`** (404 objects) — it is a reject bin, not a stratum.
-- Licensing must be re-derived per stratum before publishing to a public
-  bucket; `unsplash-*`, `met-museum` and `art-institute` are not the same terms
-  as the US-government and operator-owned material.
+- Licensing for imazen-26 is already settled and documented with the corpus
+  (`/mnt/v/imazen-26/PROVENANCE.md` + per-folder files); the builder just maps
+  each stratum onto a policy id in `src/licensing.rs` for the UI badge.

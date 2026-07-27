@@ -104,6 +104,12 @@ railway-deploy: docker-build
     railway variables --set "SQUINTLY_BUILD_COMMIT=$(git rev-parse HEAD)" --skip-deploys
     railway up --detach
 
+# Build the demo corpus from the canonical stratified imazen-26 on R2
+# (codec-corpus/imazen-26-png-v3). Downloads only the selected origins.
+build-corpus per_stratum="1":
+    python3 scripts/build_demo_corpus.py --out demo-corpus \
+        --per-stratum {{per_stratum}} --clean
+
 # Publish the built demo corpus to public R2 as a static coefficient HTTP store.
 # Versioned prefix: publishing never mutates what a running study is reading —
 # roll forward by publishing a new prefix and changing SQUINTLY_COEFFICIENT_HTTP.

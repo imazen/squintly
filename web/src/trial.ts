@@ -128,6 +128,7 @@ export function startTrials(root: HTMLElement, sessionId: string): TrialControll
       // two different parts of the picture.
       clampPan();
       applyPan();
+      viewport.classList.toggle('pannable', isPannable());
       updateHint();
       if (state.shownAt === 0) state.shownAt = performance.now();
     });

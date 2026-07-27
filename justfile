@@ -44,6 +44,25 @@ e2e:
 e2e-zfold:
     cd web && npx playwright test --project=zfold7-cover --project=zfold7-inner
 
+## Interactive UX audit / demo-user driver. `audit-serve` boots the mock
+## coefficient + production binary on ports 18181/18130 (foreground; Ctrl-C
+## to stop); `audit` drives every screen at Z Fold cover/inner + Pixel 7 +
+## desktop, writing screenshots + a findings report to
+## /mnt/v/output/squintly/ux-audit-<date>/ (view at
+## http://localhost:3300/squintly/ux-audit-<date>/REPORT.md).
+audit-serve:
+    cd web && npm install && npm run build
+    cargo build --release --bin squintly
+    mkdir -p ~/tmp/squintly-audit
+    (cd web && COEFFICIENT_PORT=18181 nohup node --import tsx e2e/mock-coefficient.ts > ~/tmp/squintly-audit/mock.log 2>&1 &)
+    sleep 1
+    SQUINTLY_DISABLE_TOWER_MIRROR=1 ./target/release/squintly \
+        --coefficient-http http://127.0.0.1:18181 \
+        --bind 127.0.0.1:18130 --db ~/tmp/squintly-audit/squintly.db
+
+audit:
+    cd web && AUDIT_BASE_URL=http://127.0.0.1:18130 npx tsx scripts/ux-audit.ts
+
 # Run the curator-mode e2e suite plus the live R2 fixture.
 e2e-curator-live:
     cd web && CURATOR_R2_LIVE=1 npx playwright test e2e/curator.spec.ts e2e/curator-r2-live.spec.ts

@@ -165,8 +165,23 @@ p, label { line-height: 1.4; color: var(--fg); }
 .rating-panel button[data-r="4"] .num { color: var(--danger); }
 .rating-panel button[data-r="1"] .num { color: var(--good); }
 
-/* Pair trial: 3 buttons across */
+/* Pair trial: 3 buttons across, big glyph over label like the rating panel
+   (without this the A/B spans run together as "Acloser to original"). */
 .pair-panel { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.pair-panel button {
+  padding: 18px 12px;
+  border-radius: 14px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.95rem;
+}
+.pair-panel button .num {
+  font-size: 1.4rem;
+  font-weight: 700;
+  color: var(--accent);
+}
 
 @media (orientation: landscape) and (min-height: 480px) {
   .rating-panel { grid-template-columns: repeat(4, 1fr); }
@@ -541,9 +556,11 @@ input[type="range"] {
 }
 /* On the Z Fold cover (304 CSS px) the longer screen titles starve the tab
    bar down to sliver-width buttons. The tab bar + screen content identify
-   the mode; drop the title there. */
+   the mode; drop the title there. Action-row labels also need a size step
+   ("Save threshold" clipped its last glyphs at 304px). */
 @media (max-width: 340px) {
   .curator-title { display: none; }
+  .curator-action-row button { font-size: 0.9rem; padding-left: 8px; padding-right: 8px; }
 }
 .curator-tabbar button.on {
   background: var(--accent);
@@ -850,17 +867,22 @@ input[type="range"] {
    and gives curate a side-by-side layout (image left, controls right). */
 @media (min-width: 720px) and (orientation: portrait) {
   .curator-curate {
-    grid-template-columns: 1fr 1fr;
-    grid-template-rows: auto 1fr auto auto auto;
-    gap: 12px;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    /* rows: header · meta · h2 · groups · h2 · help · chips · filler · actions
+       The 1fr filler keeps the right column packed to the top while the
+       preview spans the full left height. */
+    grid-template-rows: auto auto auto auto auto auto auto 1fr auto;
+    gap: 8px 12px;
   }
   .curator-curate .curator-header,
   .curator-curate .curator-action-row { grid-column: 1 / -1; }
-  .curator-curate .curator-preview { grid-row: 2 / 5; max-height: 70vh; }
+  .curator-curate .curator-preview { grid-column: 1; grid-row: 2 / 9; max-height: none; }
   .curator-curate .curator-meta,
   .curator-curate .curator-section,
   .curator-curate .curator-groups,
-  .curator-curate .curator-chips { grid-column: 2 / 3; }
+  .curator-curate .curator-chip-help,
+  .curator-curate .curator-chips,
+  .curator-curate .curator-preview-strip-wrap { grid-column: 2 / 3; }
   .curator-groups { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .credits-table { font-size: 0.9rem; }
 }

@@ -2,7 +2,50 @@
 
 ## [Unreleased]
 
+### Fixed
+- **Narrow-viewport layout: page no longer pans sideways / mis-taps on the
+  Galaxy Z Fold 7 cover display (304 CSS px)** (830221d, 7f37a607, ef0a9e2b).
+  Root cause was mobile Chrome's shrink-to-fit layout viewport: nowrap flex
+  rows (curator header, trial header, status row), bare-`1fr` grids (groups,
+  pair/rating panels, action row), the closed-details license table, an
+  unbreakable blob-URL in an error message, and the thumbnail-strip scroll
+  container all propagated min-content widths past the device width, so the
+  layout viewport widened and taps landed on the wrong controls (the
+  Calibrate tab swallowed the curator exit ×'s taps; `#find-thr` was
+  unreachable). Fixes: `flex-wrap: wrap` on header rows, `minmax(0, 1fr)`
+  columns, `contain: inline-size` on the credits panel + thumbnail strip,
+  `overflow-wrap: anywhere` on URL-bearing lines, title hidden below 340px.
+  Measured and documented: `overflow-x: clip` on the root does NOT prevent
+  the expansion.
+- **Pair-trial buttons rendered "Acloser to original"** — the A/≈/B glyphs
+  now stack above their labels like the rating panel (pair-panel flex-column
+  styling was missing).
+- Stacked (vertical) threshold split below 480 px — side-by-side left each
+  panel ~150 CSS px on the cover display; the `min-width: 1600px` rule that
+  intended this targeted device px and could never fire.
+- e2e harness state moved `/tmp` → `~/tmp`; e2e/dev servers set
+  `SQUINTLY_DISABLE_TOWER_MIRROR=1` (new env kill-switch in `main.rs`) so
+  wiped-per-run test DBs stop writing snapshots to the Tower NAS.
+- Mock coefficient now sends `access-control-allow-origin: *` — the
+  frontend's `crossOrigin=anonymous` canvas loads (threshold split, preview
+  strip) silently failed against it before, painting black.
+
 ### Added
+- **`e2e/layout.spec.ts`** — per-screen guard across all four device
+  projects: layout viewport must equal device width, no horizontal scroll,
+  no element painted past the right edge (deliberate horizontal scrollers
+  exempt).
+- **`web/scripts/ux-audit.ts` + `just audit` / `just audit-serve`** —
+  scripted demo user that walks every screen (welcome → calibration →
+  profile → trials → curator stream/curate/threshold → suggest) at Z Fold 7
+  cover + inner, Pixel 7, and desktop viewports; captures a screenshot per
+  screen and reports horizontal overflow, intercepted taps, and sub-40px tap
+  targets to `/mnt/v/output/squintly/ux-audit-<date>/`.
+- Mock coefficient generates real structured PNGs (rings + gradient +
+  checker) with quality-dependent posterization instead of 1×1 blobs, so
+  trials and threshold screens exercise visible quality differences.
+- 40 px tap targets for the trial menu button and curator exit; credits
+  links padded; tab bars shrink gracefully with ellipsis.
 - **Curator mode** (`docs/CORPUS_CURATOR_SPEC.md`). New `/api/curator/*` HTTP
   surface for corpus development: `stream/next`, `decision`, `threshold`,
   `progress`, `manifest`, `licenses`, `export.tsv`. Migration

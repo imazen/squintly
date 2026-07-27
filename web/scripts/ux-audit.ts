@@ -21,9 +21,10 @@
 //   AUDIT_BASE_URL=http://127.0.0.1:18130 AUDIT_OUT=~/tmp/audit npx tsx ...
 
 import { chromium, type Browser, type Page } from '@playwright/test';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const BASE_URL = process.env.AUDIT_BASE_URL ?? 'http://127.0.0.1:18130';
 const OUT_ROOT = expandHome(
@@ -158,15 +159,55 @@ async function diagnose(page: Page): Promise<Omit<ScreenReport, 'screen' | 'file
   });
 }
 
+/** Wait until the trial stimulus image finished decoding, so screenshots
+ * show pixels rather than a mid-load black viewport. */
+async function waitForStimulus(page: Page): Promise<void> {
+  await page
+    .waitForFunction(
+      () => {
+        const img = document.querySelector<HTMLImageElement>('#stimulus');
+        return !!img && img.complete && img.naturalWidth > 0;
+      },
+      undefined,
+      { timeout: 8_000 },
+    )
+    .catch(() => {});
+  await page.waitForTimeout(150); // one frame for the onload sizing to apply
+}
+
+/** Wait until the threshold split's left canvas holds non-black pixels —
+ * the browser-canvas anchor pre-encode takes a few seconds on big sources. */
+async function waitForThresholdPaint(page: Page): Promise<void> {
+  await page
+    .waitForFunction(
+      () => {
+        const c = document.querySelector<HTMLCanvasElement>('#left');
+        if (!c || c.width < 2) return false;
+        try {
+          const d = c.getContext('2d')!.getImageData(Math.floor(c.width / 2), Math.floor(c.height / 2), 1, 1).data;
+          return d[3] > 0 && d[0] + d[1] + d[2] > 10;
+        } catch {
+          return false;
+        }
+      },
+      undefined,
+      { timeout: 10_000 },
+    )
+    .catch(() => {});
+}
+
 async function snap(
   page: Page,
   dir: string,
   report: ViewportReport,
   index: number,
   screen: string,
+  opts: { fullPage?: boolean } = {},
 ): Promise<void> {
   const file = `${String(index).padStart(2, '0')}-${screen}.png`;
-  await page.screenshot({ path: join(dir, file), fullPage: true });
+  // fullPage stitching renders canvases black in Chromium — threshold shots
+  // use plain viewport capture.
+  await page.screenshot({ path: join(dir, file), fullPage: opts.fullPage ?? true });
   const diag = await diagnose(page);
   report.screens.push({ screen, file, ...diag });
   const overflowNote = diag.horizontalOverflow
@@ -178,6 +219,10 @@ async function snap(
 
 async function auditViewport(browser: Browser, vp: ViewportDef): Promise<ViewportReport> {
   const dir = join(OUT_ROOT, vp.name);
+  // Clear stale shots: screens are captured conditionally (pair trials are
+  // stochastic), so leftovers from a previous run would masquerade as
+  // current state.
+  rmSync(dir, { recursive: true, force: true });
   mkdirSync(dir, { recursive: true });
   const context = await browser.newContext({
     baseURL: BASE_URL,
@@ -240,6 +285,7 @@ async function auditViewport(browser: Browser, vp: ViewportDef): Promise<Viewpor
 
   // ---- Trials: single (reveal held), pair, menu scrim ----
   await page.waitForSelector('.rating-panel, .pair-panel', { timeout: 10000 }).catch(() => {});
+  await waitForStimulus(page);
   await snap(page, dir, report, ++i, 'trial-first');
   if (await page.locator('.rating-panel').count()) {
     await page.locator('#viewport').dispatchEvent('pointerdown');
@@ -263,6 +309,7 @@ async function auditViewport(browser: Browser, vp: ViewportDef): Promise<Viewpor
     await page.waitForSelector('.rating-panel, .pair-panel', { timeout: 10000 }).catch(() => {});
     if (await page.locator('.pair-panel').count()) {
       sawPair = true;
+      await waitForStimulus(page);
       await snap(page, dir, report, ++i, 'trial-pair');
       await page.locator('.pair-panel button[data-c="tie"]').click();
     } else if (await page.locator('.rating-panel').count()) {
@@ -320,8 +367,8 @@ async function auditViewport(browser: Browser, vp: ViewportDef): Promise<Viewpor
 
   await page.locator('#find-thr').click({ timeout: 5000 }).catch(() => {});
   await page.waitForSelector('[data-screen="threshold"]', { timeout: 5000 }).catch(() => {});
-  await page.waitForTimeout(600); // let anchors pre-encode + first paint
-  await snap(page, dir, report, ++i, 'curator-threshold');
+  await waitForThresholdPaint(page); // anchor pre-encode takes a few seconds
+  await snap(page, dir, report, ++i, 'curator-threshold', { fullPage: false });
 
   const q = page.locator('#qslider');
   if (await q.count()) {
@@ -330,8 +377,8 @@ async function auditViewport(browser: Browser, vp: ViewportDef): Promise<Viewpor
       el.dispatchEvent(new Event('input', { bubbles: true }));
       el.dispatchEvent(new Event('change', { bubbles: true }));
     });
-    await page.waitForTimeout(400);
-    await snap(page, dir, report, ++i, 'curator-threshold-q35');
+    await waitForThresholdPaint(page);
+    await snap(page, dir, report, ++i, 'curator-threshold-q35', { fullPage: false });
   }
 
   await context.close();
@@ -367,7 +414,24 @@ function renderMarkdown(reports: ViewportReport[]): string {
 
 async function main(): Promise<void> {
   mkdirSync(OUT_ROOT, { recursive: true });
-  const browser = await chromium.launch();
+  // Load the curator fixture so the curator screens have candidates. The blob
+  // base defaults to the e2e mock-coefficient port.
+  const blobBase = process.env.AUDIT_BLOB_BASE ?? 'http://127.0.0.1:18181';
+  try {
+    const body = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../e2e/curator-fixture.jsonl'), 'utf-8');
+    const r = await fetch(`${BASE_URL}/api/curator/manifest`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ kind: 'jsonl', body, blob_url_base: blobBase }),
+    });
+    console.log(`curator fixture load: ${r.status}`);
+  } catch (e) {
+    console.log(`curator fixture load skipped: ${(e as Error).message}`);
+  }
+  // Software canvas raster: accelerated 2D canvases screenshot as black.
+  const browser = await chromium.launch({
+    args: ['--disable-accelerated-2d-canvas', '--disable-gpu'],
+  });
   const reports: ViewportReport[] = [];
   for (const vp of VIEWPORTS) {
     console.log(`auditing ${vp.name} (${vp.width}×${vp.height})…`);

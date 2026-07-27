@@ -12,3 +12,8 @@
 *.log
 /tmp/
 .DS_Store
+
+# Generated demo corpus (scripts/build_demo_corpus.py). Baked into the Docker
+# image, never committed — image blobs are far over the 30 KB commit limit.
+/demo-corpus/*
+!/demo-corpus/README.md

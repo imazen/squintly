@@ -197,7 +197,15 @@ async fn main() -> Result<()> {
     {
         let db_path = cli.db.clone();
         let tower_root = std::path::Path::new("/mnt/tower/output/squintly-archive");
-        if tower_root.parent().map(|p| p.exists()).unwrap_or(false) {
+        // Kill-switch for throwaway instances (e2e harness, ad-hoc dev
+        // servers): their DBs are wiped per run and must not accumulate
+        // snapshots on the NAS.
+        let mirror_disabled = std::env::var("SQUINTLY_DISABLE_TOWER_MIRROR")
+            .map(|v| !v.is_empty() && v != "0")
+            .unwrap_or(false);
+        if mirror_disabled {
+            tracing::info!("Tower mirror disabled via SQUINTLY_DISABLE_TOWER_MIRROR");
+        } else if tower_root.parent().map(|p| p.exists()).unwrap_or(false) {
             tracing::info!(
                 path = %tower_root.display(),
                 "Tower mount detected; scheduling nightly VACUUM INTO snapshots"

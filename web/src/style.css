@@ -11,6 +11,16 @@
   color-scheme: dark;
 }
 * { box-sizing: border-box; }
+html, body {
+  /* Mobile Chrome widens the layout viewport to the document's widest
+     transient state and never shrinks it back (shrink-to-fit ICB) — one
+     over-wide frame during a screen swap leaves the page permanently
+     pannable sideways. Clipping the root makes expansion impossible.
+     overflow-x: clip (not hidden) avoids creating a scroll container.
+     Real per-screen overflow bugs stay visible to e2e: layout.spec.ts
+     asserts element right-edges, which clipping does not mask. */
+  overflow-x: clip;
+}
 html, body, main {
   margin: 0; padding: 0;
   height: 100%; min-height: 100dvh;
@@ -72,6 +82,7 @@ p, label { line-height: 1.4; color: var(--fg); }
 }
 .progress {
   display: flex;
+  flex-wrap: wrap; /* see .curator-header — keeps min-content off the ICB */
   align-items: center;
   justify-content: space-between;
   padding: 6px 8px;
@@ -88,6 +99,7 @@ p, label { line-height: 1.4; color: var(--fg); }
 }
 .trial-license {
   flex: 1;
+  min-width: 0;
   text-align: center;
   font-size: 0.7rem;
   color: var(--muted);
@@ -132,7 +144,7 @@ p, label { line-height: 1.4; color: var(--fg); }
 /* Rating panel: 4 big buttons in single column on portrait, two rows on landscape */
 .rating-panel {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
 }
 .rating-panel button {
@@ -154,7 +166,7 @@ p, label { line-height: 1.4; color: var(--fg); }
 .rating-panel button[data-r="1"] .num { color: var(--good); }
 
 /* Pair trial: 3 buttons across */
-.pair-panel { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
+.pair-panel { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
 
 @media (orientation: landscape) and (min-height: 480px) {
   .rating-panel { grid-template-columns: repeat(4, 1fr); }
@@ -236,6 +248,11 @@ input[type="range"] {
   border: 1px solid var(--border);
   border-radius: 12px;
   padding: 8px 12px;
+  /* The async-loaded license table must never feed the document's intrinsic
+     width — Chromium includes closed-details speculative layout in it, and
+     mobile viewports expand to fit (shrink-to-fit ICB). Containment sizes
+     this panel purely from its containing block. */
+  contain: inline-size;
 }
 .credits summary {
   cursor: pointer;

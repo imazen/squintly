@@ -65,7 +65,12 @@ export default async function globalSetup() {
       '--db', DB_PATH,
     ],
     {
-      env: { ...process.env, RUST_LOG: 'warn,squintly=info' },
+      env: {
+        ...process.env,
+        RUST_LOG: 'warn,squintly=info',
+        // The e2e DB is wiped per run — never mirror it to the Tower NAS.
+        SQUINTLY_DISABLE_TOWER_MIRROR: '1',
+      },
       stdio: ['ignore', 'inherit', 'inherit'],
     },
   );

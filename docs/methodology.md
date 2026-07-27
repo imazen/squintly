@@ -31,6 +31,17 @@ of the same session interleaving.
 | Reference shown | toggle (hold-to-reveal) | left-of-screen always (TSBPC) or in-place toggle (DSBQS) |
 | Upscaling boost | **none** | TSBPC scales to fill screen height; DSBQS does not |
 | Display ratio | observer's native dpr (intrinsic_to_device_ratio captured per trial) | dpr1 (1 image px = 1 CSS px); upscaled in TSBPC only |
+
+**Display rule (mandatory).** The stimulus is presented at a hard minimum of
+**1:1 device pixels** — one image pixel per physical device pixel, i.e. CSS size
+= intrinsic / dpr. It is never scaled down to fit. A stimulus larger than the
+viewport is explored by **panning**; the pan offset is preserved across the
+encoded↔reference and A↔B swaps so the observer always compares the same region.
+Zooming in beyond 1:1 is permitted; going below it is not, because a display
+downscale means the observer rates the browser's resample rather than the encode
+under test. `intrinsic_to_device_ratio` records this per response and is 1.0 by
+construction; `pan_count`, `pan_distance_css`, `pannable_*` and `visible_*`
+record how much of the stimulus was actually seen.
 | Time limit | none | none |
 | Min interaction before answer | none enforced | min 2 toggles in TSBPC |
 
@@ -137,7 +148,7 @@ Implemented in `src/grading.rs`. Three layers:
 | `rt_too_slow` | dwell_ms > 60_000 | (AFK) |
 | `no_reveal` | pair AND reveal_count == 0 | CID22 disqualifies <2 switches |
 | `golden_fail` | is_golden AND choice ≠ expected_choice | KonIQ 70% floor |
-| `viewport_clipped` | image_displayed_w_css * dpr < 0.5 * intrinsic_w | (observer can't see what they're rating) |
+| `viewport_clipped` | visible area < 0.5 of the stimulus AND `pan_count == 0` | (observer rated a crop they didn't choose) |
 
 ### 4.2 Session-end aggregate (NEW: tightened to CID22 thresholds)
 

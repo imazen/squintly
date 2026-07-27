@@ -3,6 +3,22 @@
 ## [Unreleased]
 
 ### Fixed
+- **Deploys were silently broken for two months** (6a7de807). The Dockerfile
+  never `COPY`ed `build.rs`, so `env!("SQUINTLY_BUILD_COMMIT")` failed to
+  compile in the container and every `railway up` errored while the 2026-05-07
+  image kept serving. `cargo test` / `just ci` build from the working tree
+  where `build.rs` exists, and `railway up --detach` exits 0 regardless, so
+  nothing surfaced it. Fixed with `COPY build.rs` + a build arg;
+  `option_env!(…).unwrap_or("unknown")` so a missing build script degrades
+  provenance instead of bricking compilation; a startup `warn!` when the commit
+  is unknown; and `just railway-deploy` now depends on `just docker-build`.
+- **Curator threshold + preview were broken against the canonical R2 corpus**
+  (dc53f846). The bucket sends no `access-control-allow-origin`, so the
+  `<img crossOrigin="anonymous">` loads those screens need for canvas readback
+  failed outright — measured, not inferred. Candidate bytes now go through a
+  same-origin proxy, `GET /api/curator/blob/{sha256}`, which also sniffs the
+  real image type (R2 answers `application/octet-stream`). The e2e mock is
+  deliberately CORS-less so this can't regress unnoticed.
 - **Narrow-viewport layout: page no longer pans sideways / mis-taps on the
   Galaxy Z Fold 7 cover display (304 CSS px)** (830221d, 7f37a607, ef0a9e2b).
   Root cause was mobile Chrome's shrink-to-fit layout viewport: nowrap flex

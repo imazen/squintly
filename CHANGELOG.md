@@ -79,12 +79,15 @@
   `SQUINTLY_ALLOW_PRIVATE_BLOB_HOSTS=1` there.
 
 ### Added
-- **The rating flow serves real trials** (2661193c, 7c8aea13). A generated
-  imazen-26 store (`scripts/build_demo_corpus.py`) — 32 sources spanning all
-  four size buckets, 512 encodings across `libjpeg-turbo` / `jpegli` /
-  `libwebp` / `libavif`, on a low-q-weighted ladder. Four new `licensing.rs`
-  policies label each trial truthfully (US-gov PD, archival PD,
-  operator-owned, screenshots-research-only).
+- **The rating flow serves real trials** (2661193c, 7c8aea13, ae4aeee8), built
+  from the canonical stratified corpus `codec-corpus/imazen-26-png-v3`:
+  **84 sources across 21 strata** (21 per size bucket), **2016 encodings**
+  across `libjpeg-turbo` / `jpegli` / `libwebp` / `libavif`, low-q-weighted, and
+  **52 of 84 sources non-photo** — plots, screenshots, AI imagery, patent scans
+  and manuscript scans are first-class strata, which is what
+  imazen/squintly#4 needs. Selection reads dimensions out of the filename
+  (2639/2639 keys), so only the chosen origins are downloaded, not 15.5 GiB.
+  Five `licensing.rs` policies label each trial truthfully.
 - **The corpus is hosted on public R2, not baked into the image** (7c8aea13).
   `HttpCoefficient` issues only three GETs and object keys may contain slashes,
   so a public bucket serves the whole store with no server:

@@ -247,52 +247,73 @@ GET <base>/api/sources/<hash>/image
 GET <base>/api/encodings/<id>/image
 ```
 
-Live: `https://codec-corpus.r2.imazen.org/squintly/demo-corpus/imazen26-v1`
-(32 sources, 512 encodings, 4 codecs), selected via
-`SQUINTLY_COEFFICIENT_HTTP`.
+Live: `https://codec-corpus.r2.imazen.org/squintly/demo-corpus/imazen26-v2`,
+selected via `SQUINTLY_COEFFICIENT_HTTP`.
+
+| | v1 | **v2 (live)** |
+|---|---|---|
+| built from | `/mnt/v/imazen-26` folders | `codec-corpus/imazen-26-png-v3` |
+| strata | 7 | **21** |
+| sources | 32 | **84** (21 per size bucket) |
+| encodings | 512 | **2016** |
+| non-photo share | — | **52 / 84** |
 
 ```bash
-# 1. Build the store from /mnt/v/imazen-26 (~10 min).
-python3 scripts/build_demo_corpus.py --out demo-corpus --per-bucket 1 \
-    --qualities 15 30 45 75 --clean
-
-# 2. Publish it under a NEW version prefix.
-just publish-corpus imazen26-v2
-
-# 3. Point the deployment at it (no redeploy of the service needed).
+just build-corpus            # from the canonical R2 corpus
+just publish-corpus imazen26-v3
 railway variables --set \
-  "SQUINTLY_COEFFICIENT_HTTP=https://codec-corpus.r2.imazen.org/squintly/demo-corpus/imazen26-v2"
+  "SQUINTLY_COEFFICIENT_HTTP=https://codec-corpus.r2.imazen.org/squintly/demo-corpus/imazen26-v3"
 ```
 
-**The prefix is versioned on purpose.** Publishing a new corpus never mutates
-what a running study is reading; rolling back is one env var. Corpus changes and
-code deploys are independent — swapping images no longer requires rebuilding
-and redeploying the service.
+**The prefix is versioned on purpose.** Publishing never mutates what a running
+study is reading; rolling back is one env var. Corpus changes and code deploys
+are independent.
 
-`demo-corpus/` stays gitignored (119 MB of image blobs, far past the 30 KB
-commit limit); it is a local build artifact now, not part of the image.
+`demo-corpus/` stays gitignored (image blobs, far past the 30 KB commit limit);
+it is a local build artifact, not part of the image.
+
+### Where the corpus comes from
+
+`codec-corpus/imazen-26-png-v3` is the canonical stratified imazen-26: 21
+numbered strata + a `nope/` reject bin, 2639 objects, 15.5 GiB. Its strata
+separate exactly what imazen/squintly#4 needs and the local folder layout lumps
+together — plots, mobile vs web screenshots, AI clipart/illustrations/products,
+patent scans, manuscript text vs illustrations.
+
+- Dimensions parse from the filename for **2639/2639 keys**
+  (`..._<W>x<H>.sdr.png`), so the selection is made from a key listing and only
+  the chosen origins are downloaded, never the full 15.5 GiB.
+- The distribution is top-heavy (XL 1263, L 1296, M 78, S 2), so all four
+  `export.rs` buckets are produced by downscaling. Within a stratum the largest
+  source is chosen, keeping L/XL true downsamples rather than upscales.
+- `--source local` still builds from `/mnt/v/imazen-26` for offline work.
 
 What the builder guarantees, and why (all from CLAUDE.md):
 
 | Rule | How it is enforced |
 |---|---|
-| All four `export.rs` size buckets (S/M/L/XL) | Each source is emitted at four target dimensions; the script exits non-zero if a bucket ends up empty |
+| All four `export.rs` size buckets (S/M/L/XL) | Each origin is emitted at four target dimensions; the script exits non-zero if a bucket ends up empty |
 | Low-q weighted ladder | Default `15 30 45 60 80 92` — most rungs at/below q60, where web compression actually lives |
-| Non-photo weighted | Documents, archival scans, icons and charts are first-class categories (imazen/squintly#4) |
+| Non-photo weighted | 52 of 84 sources; documents, scans, plots, screenshots and AI imagery are first-class strata |
 | Truthful codec names | `libjpeg-turbo`, `jpegli`, `libwebp`, `libavif` — the actual encoder, never a stand-in |
-| Honest licensing | Four separate policies in `src/licensing.rs`; only public-domain / operator-owned folders are selected by default, because a public bucket redistributes these bytes |
+| A stratum that matches nothing is fatal | Not silent: a missing stratum drops a whole content type out of the study |
 
-Content types are set explicitly at upload: the keys end in `/image` with no
-extension, and R2 serves `application/octet-stream` for anything it wasn't
-told about.
+Licensing for imazen-26 is settled and documented with the corpus
+(`PROVENANCE.md` + per-folder files). The builder only maps each stratum onto a
+policy id in `src/licensing.rs` for the trial badge. **That mapping is easy to
+get silently wrong**: the badge comes from `licensing::lookup(source.corpus)` —
+the `license_id` in the builder's meta files is not read by
+`coefficient::SourceMeta` at all — so a stratum missing from `REGISTRY` labels
+every one of its trials "Mixed (research only)" without failing anything.
+`licensing::tests::every_v3_stratum_has_a_real_policy` is the guard.
+
+Content types are set explicitly at upload: keys end in `/image` with no
+extension, and R2 serves `application/octet-stream` for anything it wasn't told
+about.
 
 `SQUINTLY_COEFFICIENT_HTTP` takes precedence over `SQUINTLY_COEFFICIENT_PATH`
 in `src/main.rs`. A stale value there is why the live site served zero trials
 for months — check it first if the manifest is empty.
-
-Screenshots (`screen-ui`) are excluded from the default selection: they are
-captures of third-party sites, fine for local measurement but a redistribution
-question on a public bucket. Add them with `--include ... screen-ui` locally.
 
 ### Why `codec-corpus` and not `coefficient`
 
@@ -303,30 +324,5 @@ demo corpus into another system's working bucket is how unrelated things start
 breaking each other.
 
 `codec-corpus` is the corpus-images bucket, and squintly already uses it: the
-curator's `manifest.jsonl` and the `suggestions/` store both live there. It also
-already holds `imazen-26-png-v3/` (below).
-
-### The canonical corpus already on R2
-
-`codec-corpus/imazen-26-png-v3/` holds a richer, better-stratified imazen-26
-(21 numbered strata + a `nope/` reject bin, 2639 objects, 15.5 GiB) including
-plots, mobile/web screenshots, AI-generated imagery and patent scans — strata
-the local `/mnt/v/imazen-26` layout does not separate. Moving
-`build_demo_corpus.py` onto it would directly improve imazen/squintly#4
-coverage. **Not done yet**; measured groundwork so the next attempt is short:
-
-```bash
-rclone lsf r2:codec-corpus/imazen-26-png-v3 --files-only -R > v3-keys.txt
-```
-
-- **Dimensions parse from the filename for 2639/2639 keys (100%)** — pattern
-  `..._<W>x<H>.sdr.png`, e.g. `5300_noaa_nhc-verification-report-2024_page1_p01_2550x3300.sdr.png`.
-  A stratified selection can therefore be made from the key listing alone; only
-  the chosen files need downloading, not 15.5 GiB.
-- **Size distribution is top-heavy**: XL 1263, L 1296, M 78, S 2. The four
-  `export.rs` buckets still have to be produced by downscaling, exactly as the
-  current builder does — do not expect to find natural S/M sources.
-- **Exclude `nope/`** (404 objects) — it is a reject bin, not a stratum.
-- Licensing for imazen-26 is already settled and documented with the corpus
-  (`/mnt/v/imazen-26/PROVENANCE.md` + per-folder files); the builder just maps
-  each stratum onto a policy id in `src/licensing.rs` for the UI badge.
+curator's `manifest.jsonl`, the `suggestions/` store and `imazen-26-png-v3/` all
+live there.

@@ -25,7 +25,7 @@ the bulk of web image traffic.
 | | |
 |---|---|
 | Code | Rust+axum backend, Vite+vanilla-TS frontend embedded via `rust-embed`, SQLite via `sqlx`, deploy via Railway + Docker. |
-| Live | **https://squintly-production.up.railway.app** — all four flows work: rating (32 imazen-26 sources / 512 encodings across libjpeg-turbo, jpegli, libwebp, libavif, served straight from public R2 — see [`DEPLOY.md`](DEPLOY.md) §15), curator (903 R2 candidates), calibration, suggest. Confirm which build you are looking at with `curl .../api/export/pareto.manifest.json`. |
+| Live | **https://squintly-production.up.railway.app** — all four flows work: rating (84 imazen-26 sources across 21 strata / 2016 encodings across libjpeg-turbo, jpegli, libwebp, libavif, served straight from public R2 — see [`DEPLOY.md`](DEPLOY.md) §15), curator (903 R2 candidates), calibration, suggest. Confirm which build you are looking at with `curl .../api/export/pareto.manifest.json`. |
 | Study | **v0.2 protocol pre-registered** in [`docs/STUDY.md`](docs/STUDY.md) — H1–H5 hypotheses, holdout discipline, decision rules for zensim v48 ship locked. |
 | Jargon | New to IQA? Start with [`docs/GLOSSARY.md`](docs/GLOSSARY.md) — every term, unit, method, and stat in this README, in plain English, with links to the underlying papers. |
 | Phase | **v0.2 finishing** — ASAP active sampler wired into `next_trial` ([§3 amplifier #1](#3-how-we-amplify-human-effort-15-levers)). Playwright e2e is green across 4 device projects incl. Z Fold 7 cover/inner (117 tests, with a per-screen layout-viewport guard in `e2e/layout.spec.ts`), plus a scripted demo-user audit (`just audit`) screenshotting every screen. Remaining: the same walkthrough on a *physical* phone + nightly per-observer η batch (#9). |

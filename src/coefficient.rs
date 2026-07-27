@@ -107,16 +107,29 @@ pub struct HttpCoefficient {
 }
 
 impl HttpCoefficient {
+    /// `base_url` may carry a path prefix, e.g.
+    /// `https://codec-corpus.r2.imazen.org/squintly/demo-corpus/v1`. That
+    /// matters for object storage: a bucket is shared, so the store lives under
+    /// a versioned prefix rather than squatting the bucket root.
+    ///
+    /// The prefix is preserved by normalising the base to end in `/` and
+    /// joining *relative* paths. `Url::join("/api/manifest")` — a leading slash
+    /// — resolves against the origin and silently discards the prefix, which
+    /// would send every request to the wrong place.
     pub fn new(base_url: &str) -> Result<Self> {
-        let base = url::Url::parse(base_url).with_context(|| format!("invalid url: {base_url}"))?;
+        let mut normalised = base_url.trim_end_matches('/').to_string();
+        normalised.push('/');
+        let base =
+            url::Url::parse(&normalised).with_context(|| format!("invalid url: {base_url}"))?;
         let http = reqwest::Client::builder()
             .user_agent(concat!("squintly/", env!("CARGO_PKG_VERSION")))
             .build()?;
         Ok(Self { base, http })
     }
 
+    /// `path` must be relative (no leading `/`) so any base prefix survives.
     fn url(&self, path: &str) -> Result<url::Url> {
-        Ok(self.base.join(path)?)
+        Ok(self.base.join(path.trim_start_matches('/'))?)
     }
 }
 
@@ -343,5 +356,50 @@ impl Coefficient for FsCoefficient {
             }
         }
         anyhow::bail!("encoding blob {id} not found under {}", dir.display());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A base URL with a path prefix must survive request construction.
+    ///
+    /// R2 buckets are shared, so the store lives under a versioned prefix
+    /// instead of the bucket root. `Url::join` with a leading-slash path
+    /// resolves against the origin and drops that prefix, which pointed every
+    /// request at a 404 while looking perfectly reasonable in the config.
+    #[test]
+    fn http_base_preserves_a_path_prefix() {
+        let c = HttpCoefficient::new("https://codec-corpus.r2.imazen.org/squintly/demo/v1").unwrap();
+        assert_eq!(
+            c.url("/api/manifest").unwrap().as_str(),
+            "https://codec-corpus.r2.imazen.org/squintly/demo/v1/api/manifest"
+        );
+        assert_eq!(
+            c.url("/api/sources/abc/image").unwrap().as_str(),
+            "https://codec-corpus.r2.imazen.org/squintly/demo/v1/api/sources/abc/image"
+        );
+    }
+
+    /// A trailing slash on the configured base must not double up.
+    #[test]
+    fn http_base_tolerates_a_trailing_slash() {
+        let c = HttpCoefficient::new("https://example.test/prefix/").unwrap();
+        assert_eq!(
+            c.url("/api/manifest").unwrap().as_str(),
+            "https://example.test/prefix/api/manifest"
+        );
+    }
+
+    /// Root-hosted bases (a dedicated bucket, or a real coefficient viewer)
+    /// keep working exactly as before.
+    #[test]
+    fn http_base_without_prefix_is_unchanged() {
+        let c = HttpCoefficient::new("http://localhost:8081").unwrap();
+        assert_eq!(
+            c.url("/api/manifest").unwrap().as_str(),
+            "http://localhost:8081/api/manifest"
+        );
     }
 }

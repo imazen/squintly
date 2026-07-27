@@ -102,9 +102,15 @@ railway-vars:
 # every export reports build_commit="unknown".
 railway-deploy: docker-build
     railway variables --set "SQUINTLY_BUILD_COMMIT=$(git rev-parse HEAD)" --skip-deploys
-    # --no-gitignore is REQUIRED: demo-corpus/ is gitignored, and the CLI honours
-    # .gitignore when tarring the upload, so the default silently ships a build
-    # context with no corpus and the site serves manifest_sources=0. The heavy
-    # paths are re-excluded by .railwayignore.
-    railway up --detach --no-gitignore
+    railway up --detach
+
+# Publish the built demo corpus to public R2 as a static coefficient HTTP store.
+# Versioned prefix: publishing never mutates what a running study is reading —
+# roll forward by publishing a new prefix and changing SQUINTLY_COEFFICIENT_HTTP.
+publish-corpus version="imazen26-v1":
+    python3 scripts/publish_corpus_r2.py \
+        --store demo-corpus \
+        --bucket codec-corpus \
+        --prefix squintly/demo-corpus/{{version}} \
+        --public-base https://codec-corpus.r2.imazen.org
     @echo "verify once live:  curl -s https://squintly-production.up.railway.app/api/export/pareto.manifest.json | python3 -c 'import json,sys; print(json.load(sys.stdin)[\"build_commit\"])'"

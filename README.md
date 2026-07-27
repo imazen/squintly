@@ -39,10 +39,14 @@ the bulk of web image traffic.
 # Build the embedded frontend + the binary.
 just build
 
-# 1. Local file-system coefficient store (fastest):
-cargo run -- --coefficient-path /path/to/coefficient/benchmark-results --port 3030
+# 1. Build a real corpus from imazen-26 and serve trials from it
+#    (~10 min; 32 sources across all four size buckets, 4 real codecs).
+#    See DEPLOY.md §15 for what the selection guarantees.
+python3 scripts/build_demo_corpus.py --out ~/tmp/squintly-corpus --clean
+cargo run -- --coefficient-path ~/tmp/squintly-corpus --bind 127.0.0.1:3030
 
-# 2. Or HTTP coefficient store (if one's running):
+# 2. Or point at any other coefficient SplitStore / HTTP viewer:
+cargo run -- --coefficient-path /path/to/coefficient/benchmark-results --port 3030
 cargo run -- --coefficient-http http://localhost:8081 --port 3030
 
 # 3. Open http://localhost:3030 in any browser, on any device.

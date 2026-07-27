@@ -315,6 +315,41 @@ about.
 in `src/main.rs`. A stale value there is why the live site served zero trials
 for months — check it first if the manifest is empty.
 
+### Running a forced-choice (2AFC) validation
+
+`imazen/squintly#4` — validating SSIMULACRA2 as the non-photo oracle — needs
+**pairwise only**. SROCC against a metric is a rank-agreement test on forced
+choice; an ACR rating is a different quantity and pooling the two would mix
+scales in one analysis.
+
+The default deployment is **65% single-stimulus ratings / 35% pairwise**
+(`SamplerConfig::p_single = 0.65`, matching `docs/STUDY.md` §4.2). For a
+validation run:
+
+```bash
+railway variables --set "SQUINTLY_PAIRWISE_ONLY=1"
+```
+
+Setting `SQUINTLY_P_SINGLE=0` is **not** equivalent and will quietly leak
+ratings into the dataset: `pick_trial` falls back to a single whenever a source
+has no non-trivial adjacent pair, and honeypots and anchors are themselves
+single-stimulus and injected ahead of the main draw. `SQUINTLY_PAIRWISE_ONLY`
+suppresses all three and 409s instead of degrading. The startup log states the
+mode; confirm with:
+
+```bash
+for i in $(seq 1 20); do
+  curl -s "$BASE/api/trial/next?session_id=$SID" | python3 -c 'import json,sys;print(json.load(sys.stdin)["kind"])'
+done | sort | uniq -c     # expect: 20 pair
+```
+
+Related knobs, all read once at startup: `SQUINTLY_P_SINGLE`,
+`SQUINTLY_P_HONEYPOT`, `SQUINTLY_P_ANCHOR`.
+
+Still outstanding for that study (issue #4 work item 4, "solo expert mode"):
+fixed `session_weight = 1.0`, honeypots as telemetry rather than
+session-enders, and skipping the qualifier gate. Not implemented.
+
 ### Why `codec-corpus` and not `coefficient`
 
 There is a public `coefficient` bucket, and the name is tempting. Don't use it:

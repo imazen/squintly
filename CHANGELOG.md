@@ -3,6 +3,12 @@
 ## [Unreleased]
 
 ### Fixed
+- **CLAUDE.md claimed "2AFC by default"; the sampler is 65% single-stimulus**
+  (37005db9). `SamplerConfig::p_single = 0.65`, which matches the
+  pre-registered `docs/STUDY.md` §4.2 mix — the doc line was the error, and it
+  had propagated into imazen/squintly#4 as "squintly already defaults to 2AFC …
+  so this is the native path". Corrected in CLAUDE.md, methodology.md, DEPLOY.md
+  and on the issue.
 - **The stimulus was being downscaled to fit, which invalidated the rating**
   (2e386795). `trial.ts` scaled with `Math.min(1, …)`, so any stimulus larger
   than the viewport was resampled by the browser and the observer rated *that*
@@ -90,6 +96,15 @@
   `SQUINTLY_ALLOW_PRIVATE_BLOB_HOSTS=1` there.
 
 ### Added
+- **`SQUINTLY_PAIRWISE_ONLY=1` — forced-choice-only trial stream** (37005db9).
+  Needed for rank-agreement studies (imazen/squintly#4): SROCC against a metric
+  is a 2AFC test and an ACR rating is a different quantity. Strict on purpose —
+  `p_single = 0` alone still leaks ratings, because `pick_trial` falls back to a
+  single when a source has no non-trivial adjacent pair, and honeypots and
+  anchors are themselves single-stimulus and injected ahead of the main draw.
+  The flag suppresses all three and 409s instead of degrading. `p_single`,
+  `p_honeypot` and `p_anchor` are also env-overridable now
+  (`SamplerConfig::from_env`, read once at startup).
 - **The rating flow serves real trials** (2661193c, 7c8aea13, ae4aeee8), built
   from the canonical stratified corpus `codec-corpus/imazen-26-png-v3`:
   **84 sources across 21 strata** (21 per size bucket), **2016 encodings**

@@ -80,6 +80,19 @@ just test
 
 ## Known Bugs
 
+### R2 corpus blobs have no CORS — canvas paths must use the proxy
+
+The canonical bucket (`pub-…​.r2.dev`) serves blobs with **no**
+`access-control-allow-origin` and `content-type: application/octet-stream`
+(measured 2026-07-27). Plain `<img>` display works; anything that reads canvas
+pixels back — the curator threshold encoder, the preview strip — must load via
+the same-origin `GET /api/curator/blob/{sha256}` proxy (`curator::blob_proxy`),
+because `<img crossOrigin="anonymous">` against R2 fails to load outright.
+`web/e2e/mock-coefficient.ts` is deliberately CORS-less so e2e reproduces this;
+two specs in `curator.spec.ts` guard it. Fixing the bucket's CORS config would
+be a fine *additional* step but must not be the only defence — the proxy works
+regardless of who owns the bucket.
+
 ### Live instance serves no trials
 
 `SQUINTLY_COEFFICIENT_HTTP` on Railway is still the `coefficient.example.com`

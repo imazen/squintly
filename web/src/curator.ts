@@ -450,7 +450,7 @@ export function startCurator(root: HTMLElement, onExit: () => void): void {
         .join('');
       let img: HTMLImageElement;
       try {
-        img = await loadImage(cand.blob_url);
+        img = await loadImage(blobProxyUrl(cand.sha256));
       } catch (e) {
         host.innerHTML = `<p class="muted">Couldn't load source: ${escapeHtml(String((e as Error).message))}</p>`;
         return;
@@ -842,7 +842,7 @@ export function startCurator(root: HTMLElement, onExit: () => void): void {
 
     // Async: load the image, pre-encode anchors, and render the default panel.
     try {
-      sourceImg = await loadImage(cand.blob_url);
+      sourceImg = await loadImage(blobProxyUrl(cand.sha256));
       snapshots = await preEncodeAnchors(sourceImg);
       void draw(Number(slider.value));
     } catch (e) {
@@ -1035,6 +1035,21 @@ function paintSplit(
   const rdx = Math.floor((right.width - dstW) / 2);
   const rdy = Math.floor((right.height - dstH) / 2);
   rctx.drawImage(img, sx, sy, rWindowW, rWindowH, rdx, rdy, dstW, dstH);
+}
+
+/**
+ * Same-origin URL for a candidate's bytes.
+ *
+ * Anything that reads canvas pixels back (the threshold encoder, the preview
+ * strip) MUST go through this rather than `candidate.blob_url`: the canonical
+ * R2 bucket sends no `access-control-allow-origin`, so an
+ * `<img crossOrigin="anonymous">` pointed straight at it fails to load at all
+ * (measured 2026-07-27). The backend proxy re-serves the bytes from our origin,
+ * where CORS doesn't apply. Plain display (`<img>` with no crossOrigin, e.g.
+ * the stream screen) works against R2 directly and doesn't need this.
+ */
+function blobProxyUrl(sha256: string): string {
+  return `/api/curator/blob/${encodeURIComponent(sha256)}`;
 }
 
 function loadImage(url: string): Promise<HTMLImageElement> {

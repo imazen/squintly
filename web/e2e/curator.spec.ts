@@ -124,6 +124,57 @@ test.describe('curator mode', () => {
     expect(tsv).toContain('browser-canvas-jpeg');
   });
 
+  test('blob proxy serves candidate bytes same-origin with a sniffed image type', async ({ page, request }) => {
+    const curatorId = await page.evaluate(() => localStorage.getItem('squintly:curator_id'));
+    const next = await (await request.get(`/api/curator/stream/next?curator_id=${curatorId}`)).json();
+    const sha = next.candidate.sha256 as string;
+
+    const blob = await request.get(`/api/curator/blob/${sha}`);
+    expect(blob.ok()).toBeTruthy();
+    // The mock (like the real R2 bucket) answers application/octet-stream; the
+    // proxy must sniff the true type from magic bytes.
+    expect(blob.headers()['content-type']).toMatch(/^image\//);
+    expect((await blob.body()).length).toBeGreaterThan(0);
+
+    // Unknown sha must 404 rather than proxying an arbitrary URL.
+    const bogus = await request.get(`/api/curator/blob/${'0'.repeat(64)}`);
+    expect(bogus.status()).toBe(404);
+  });
+
+  test('threshold canvas paints — canvas-reading paths must not use the CORS-less blob_url', async ({ page }) => {
+    // Regression guard for the 2026-07-27 production bug: the canonical R2
+    // bucket sends no access-control-allow-origin, so an
+    // <img crossOrigin="anonymous"> pointed at candidate.blob_url fails to load
+    // and the threshold screen stays black. The mock is deliberately CORS-less
+    // too, so routing these loads anywhere but /api/curator/blob/{sha} fails here.
+    await page.goto('/');
+    await page.locator('.squintly-tabs button[data-tab="curator"]').click();
+    await expect(page.locator('.curator-corpus')).toBeVisible();
+    await page.locator('#take').click();
+    await expect(page.locator('[data-screen="curate"]')).toBeVisible();
+    await page.locator('#find-thr').click();
+    await expect(page.locator('[data-screen="threshold"]')).toBeVisible();
+
+    await expect
+      .poll(
+        async () =>
+          page.evaluate(() => {
+            const c = document.querySelector<HTMLCanvasElement>('#left');
+            if (!c || c.width < 2) return false;
+            try {
+              const d = c
+                .getContext('2d')!
+                .getImageData(Math.floor(c.width / 2), Math.floor(c.height / 2), 1, 1).data;
+              return d[3] > 0;
+            } catch {
+              return false; // tainted canvas — the exact CORS failure mode
+            }
+          }),
+        { timeout: 20_000, message: 'threshold canvas never painted readable pixels' },
+      )
+      .toBe(true);
+  });
+
   test('exit button returns to welcome with curator progress summary', async ({ page }) => {
     await page.goto('/');
     await page.locator('.squintly-tabs button[data-tab="curator"]').click();

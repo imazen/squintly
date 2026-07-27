@@ -296,6 +296,7 @@ async fn main() -> Result<()> {
         .route("/curator/manifest", post(curator::load_manifest))
         .route("/curator/load-r2-public", post(curator::load_r2_public))
         .route("/curator/backfill-dims", post(curator::backfill_dims))
+        .route("/curator/blob/{sha256}", get(curator::blob_proxy))
         .route("/curator/licenses", get(curator::license_registry))
         .route("/curator/export.tsv", get(curator::export_tsv))
         // Public corpus suggestions / uploads.

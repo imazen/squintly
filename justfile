@@ -94,5 +94,13 @@ railway-vars:
 # Dockerfile, and a Dockerfile-only break (e.g. a missing COPY) is invisible to
 # `cargo test` / `just ci`. That exact gap left main undeployable for two
 # months — see DEPLOY.md §13.
+#
+# The variable is what gives the image real provenance: `.git` is dockerignored
+# so build.rs can't shell out to it, and Railway CLI deploys carry no
+# RAILWAY_GIT_COMMIT_SHA. Railway passes service variables to the Docker build,
+# where the Dockerfile's `ARG SQUINTLY_BUILD_COMMIT` picks it up. Without this
+# every export reports build_commit="unknown".
 railway-deploy: docker-build
+    railway variables --set "SQUINTLY_BUILD_COMMIT=$(git rev-parse HEAD)" --skip-deploys
     railway up --detach
+    @echo "verify once live:  curl -s https://squintly-production.up.railway.app/api/export/pareto.manifest.json | python3 -c 'import json,sys; print(json.load(sys.stdin)[\"build_commit\"])'"

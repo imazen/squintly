@@ -1767,6 +1767,82 @@ fn ct_eq_str(a: &str, b: &str) -> bool {
     diff == 0
 }
 
+/// Sniff an image mime from magic bytes. The canonical R2 bucket serves every
+/// blob as `application/octet-stream`; `<img>` sniffs happily but `<canvas>`
+/// and downstream tooling are better served by the real type.
+fn sniff_image_mime(b: &[u8]) -> &'static str {
+    match b {
+        [0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a, ..] => "image/png",
+        [0xff, 0xd8, 0xff, ..] => "image/jpeg",
+        [b'G', b'I', b'F', b'8', ..] => "image/gif",
+        [b'R', b'I', b'F', b'F', _, _, _, _, b'W', b'E', b'B', b'P', ..] => "image/webp",
+        [_, _, _, _, b'f', b't', b'y', b'p', ..] => "image/avif",
+        [0xff, 0x0a, ..] => "image/jxl",
+        [0x00, 0x00, 0x00, 0x0c, b'J', b'X', b'L', b' ', ..] => "image/jxl",
+        _ => "application/octet-stream",
+    }
+}
+
+/// Same-origin proxy for a candidate's source blob.
+///
+/// Why this exists: the curator's threshold + preview screens must read canvas
+/// pixels back (they JPEG-encode the source in-browser to find
+/// `q_imperceptible`), which requires a CORS-clean image. The canonical R2
+/// bucket (`pub-…​.r2.dev`) sends **no** `access-control-allow-origin` header,
+/// so an `<img crossOrigin="anonymous">` against it fails to load outright —
+/// measured 2026-07-27. Serving the bytes from our own origin sidesteps CORS
+/// entirely and works for any `blob_url_base` (R2, a local mock, whatever a
+/// future store is), instead of depending on bucket configuration we may not
+/// control.
+pub async fn blob_proxy(
+    State(state): State<SharedState>,
+    axum::extract::Path(sha256): axum::extract::Path<String>,
+) -> Result<Response, AppError> {
+    // Only ever proxy URLs we already stored — never an attacker-supplied one.
+    // This is a closed redirect: the sha must name a known candidate.
+    let row = sqlx::query("SELECT blob_url FROM curator_candidates WHERE sha256 = ?1")
+        .bind(&sha256)
+        .fetch_optional(&state.pool)
+        .await?;
+    let Some(row) = row else {
+        return Err(AppError::NotFound(format!("no candidate {sha256}")));
+    };
+    let blob_url: String = row.try_get("blob_url")?;
+
+    let resp = reqwest::Client::new()
+        .get(&blob_url)
+        .send()
+        .await
+        .map_err(|e| AppError::Anyhow(anyhow::anyhow!("fetch {blob_url}: {e}")))?
+        .error_for_status()
+        .map_err(|e| AppError::Anyhow(anyhow::anyhow!("blob HTTP error: {e}")))?;
+    let upstream_mime = resp
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_string();
+    let bytes = resp
+        .bytes()
+        .await
+        .map_err(|e| AppError::Anyhow(anyhow::anyhow!("read blob body: {e}")))?;
+
+    // Prefer a real image type over the bucket's generic octet-stream.
+    let mime = if upstream_mime.starts_with("image/") {
+        upstream_mime
+    } else {
+        sniff_image_mime(&bytes).to_string()
+    };
+
+    let mut headers = header::HeaderMap::new();
+    headers.insert(header::CONTENT_TYPE, header::HeaderValue::from_str(&mime)?);
+    headers.insert(
+        header::CACHE_CONTROL,
+        header::HeaderValue::from_static("public, max-age=86400"),
+    );
+    Ok((StatusCode::OK, headers, bytes).into_response())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

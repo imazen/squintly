@@ -146,10 +146,12 @@ function send(res: ServerResponse, status: number, body: Buffer | string, conten
   res.statusCode = status;
   res.setHeader('content-type', contentType);
   res.setHeader('cache-control', 'public, max-age=300');
-  // The frontend loads blobs with crossOrigin=anonymous (canvas needs
-  // untainted pixels for the threshold encoder); real R2 sends CORS headers,
-  // so the mock must too or every canvas path silently fails in e2e.
-  res.setHeader('access-control-allow-origin', '*');
+  // DELIBERATELY no access-control-allow-origin. The canonical R2 bucket
+  // (pub-….r2.dev) sends none (measured 2026-07-27), so neither do we — a mock
+  // that is more permissive than production hides exactly the bug we hit: any
+  // canvas-reading path pointed straight at a candidate's blob_url fails to
+  // load. Those paths must go through the same-origin /api/curator/blob/{sha}
+  // proxy, and keeping the mock CORS-less is what keeps e2e honest about it.
   res.end(body);
 }
 

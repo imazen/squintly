@@ -39,6 +39,10 @@ pub struct AppState {
     /// Storage backend for public-suggestion uploads. R2 in production,
     /// local-disk fallback for dev/tests. See `src/suggestion_store.rs`.
     pub suggestions: crate::suggestion_store::SuggestionStore,
+    /// Trial mix (single vs pairwise, honeypot/anchor rates). Read from the
+    /// environment once at startup so a validation run can be pure 2AFC
+    /// without a rebuild — see SamplerConfig::from_env.
+    pub sampler: SamplerConfig,
 }
 
 pub type SharedState = Arc<AppState>;
@@ -504,7 +508,7 @@ pub async fn next_trial(
     let flags = state.source_flags.read().await;
     let plan = pick_trial(
         &manifest,
-        &SamplerConfig::default(),
+        &state.sampler,
         allowed.as_ref(),
         Some(&*anchors),
         Some(&*flags),

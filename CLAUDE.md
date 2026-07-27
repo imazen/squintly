@@ -18,8 +18,15 @@ web component from `~/work/efficient-ui/`. No framework.
   the conditions that produced it. We never aggregate them away in storage.
 - **Anonymous only.** No login, no email, no IP logging beyond a hashed bucket. The
   observer ID is a UUID in localStorage.
-- **2AFC by default.** Faster signal-per-second than continuous rating, easier to model
-  via Bradley–Terry. v0.2 may add JND staircase.
+- **Trial mix is 65% single-stimulus rating / 35% pairwise by default** —
+  `SamplerConfig::p_single = 0.65`, matching docs/STUDY.md §4.2 (Type S 70%
+  early / 50% late). This line previously read "2AFC by default", which was
+  simply untrue of the code and misled imazen/squintly#4 into assuming pairwise
+  was the native path.
+  For a rank-agreement study that needs forced choice only, set
+  `SQUINTLY_PAIRWISE_ONLY=1` — it suppresses ratings, honeypots and anchors
+  (all three are single-stimulus) and 409s rather than falling back to a
+  rating. Verified: 40/40 pair.
 - **Source-informing-sweep rule applies.** Sampling MUST cover all 4 size buckets and
   weight low-q encodings. See `src/sampling.rs`.
 

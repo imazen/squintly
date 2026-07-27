@@ -145,6 +145,24 @@ async fn main() -> Result<()> {
     let suggestions =
         squintly::suggestion_store::SuggestionStore::from_env(suggestions_local_default);
 
+    // Trial mix. Logged loudly because a pairwise-only run looks identical to a
+    // normal one from the outside until you read the responses table.
+    let sampler = squintly::sampling::SamplerConfig::from_env();
+    if sampler.pairwise_only {
+        tracing::info!(
+            "PAIRWISE-ONLY mode: single-stimulus ratings, honeypots and anchors are \
+             all suppressed. /api/trial/next returns 409 when no source can produce a \
+             non-trivial pair, rather than falling back to a rating."
+        );
+    } else {
+        tracing::info!(
+            p_single = sampler.p_single,
+            p_honeypot = sampler.p_honeypot,
+            p_anchor = sampler.p_anchor,
+            "trial mix"
+        );
+    }
+
     let state = Arc::new(AppState {
         pool,
         coefficient: coeff,
@@ -152,6 +170,7 @@ async fn main() -> Result<()> {
         anchors: tokio::sync::RwLock::new(anchors),
         source_flags: tokio::sync::RwLock::new(source_flags),
         suggestions,
+        sampler,
     });
 
     // Spawn the nightly observer_grades batch. Fires once on startup so a

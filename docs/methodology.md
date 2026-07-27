@@ -64,6 +64,21 @@ Per session, default `p_single = 0.65`. The single-stimulus (threshold)
 data needs more samples per bucket to converge a staircase, so we bias
 early-session toward singles.
 
+**Overridable per deployment** (`SamplerConfig::from_env`, read once at
+startup): `SQUINTLY_P_SINGLE`, `SQUINTLY_P_HONEYPOT`, `SQUINTLY_P_ANCHOR`.
+
+**`SQUINTLY_PAIRWISE_ONLY=1` — forced-choice only.** Required for a
+rank-agreement study such as validating SSIMULACRA2 as the non-photo oracle
+(imazen/squintly#4): SROCC against a metric needs 2AFC, and an ACR rating is a
+different quantity that must not be pooled into the same analysis.
+
+Setting `p_single = 0` alone is **not** sufficient, and this is the trap:
+`pick_trial` falls back with `try_pair().or_else(try_single)`, so any source
+with no non-trivial adjacent pair still yields a rating; and honeypots and
+anchors are themselves single-stimulus, injected ahead of the main draw. The
+flag suppresses all three and returns `None` — a clean 409 — instead of
+silently degrading. Measured: 40/40 pair against the imazen26-v2 corpus.
+
 ### 3.3 Quality bias
 
 When picking which encoding within a source/codec, we sample the lower

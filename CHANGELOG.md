@@ -3,6 +3,15 @@
 ## [Unreleased]
 
 ### Fixed
+- **The trial hint pill covered the stimulus** (82ad86ba). The
+  "hold to compare with original" / "tap A or B" pill was absolutely positioned
+  inside the viewport, so any image that filled the frame was partly hidden
+  behind it — an occluded stimulus is a measurement problem in a psychovisual
+  study, not a cosmetic one. It now has its own row below the image. Same
+  commit: `.viewport` gets `min-width: 0`, because grid items refuse to shrink
+  below their content's min-content width and a real 2400px stimulus therefore
+  blew the layout viewport open on a 304 CSS px screen. Both were unreachable
+  with 1x1 mock images; `layout.spec.ts` now asserts the geometry directly.
 - **The sampler served exactly one codec for every trial** (2661193c).
   `pick_trial` chose a codec with `by_codec.iter().max_by_key(|(_, v)| v.len())`
   over a `BTreeMap`; on a balanced ladder every codec ties and `max_by_key`
@@ -50,9 +59,10 @@
 - e2e harness state moved `/tmp` → `~/tmp`; e2e/dev servers set
   `SQUINTLY_DISABLE_TOWER_MIRROR=1` (new env kill-switch in `main.rs`) so
   wiped-per-run test DBs stop writing snapshots to the Tower NAS.
-- Mock coefficient now sends `access-control-allow-origin: *` — the
-  frontend's `crossOrigin=anonymous` canvas loads (threshold split, preview
-  strip) silently failed against it before, painting black.
+- Mock coefficient is deliberately **CORS-less**, matching the real R2 bucket.
+  It briefly sent `access-control-allow-origin: *` during this cycle, which
+  made the canvas paths pass locally while they were broken in production —
+  a mock more permissive than production hides the bug it exists to catch.
 
 ### Security
 - **SSRF in the curator's server-side blob fetches** (25d898b7). `POST

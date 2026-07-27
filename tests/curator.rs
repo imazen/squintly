@@ -59,6 +59,10 @@ async fn boot_app() -> Result<(SocketAddr, sqlx::SqlitePool)> {
         .route("/curator/threshold", post(curator::threshold))
         .route("/curator/progress", get(curator::progress))
         .route("/curator/manifest", post(curator::load_manifest))
+        .route(
+            "/curator/candidates/delete",
+            post(curator::delete_candidate),
+        )
         .route("/curator/licenses", get(curator::license_registry))
         .route("/curator/export.tsv", get(curator::export_tsv));
     let app = Router::new().nest("/api", api).with_state(state);
@@ -313,5 +317,74 @@ async fn curator_rejects_invalid_decision() -> Result<()> {
         .send()
         .await?;
     assert_eq!(r.status().as_u16(), 400);
+    Ok(())
+}
+
+/// Deleting a candidate is the one curator operation that destroys other
+/// curators' work, so it is admin-gated — and it must actually remove the row,
+/// not merely mark it decided (a `reject` decision is per-curator_id, so a junk
+/// candidate otherwise keeps surfacing for everyone else).
+#[tokio::test]
+async fn delete_candidate_requires_admin_and_removes_the_row() -> Result<()> {
+    let (addr, _pool) = boot_app().await?;
+    let base = format!("http://{addr}");
+    let client = reqwest::Client::new();
+    let sha = "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789";
+
+    client
+        .post(format!("{base}/api/curator/manifest"))
+        .json(&json!({
+            "kind": "jsonl",
+            "body": JSONL_FIXTURE,
+            "blob_url_base": "https://r2.example"
+        }))
+        .send()
+        .await?
+        .error_for_status()?;
+
+    // No admin token configured in this test process -> 503, never a deletion.
+    let r = client
+        .post(format!("{base}/api/curator/candidates/delete"))
+        .json(&json!({"admin_token": "whatever", "sha256": sha}))
+        .send()
+        .await?;
+    assert_eq!(r.status().as_u16(), 503, "must refuse when unconfigured");
+
+    // SAFETY: single-threaded section of this test; no other task reads it.
+    unsafe { std::env::set_var("SQUINTLY_SUGGESTION_ADMIN_TOKEN", "s3cret") };
+
+    let r = client
+        .post(format!("{base}/api/curator/candidates/delete"))
+        .json(&json!({"admin_token": "wrong", "sha256": sha}))
+        .send()
+        .await?;
+    assert_eq!(r.status().as_u16(), 400, "wrong token must not delete");
+
+    let r = client
+        .post(format!("{base}/api/curator/candidates/delete"))
+        .json(&json!({"admin_token": "s3cret", "sha256": "zz"}))
+        .send()
+        .await?;
+    assert_eq!(r.status().as_u16(), 400, "malformed sha must be rejected");
+
+    let r = client
+        .post(format!("{base}/api/curator/candidates/delete"))
+        .json(&json!({"admin_token": "s3cret", "sha256": sha}))
+        .send()
+        .await?
+        .error_for_status()?;
+    let body: serde_json::Value = r.json().await?;
+    assert_eq!(body["deleted_candidates"], 1);
+
+    // Gone from the stream, not just decided.
+    let r = client
+        .get(format!("{base}/api/curator/stream/next?curator_id=fresh"))
+        .send()
+        .await?;
+    let body: serde_json::Value = r.json().await?;
+    let remaining_sha = body["candidate"]["sha256"].as_str().unwrap_or("");
+    assert_ne!(remaining_sha, sha, "deleted candidate still streaming");
+
+    unsafe { std::env::remove_var("SQUINTLY_SUGGESTION_ADMIN_TOKEN") };
     Ok(())
 }

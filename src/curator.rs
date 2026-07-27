@@ -1770,6 +1770,60 @@ fn ct_eq_str(a: &str, b: &str) -> bool {
     diff == 0
 }
 
+#[derive(Debug, Deserialize)]
+pub struct DeleteCandidateReq {
+    pub admin_token: String,
+    /// Exact sha256 of the candidate to remove.
+    pub sha256: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct DeleteCandidateResp {
+    pub deleted_candidates: u64,
+    pub deleted_decisions: u64,
+}
+
+/// Remove a candidate (and any decisions referencing it) from the pool.
+///
+/// The curator had no way to retract a bad candidate: `POST
+/// /api/curator/manifest` only ever upserts, and a `reject` decision is
+/// per-`curator_id`, so a junk row keeps surfacing for every other curator.
+/// That's an operational gap on any long-lived instance — a broken URL, a
+/// mis-scoped manifest, or a test row posted at the wrong host all stick
+/// forever otherwise.
+///
+/// Admin-gated, unlike the rest of the curator surface: deletion is the one
+/// curator operation that destroys others' work.
+pub async fn delete_candidate(
+    State(state): State<SharedState>,
+    Json(req): Json<DeleteCandidateReq>,
+) -> Result<Json<DeleteCandidateResp>, AppError> {
+    require_curator_admin(&Some(req.admin_token.clone()))?;
+    if req.sha256.len() != 64 || !req.sha256.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err(AppError::BadRequest("sha256 must be 64 hex chars".into()));
+    }
+    let decisions = sqlx::query("DELETE FROM curator_decisions WHERE source_sha256 = ?1")
+        .bind(&req.sha256)
+        .execute(&state.pool)
+        .await?
+        .rows_affected();
+    let candidates = sqlx::query("DELETE FROM curator_candidates WHERE sha256 = ?1")
+        .bind(&req.sha256)
+        .execute(&state.pool)
+        .await?
+        .rows_affected();
+    tracing::info!(
+        sha256 = %req.sha256,
+        candidates,
+        decisions,
+        "curator candidate deleted by admin"
+    );
+    Ok(Json(DeleteCandidateResp {
+        deleted_candidates: candidates,
+        deleted_decisions: decisions,
+    }))
+}
+
 /// Guard every server-side fetch of a candidate `blob_url` against SSRF.
 ///
 /// **`blob_url` is attacker-controlled.** `POST /api/curator/manifest` is

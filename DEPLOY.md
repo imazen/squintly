@@ -62,6 +62,22 @@ railway variables --set "RUST_LOG=info,squintly=info"
 # SQUINTLY_DB and SQUINTLY_BIND default fine; PORT is auto-injected by Railway.
 ```
 
+**Security-relevant, set these on any public deployment:**
+
+```bash
+# Hosts the server is willing to fetch candidate blobs from. Curator write
+# endpoints are unauthenticated, so blob_url is attacker-supplied; without an
+# allowlist the only thing standing between a stranger and your internal
+# network is the resolved-IP check in curator::guard_blob_url.
+railway variables --set \
+  "SQUINTLY_BLOB_HOST_ALLOWLIST=pub-7c5c57fd3e0842f0b147946928891d40.r2.dev"
+```
+
+**Never** set `SQUINTLY_ALLOW_PRIVATE_BLOB_HOSTS=1` in production — it disables
+the private-address check that blocks `169.254.169.254` and friends. It exists
+for local dev and e2e, where the mock coefficient serves blobs from
+`127.0.0.1`.
+
 The Dockerfile already sets `SQUINTLY_BIND=0.0.0.0:3030` and the binary auto-
 overrides the port to whatever Railway puts in `PORT`, so you don't need to
 manage that.

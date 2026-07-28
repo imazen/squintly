@@ -383,11 +383,19 @@ mod tests {
     /// Spot-check that the grouping is actually right, not merely non-fallback.
     #[test]
     fn v3_strata_map_to_the_expected_policies() {
-        assert_eq!(lookup("imazen26-5300-noaa-hurricane-documents").id, "imazen26-usgov-pd");
-        assert_eq!(lookup("imazen26-6800-ia-scans-manuscript-text").id, "imazen26-public-domain");
+        assert_eq!(
+            lookup("imazen26-5300-noaa-hurricane-documents").id,
+            "imazen26-usgov-pd"
+        );
+        assert_eq!(
+            lookup("imazen26-6800-ia-scans-manuscript-text").id,
+            "imazen26-public-domain"
+        );
         assert_eq!(lookup("imazen26-7000-lilith-plots").id, "imazen26-owned");
-        assert_eq!(lookup("imazen26-8100-lilith-web-screenshots").id, "imazen26-screenshots");
+        assert_eq!(
+            lookup("imazen26-8100-lilith-web-screenshots").id,
+            "imazen26-screenshots"
+        );
         assert_eq!(lookup("imazen26-2000-unsplash-people").id, "unsplash");
     }
-
 }

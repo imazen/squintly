@@ -166,10 +166,7 @@ async fn asap_wire_targets_least_decided_pair() -> Result<()> {
     // export bits for this test.
     let api = Router::new()
         .route("/trial/next", get(handlers::next_trial))
-        .route(
-            "/session",
-            axum::routing::post(handlers::create_session),
-        );
+        .route("/session", axum::routing::post(handlers::create_session));
     let app = Router::new().nest("/api", api).with_state(state);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
     let addr = listener.local_addr()?;

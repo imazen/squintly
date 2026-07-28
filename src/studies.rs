@@ -144,7 +144,10 @@ mod tests {
     #[test]
     fn rank_agreement_study_is_strictly_pairwise() {
         let s = by_id("ssim2-nonphoto").expect("study must exist");
-        assert!(s.sampler.pairwise_only, "must set pairwise_only, not just p_single");
+        assert!(
+            s.sampler.pairwise_only,
+            "must set pairwise_only, not just p_single"
+        );
         assert_eq!(s.sampler.p_single, 0.0);
         assert_eq!(s.sampler.p_honeypot, 0.0, "honeypots are single-stimulus");
         assert_eq!(s.sampler.p_anchor, 0.0, "anchors are single-stimulus");

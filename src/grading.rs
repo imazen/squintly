@@ -565,12 +565,24 @@ mod tests {
             intrinsic_w: 2400,
             dpr: 3.0,
         };
-        assert!(compute_response_flags(&base(300.0, 0)).flags.contains(&"viewport_clipped"));
+        assert!(
+            compute_response_flags(&base(300.0, 0))
+                .flags
+                .contains(&"viewport_clipped")
+        );
         // Panning clears it — exploring is the intended behaviour under the
         // 1:1 display rule, not a defect.
-        assert!(!compute_response_flags(&base(300.0, 3)).flags.contains(&"viewport_clipped"));
+        assert!(
+            !compute_response_flags(&base(300.0, 3))
+                .flags
+                .contains(&"viewport_clipped")
+        );
         // Fully visible stimulus is never flagged.
-        assert!(!compute_response_flags(&base(800.0, 0)).flags.contains(&"viewport_clipped"));
+        assert!(
+            !compute_response_flags(&base(800.0, 0))
+                .flags
+                .contains(&"viewport_clipped")
+        );
     }
 
     /// Under mandatory 1:1 the OLD rule (displayed_w * dpr < 0.5 * intrinsic_w)
@@ -682,7 +694,10 @@ mod tests {
         assert!(alice.3 > 0.80, "alice weight: {}", alice.3);
         let alice_golden = alice.4.unwrap();
         // trial-weighted mean: (0.95·30 + 0.90·40) / 70 ≈ 0.921
-        assert!((alice_golden - 0.921).abs() < 0.01, "alice golden: {alice_golden}");
+        assert!(
+            (alice_golden - 0.921).abs() < 0.01,
+            "alice golden: {alice_golden}"
+        );
 
         let bob: (i64, i64, String, f32) = sqlx::query_as(
             "SELECT n_sessions, n_trials, quality_grade, weight \
@@ -712,8 +727,9 @@ mod tests {
         // duplicates from the UNIQUE PK on observer_id.
         let again = rebuild_observer_grades(&pool).await?;
         assert_eq!(again, 2);
-        let count: (i64,) =
-            sqlx::query_as("SELECT COUNT(*) FROM observer_grades").fetch_one(&pool).await?;
+        let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM observer_grades")
+            .fetch_one(&pool)
+            .await?;
         assert_eq!(count.0, 2);
         Ok(())
     }

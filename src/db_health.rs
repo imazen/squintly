@@ -122,7 +122,10 @@ mod tests {
             .await?;
 
         let written = refresh(&pool).await?;
-        assert!(written >= 1, "expected at least one tracked table to be written");
+        assert!(
+            written >= 1,
+            "expected at least one tracked table to be written"
+        );
 
         // observers count should be 2.
         let (n,): (i64,) = sqlx::query_as(
@@ -146,9 +149,18 @@ mod tests {
         // Need a millisecond gap to avoid PK collisions.
         tokio::time::sleep(std::time::Duration::from_millis(2)).await;
         let again = refresh(&pool).await?;
-        assert_eq!(again, written, "second refresh should write the same table count");
-        let (total,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM db_health").fetch_one(&pool).await?;
-        assert_eq!(total as u64, written * 2, "two refreshes should double the row count");
+        assert_eq!(
+            again, written,
+            "second refresh should write the same table count"
+        );
+        let (total,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM db_health")
+            .fetch_one(&pool)
+            .await?;
+        assert_eq!(
+            total as u64,
+            written * 2,
+            "two refreshes should double the row count"
+        );
         Ok(())
     }
 }

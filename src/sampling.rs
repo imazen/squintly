@@ -629,7 +629,7 @@ mod tests {
             effort: None,
             bytes: b,
         };
-        let encs = vec![
+        let encs = [
             make("q20", 20.0, 4_000),
             make("q40", 40.0, 8_000),
             make("q60", 60.0, 14_000),
@@ -835,7 +835,6 @@ mod tests {
         );
     }
 
-
     /// A pairwise-only run must never emit a single-stimulus trial.
     ///
     /// The default path is `try_pair().or_else(try_single)`, and honeypots and
@@ -942,10 +941,21 @@ mod tests {
         let mut allowed = HashSet::new();
         allowed.insert("webp".to_string());
         let singles = (0..50)
-            .filter_map(|_| pick_trial(&manifest, &SamplerConfig::default(), Some(&allowed), None, None))
+            .filter_map(|_| {
+                pick_trial(
+                    &manifest,
+                    &SamplerConfig::default(),
+                    Some(&allowed),
+                    None,
+                    None,
+                )
+            })
             .filter(|p| matches!(p, TrialPlan::Single { .. }))
             .count();
-        assert!(singles > 0, "a one-rung source should fall back to a single");
+        assert!(
+            singles > 0,
+            "a one-rung source should fall back to a single"
+        );
     }
 
     #[test]
@@ -968,5 +978,4 @@ mod tests {
         );
         unsafe { std::env::remove_var("SQUINTLY_P_SINGLE") };
     }
-
 }

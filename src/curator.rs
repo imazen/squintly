@@ -1454,7 +1454,10 @@ pub async fn load_r2_public(
     // a noise row.
     use sha2::Digest;
     let digest = sha2::Sha256::digest(body.as_bytes());
-    let manifest_sha256 = digest.iter().map(|b| format!("{b:02x}")).collect::<String>();
+    let manifest_sha256 = digest
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect::<String>();
     let snapshot_id = uuid::Uuid::new_v4().to_string();
     let now = crate::db::now_ms();
     let existing: Option<(String,)> = sqlx::query_as(
@@ -1943,7 +1946,21 @@ fn sniff_image_mime(b: &[u8]) -> &'static str {
         [0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a, ..] => "image/png",
         [0xff, 0xd8, 0xff, ..] => "image/jpeg",
         [b'G', b'I', b'F', b'8', ..] => "image/gif",
-        [b'R', b'I', b'F', b'F', _, _, _, _, b'W', b'E', b'B', b'P', ..] => "image/webp",
+        [
+            b'R',
+            b'I',
+            b'F',
+            b'F',
+            _,
+            _,
+            _,
+            _,
+            b'W',
+            b'E',
+            b'B',
+            b'P',
+            ..,
+        ] => "image/webp",
         [_, _, _, _, b'f', b't', b'y', b'p', ..] => "image/avif",
         [0xff, 0x0a, ..] => "image/jxl",
         [0x00, 0x00, 0x00, 0x0c, b'J', b'X', b'L', b' ', ..] => "image/jxl",
@@ -2214,7 +2231,7 @@ mod tests {
     fn publicly_routable_rejects_every_internal_range() {
         use std::net::IpAddr;
         for bad in [
-            "127.0.0.1",      // loopback
+            "127.0.0.1",       // loopback
             "169.254.169.254", // cloud metadata — the classic SSRF target
             "10.0.0.5",
             "172.16.0.1",
@@ -2222,8 +2239,8 @@ mod tests {
             "0.0.0.0",
             "100.64.0.1", // CGNAT
             "::1",
-            "fd00::1",  // unique-local
-            "fe80::1",  // link-local
+            "fd00::1",          // unique-local
+            "fe80::1",          // link-local
             "::ffff:127.0.0.1", // v4-mapped loopback
         ] {
             let ip: IpAddr = bad.parse().unwrap();

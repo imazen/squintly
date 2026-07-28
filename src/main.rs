@@ -309,7 +309,10 @@ async fn main() -> Result<()> {
         .route("/curator/load-r2-public", post(curator::load_r2_public))
         .route("/curator/backfill-dims", post(curator::backfill_dims))
         .route("/curator/blob/{sha256}", get(curator::blob_proxy))
-        .route("/curator/candidates/delete", post(curator::delete_candidate))
+        .route(
+            "/curator/candidates/delete",
+            post(curator::delete_candidate),
+        )
         .route("/curator/licenses", get(curator::license_registry))
         .route("/curator/export.tsv", get(curator::export_tsv))
         // Public corpus suggestions / uploads.
@@ -341,6 +344,21 @@ async fn main() -> Result<()> {
         );
     } else {
         tracing::info!(build_commit = handlers::BUILD_COMMIT, "build provenance");
+    }
+    // Sign-in is opt-in and anonymous use never touches it, so an empty
+    // allowlist is a legitimate configuration — but it is silently
+    // indistinguishable from "I set the variable and fat-fingered it", which is
+    // exactly the mistake worth catching at boot rather than in a support
+    // thread. Log what the process actually parsed either way.
+    let allowlist = squintly::auth::LoginAllowlist::from_env();
+    if allowlist.is_empty() {
+        tracing::warn!(
+            "{} is empty — email sign-in will refuse every address. Anonymous use is \
+             unaffected; set it to enable sign-in.",
+            squintly::auth::LoginAllowlist::ENV
+        );
+    } else {
+        tracing::info!(allowlist = %allowlist.describe(), "email sign-in allowlist");
     }
     tracing::info!(addr = %bind, "squintly listening");
     let listener = tokio::net::TcpListener::bind(bind).await?;

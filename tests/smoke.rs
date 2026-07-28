@@ -156,12 +156,11 @@ async fn smoke_full_loop() -> Result<()> {
 
     // The freshly-created session must pin the manifest snapshot we
     // seeded above (the latest snapshot in manifest_snapshots).
-    let (pinned,): (Option<String>,) = sqlx::query_as(
-        "SELECT manifest_snapshot_id FROM sessions WHERE id = ?",
-    )
-    .bind(&session_id)
-    .fetch_one(&pool)
-    .await?;
+    let (pinned,): (Option<String>,) =
+        sqlx::query_as("SELECT manifest_snapshot_id FROM sessions WHERE id = ?")
+            .bind(&session_id)
+            .fetch_one(&pool)
+            .await?;
     assert_eq!(
         pinned.as_deref(),
         Some(snapshot_id.as_str()),

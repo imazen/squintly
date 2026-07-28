@@ -16,8 +16,8 @@ use uuid::Uuid;
 use chrono::NaiveDate;
 
 use crate::auth::{
-    EmailMessage, ResendConfig, TOKEN_TTL_MS, generate_token, hash_token, looks_like_email,
-    send_magic_link,
+    EmailMessage, LoginAllowlist, ResendConfig, TOKEN_TTL_MS, generate_token, hash_token,
+    looks_like_email, send_magic_link,
 };
 use crate::coefficient::{CoefficientSource, EncodingMeta, Manifest};
 use crate::db::now_ms;
@@ -153,11 +153,19 @@ pub async fn create_session(
     let session_id = Uuid::new_v4().to_string();
     let now = now_ms();
 
-    let study = match req.study_id.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+    let study = match req
+        .study_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
         Some(id) => crate::studies::by_id(id).ok_or_else(|| {
             AppError::BadRequest(format!(
                 "unknown study_id {id:?}; known: {:?}",
-                crate::studies::STUDIES.iter().map(|s| s.id).collect::<Vec<_>>()
+                crate::studies::STUDIES
+                    .iter()
+                    .map(|s| s.id)
+                    .collect::<Vec<_>>()
             ))
         })?,
         None => crate::studies::default_study(),
@@ -481,7 +489,11 @@ async fn enhance_pair_with_asap(
                 "tie" => crate::bt::Outcome::Tie,
                 _ => return None,
             };
-            Some(crate::bt::Comparison { a: i, b: j, outcome })
+            Some(crate::bt::Comparison {
+                a: i,
+                b: j,
+                outcome,
+            })
         })
         .collect();
 
@@ -520,8 +532,8 @@ pub async fn next_trial(
         Some((c, s)) => (c, s),
         None => (None, crate::studies::DEFAULT_STUDY_ID.to_string()),
     };
-    let allowed: Option<std::collections::HashSet<String>> = codecs_csv
-        .map(|s| s.split(',').map(str::trim).map(str::to_lowercase).collect());
+    let allowed: Option<std::collections::HashSet<String>> =
+        codecs_csv.map(|s| s.split(',').map(str::trim).map(str::to_lowercase).collect());
 
     // The study owns the trial mix. A session recorded under a study that no
     // longer exists in the binary keeps working on the default rather than
@@ -530,7 +542,10 @@ pub async fn next_trial(
     let sampler = match crate::studies::by_id(&study_id) {
         Some(s) => s.sampler,
         None => {
-            tracing::warn!(study_id, "session references an unknown study; using default mix");
+            tracing::warn!(
+                study_id,
+                "session references an unknown study; using default mix"
+            );
             crate::studies::default_study().sampler
         }
     };
@@ -955,7 +970,10 @@ fn build_export_manifest(kind: ExportKind, body: &str) -> ExportManifest {
     use sha2::Digest;
     let row_count = body.lines().count().saturating_sub(1) as u64;
     let digest = sha2::Sha256::digest(body.as_bytes());
-    let sha256 = digest.iter().map(|b| format!("{b:02x}")).collect::<String>();
+    let sha256 = digest
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect::<String>();
     ExportManifest {
         kind: kind.name(),
         schema_version: schema_version(kind),
@@ -1083,6 +1101,32 @@ pub async fn auth_start(
                 .into(),
         )
     })?;
+
+    // Checked after the mailer config so that a deployment with no Postmark
+    // credentials keeps reporting the more fundamental fact ("this deployment
+    // cannot send mail at all") rather than an authorization verdict.
+    //
+    // The refusal names the address rather than returning a uniform "if an
+    // account exists…". That does let a caller test whether one specific
+    // address is listed, which is an acceptable trade at this size: the list is
+    // an operator roster of a few known addresses, not a user directory, so
+    // there is no membership to enumerate — while a silent accept-then-discard
+    // would leave a legitimate operator staring at "check your email" for a
+    // link that is never coming.
+    let allowlist = LoginAllowlist::from_env();
+    if !allowlist.allows(&email) {
+        tracing::warn!(
+            email = %email,
+            allowlist_configured = !allowlist.is_empty(),
+            "rejected magic-link request: address not on the sign-in allowlist"
+        );
+        return Err(AppError::Forbidden(format!(
+            "{email} is not on this deployment's sign-in allowlist, so no link was sent. \
+             Anonymous use is unaffected — signing in only exists to carry an existing \
+             observer ID to another device. Operators: set {}.",
+            LoginAllowlist::ENV
+        )));
+    }
 
     let token = generate_token();
     let token_hash = hash_token(&token);
@@ -1644,6 +1688,8 @@ pub enum AppError {
     NotFound(String),
     #[error("bad request: {0}")]
     BadRequest(String),
+    #[error("forbidden: {0}")]
+    Forbidden(String),
     #[error("service unavailable: {0}")]
     ServiceUnavailable(String),
 }
@@ -1654,6 +1700,7 @@ impl IntoResponse for AppError {
             AppError::NotFound(s) => (StatusCode::NOT_FOUND, s.clone()),
             AppError::Conflict(s) => (StatusCode::CONFLICT, s.clone()),
             AppError::BadRequest(s) => (StatusCode::BAD_REQUEST, s.clone()),
+            AppError::Forbidden(s) => (StatusCode::FORBIDDEN, s.clone()),
             AppError::ServiceUnavailable(s) => (StatusCode::SERVICE_UNAVAILABLE, s.clone()),
             _ => (StatusCode::INTERNAL_SERVER_ERROR, self.to_string()),
         };

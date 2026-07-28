@@ -59,8 +59,18 @@ export function openSignInModal(onClose?: () => void): void {
       setTimeout(close, 2200);
     } catch (e) {
       const msg = (e as Error).message;
-      // 503 from /api/auth/start ⇒ Resend not configured on this deploy.
-      if (/configured|RESEND/i.test(msg)) {
+      // 403 ⇒ the address isn't on this deployment's sign-in allowlist. That's
+      // a policy, not a fault, so it reads as a warning and says what still
+      // works — the server's own wording carries an operator hint about the
+      // env var, which is noise for a visitor.
+      if (/allowlist/i.test(msg)) {
+        setStatus(
+          'That address can’t sign in to this Squintly. Sign-in is limited to the study’s ' +
+            'operators; anonymous use is unaffected and needs no account.',
+          'var(--warn)',
+        );
+      } else if (/configured|POSTMARK/i.test(msg)) {
+        // 503 ⇒ no Postmark credentials on this deploy.
         setStatus(
           'Email sign-in is not configured on this Squintly. Anonymous use still works.',
           'var(--warn)',

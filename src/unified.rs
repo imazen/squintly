@@ -221,8 +221,16 @@ pub fn fit_unified(
             // The pre-fix `lower.max(-1e6)` patched the lower arm only;
             // when a rating == 4 (upper = +∞), upper·pdf_u was NaN and
             // poisoned `log_sigma_o`.
-            let upper_term = if upper.is_infinite() { 0.0 } else { upper * pdf_u };
-            let lower_term = if lower.is_infinite() { 0.0 } else { lower * pdf_l };
+            let upper_term = if upper.is_infinite() {
+                0.0
+            } else {
+                upper * pdf_u
+            };
+            let lower_term = if lower.is_infinite() {
+                0.0
+            } else {
+                lower * pdf_l
+            };
             let d_log_sigma_o = -(upper_term - lower_term);
             grad_m[i] += inv_pk * d_mu;
             grad_delta[o] += inv_pk * d_mu;
@@ -348,7 +356,10 @@ pub fn rating_log_likelihood(fit: &UnifiedFit, ratings: &[RatingObs]) -> f64 {
             continue;
         }
         let (delta_o, so) = if r.observer < fit.delta.len() {
-            (fit.delta[r.observer], fit.log_sigma_o[r.observer].exp().max(1e-3))
+            (
+                fit.delta[r.observer],
+                fit.log_sigma_o[r.observer].exp().max(1e-3),
+            )
         } else {
             (0.0, 1.0)
         };
@@ -378,11 +389,7 @@ pub fn rating_log_likelihood(fit: &UnifiedFit, ratings: &[RatingObs]) -> f64 {
 /// metric. Held-out LL gain = `total_log_likelihood(unified_fit, held_out)
 /// − total_log_likelihood(bt_only_fit, held_out)`; per-trial nats =
 /// `gain / (pairs.len() + ratings.len())`.
-pub fn total_log_likelihood(
-    fit: &UnifiedFit,
-    pairs: &[PairObs],
-    ratings: &[RatingObs],
-) -> f64 {
+pub fn total_log_likelihood(fit: &UnifiedFit, pairs: &[PairObs], ratings: &[RatingObs]) -> f64 {
     pair_log_likelihood(fit, pairs) + rating_log_likelihood(fit, ratings)
 }
 

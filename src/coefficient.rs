@@ -371,7 +371,8 @@ mod tests {
     /// request at a 404 while looking perfectly reasonable in the config.
     #[test]
     fn http_base_preserves_a_path_prefix() {
-        let c = HttpCoefficient::new("https://codec-corpus.r2.imazen.org/squintly/demo/v1").unwrap();
+        let c =
+            HttpCoefficient::new("https://codec-corpus.r2.imazen.org/squintly/demo/v1").unwrap();
         assert_eq!(
             c.url("/api/manifest").unwrap().as_str(),
             "https://codec-corpus.r2.imazen.org/squintly/demo/v1/api/manifest"

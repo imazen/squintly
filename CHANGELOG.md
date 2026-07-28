@@ -2,6 +2,28 @@
 
 ## [Unreleased]
 
+### Security
+- **Email sign-in is now restricted by `SQUINTLY_LOGIN_ALLOWLIST`** (this
+  change). `/api/auth/start` is unauthenticated by construction — it exists to
+  reach someone who cannot prove who they are yet — and it mailed a link to
+  whatever address the caller named, so any stranger could make the deployment
+  send mail from the operator's verified From address to a recipient of their
+  choosing. That spends sender reputation, which is far dearer than quota. An
+  unset variable now refuses **every** address rather than admitting every
+  address: forgetting it costs a 403 naming the variable, while the opposite
+  default leaves a public mail-sending endpoint open until somebody notices.
+  Entries are `user@host.tld` or `@host.tld` (whole domain, not sub-domains);
+  malformed entries are dropped with a warning instead of being widened.
+  Anonymous use is untouched — sign-in only carries an existing observer ID to
+  a second device.
+
+### Added
+- `POSTMARK_API_BASE` overrides the Postmark origin (default unchanged) so
+  `tests/auth_allowlist.rs` can assert both directions of the allowlist against
+  a local stub. Testing only the refusal would have left an inverted condition
+  undetectable, and the magic-link flow previously had no way to be exercised
+  without sending real mail.
+
 ### Fixed
 - **Pair trials had no way to see the reference** (this change). The screen asks
   which encode is "closer to original" while `startReveal` was gated behind
@@ -13,7 +35,7 @@
   apart. It is a 44px segmented control with a filled active state now.
 
 ### Added
-- **Integer nearest-neighbour magnification (1× / 2× / 4×)**. Zoom in only,
+- **Integer nearest-neighbour magnification (1× / 2× / 4× / 8×)**. Zoom in only,
   never below 1:1. Nearest-neighbour because interpolation synthesises values
   the codec never produced — smoothing exactly the ringing, blocking and
   banding under test; integer factors because a fractional one makes some

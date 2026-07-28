@@ -73,6 +73,24 @@ railway variables --set \
   "SQUINTLY_BLOB_HOST_ALLOWLIST=pub-7c5c57fd3e0842f0b147946928891d40.r2.dev"
 ```
 
+```bash
+# Who may request an email sign-in link. `/api/auth/start` is unauthenticated
+# by construction and mails a link to whatever address the caller names, so
+# leaving it open lets anyone send mail from your verified From address to a
+# recipient they picked — that costs sender reputation, not just quota.
+# Comma- or space-separated; `user@host.tld` matches one address, `@host.tld`
+# matches a whole domain (not its sub-domains).
+railway variables --set "SQUINTLY_LOGIN_ALLOWLIST=lilith@imazen.io"
+```
+
+An **unset or empty `SQUINTLY_LOGIN_ALLOWLIST` refuses every address** — it is
+not a "no restriction" default. That direction is deliberate: forgetting it
+costs a 403 that names the variable, whereas the other default would silently
+leave a public mail-sending endpoint open. Anonymous use never touches this;
+sign-in exists only to carry an existing observer ID to a second device, so a
+deployment with no allowlist is fully functional for observers. The boot log
+prints what it parsed (`email sign-in allowlist`) or warns that it is empty.
+
 **Never** set `SQUINTLY_ALLOW_PRIVATE_BLOB_HOSTS=1` in production — it disables
 the private-address check that blocks `169.254.169.254` and friends. It exists
 for local dev and e2e, where the mock coefficient serves blobs from

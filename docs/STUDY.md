@@ -102,6 +102,11 @@ The factorial we *aim* to fill — actual coverage is shaped by active sampling 
   - Already implemented in `src/staircase.rs` (233 LOC).
 - **Type P** (pairwise + tie, 30 % early / 50 % late):
   - Triplet `(reference, A, B)`; observer answers "A closer / tie / B closer".
+  - The **reference must be viewable** — an A / B / Original segmented control,
+    plus press-and-hold on the image. This protocol always specified a triplet;
+    the implementation did not provide any route to the reference until
+    2026-07-27, which made the question ("closer to original") unanswerable as
+    written and reduced the trial to a preference test.
   - Stored as **Bradley–Terry-Davidson** observation (ties first-class).
   - Already implemented in `src/bt.rs` (240 LOC).
 

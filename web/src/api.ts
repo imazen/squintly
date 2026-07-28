@@ -101,6 +101,8 @@ export interface ResponseReq {
   /// visible, so `image_displayed_*` no longer describes what was looked at.
   pan_count: number;
   pan_distance_css: number;
+  /// Magnification at response time; 1 = native 1:1, integers only.
+  zoom_factor: number;
   pannable_w_css: number;
   pannable_h_css: number;
   visible_w_css: number;

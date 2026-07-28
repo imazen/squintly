@@ -80,7 +80,7 @@ p, label { line-height: 1.4; color: var(--fg); }
      stimulus, so on any image that filled the frame it covered the pixels the
      observer is being asked to judge. Occluding the stimulus is a measurement
      problem, not just a cosmetic one. */
-  grid-template-rows: auto 1fr auto auto;
+  grid-template-rows: auto 1fr auto auto auto;
   /* An implicit `auto` column is sized from its items' content and will happily
      exceed the container: a long corpus·license label in .progress stretched
      the column to 352px inside a 304px screen, pushing the menu button and the
@@ -970,4 +970,61 @@ input[type="range"] {
 .study-style {
   font-size: 0.75rem;
   color: var(--accent);
+}
+
+
+/* ---------- Trial controls: which image, and magnification ----------
+   The A/B indicator used to be small muted text in the hint pill — the only
+   cue for which stimulus you were looking at, in a task that is *entirely*
+   about telling them apart. It is now a segmented control with the active
+   segment filled, at a thumb-sized target.
+
+   "Original" is a first-class option here because pair trials previously had
+   no way to view the reference at all, while asking which encode was closer
+   to it. */
+.trial-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-width: 0;
+}
+.view-switch,
+.zoom-switch {
+  display: flex;
+  gap: 4px;
+  min-width: 0;
+}
+.view-switch button,
+.zoom-switch button {
+  min-height: 44px;
+  padding: 8px 14px;
+  border-radius: 999px;
+  font-size: 1rem;
+  font-weight: 700;
+  min-width: 0;
+  white-space: nowrap;
+}
+.zoom-switch button {
+  font-size: 0.9rem;
+  font-weight: 600;
+  padding: 8px 12px;
+}
+.view-switch button.on,
+.zoom-switch button.on {
+  background: var(--accent);
+  color: #00191f;
+  border-color: var(--accent);
+}
+/* The reference is a different kind of thing from A/B — it is the ground
+   truth, not a candidate — so it reads differently when active. */
+.view-switch button[data-view="ref"].on {
+  background: var(--good);
+  color: #001a08;
+  border-color: var(--good);
+}
+@media (max-width: 340px) {
+  .view-switch button { padding: 8px 10px; font-size: 0.95rem; }
+  .zoom-switch button { padding: 8px 8px; font-size: 0.8rem; }
 }

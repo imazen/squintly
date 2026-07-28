@@ -695,7 +695,7 @@ pub async fn responses_tsv(pool: &SqlitePool) -> Result<String> {
          \tpixels_per_degree\tdevice_pixel_ratio\tscreen_w_css\tscreen_h_css\tcolor_gamut\
          \tdynamic_range_high\tprefers_dark\tviewing_distance_cm\tambient_light\tcss_px_per_mm\
          \tage_bracket\tvision_corrected\tresponded_at\tstudy_id\tpan_count\tpan_distance_css\
-         \tvisible_w_css\tvisible_h_css\n",
+         \tvisible_w_css\tvisible_h_css\tzoom_factor\n",
     );
     let rows = sqlx::query(
         "SELECT t.id, t.session_id, s.observer_id, t.kind, t.source_hash, t.a_encoding_id, \
@@ -706,7 +706,7 @@ pub async fn responses_tsv(pool: &SqlitePool) -> Result<String> {
                 r.pixels_per_degree, s.device_pixel_ratio, s.screen_width_css, s.screen_height_css, \
                 s.color_gamut, s.dynamic_range_high, s.prefers_dark, s.viewing_distance_cm, \
                 s.ambient_light, s.css_px_per_mm, o.age_bracket, o.vision_corrected, r.responded_at, \
-                s.study_id, r.pan_count, r.pan_distance_css, r.visible_w_css, r.visible_h_css \
+                s.study_id, r.pan_count, r.pan_distance_css, r.visible_w_css, r.visible_h_css, r.zoom_factor \
          FROM trials t \
          JOIN responses r ON r.trial_id = t.id \
          JOIN sessions  s ON s.id = t.session_id \
@@ -715,7 +715,7 @@ pub async fn responses_tsv(pool: &SqlitePool) -> Result<String> {
     .fetch_all(pool)
     .await?;
     for row in rows {
-        for i in 0..45 {
+        for i in 0..46 {
             if i > 0 {
                 out.push('\t');
             }

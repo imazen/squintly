@@ -16,6 +16,10 @@ interface TrialState {
   /// whether the observer explored it is part of the response.
   panCount: number;
   panDistanceCss: number;
+  /// Magnification at response time. Integer, >= 1 (never a downscale).
+  /// A judgement at 4x is a different observation from one at 1x — the visual
+  /// angle an artefact subtends differs, which is what this study conditions on.
+  zoomFactor: number;
 }
 
 export interface TrialController {
@@ -26,6 +30,9 @@ export interface TrialController {
 export function startTrials(root: HTMLElement, sessionId: string): TrialController {
   let aborted = false;
   let trialCount = 0;
+  /// Magnification persists across trials in a session — see the note where it
+  /// is applied. Recorded per response, so persistence costs no fidelity.
+  let zoomFactor = 1;
 
   const calib = loadCalibration();
 
@@ -52,6 +59,7 @@ export function startTrials(root: HTMLElement, sessionId: string): TrialControll
       zoomUsed: false,
       panCount: 0,
       panDistanceCss: 0,
+      zoomFactor,
     };
 
     const isPair = trial.kind === 'pair';
@@ -68,7 +76,20 @@ export function startTrials(root: HTMLElement, sessionId: string): TrialControll
         <div class="viewport" id="viewport">
           <img id="stimulus" alt="" decoding="async" />
         </div>
-        <div class="reveal-hint" id="hint">${isPair ? 'tap A or B' : 'hold to compare with original'}</div>
+        <div class="trial-controls">
+          <div class="view-switch" id="view-switch" role="group" aria-label="Which image">
+            ${isPair
+              ? `<button data-view="a" class="on">A</button>
+                 <button data-view="b">B</button>
+                 <button data-view="ref">Original</button>`
+              : `<button data-view="a" class="on">Compressed</button>
+                 <button data-view="ref">Original</button>`}
+          </div>
+          <div class="zoom-switch" id="zoom-switch" role="group" aria-label="Magnification">
+            ${[1, 2, 4].map((z) => `<button data-zoom="${z}" class="${z === 1 ? 'on' : ''}">${z}×</button>`).join('')}
+          </div>
+        </div>
+        <div class="reveal-hint" id="hint"></div>
         <div id="panel"></div>
       </div>
     `;
@@ -97,6 +118,19 @@ export function startTrials(root: HTMLElement, sessionId: string): TrialControll
     const pan = { x: 0, y: 0 }; // CSS px offset from the centred crop
     const panLimit = { x: 0, y: 0 };
     let currentSrc: 'a' | 'b' | 'ref' = 'a';
+    // Which encoding the observer is judging, independent of whether they are
+    // momentarily looking at the reference. Kept separate so flipping to the
+    // original and back cannot lose their place in an A/B comparison.
+    let choiceSrc: 'a' | 'b' = 'a';
+    // Magnification. INTEGER factors only, painted nearest-neighbour
+    // (`image-rendering: pixelated`), so one image pixel becomes an exact N×N
+    // block of device pixels. Interpolating would invent values the codec
+    // never produced, and a fractional factor would size some source pixels
+    // 2 device px and others 3 — fabricated structure, in a study whose whole
+    // subject is which structure is real. Persisted across trials within the
+    // session: re-zooming every trial is hostile, and the factor is recorded
+    // per response anyway.
+    let zoom = zoomFactor;
 
     const clampPan = () => {
       pan.x = Math.max(-panLimit.x, Math.min(panLimit.x, pan.x));
@@ -112,8 +146,8 @@ export function startTrials(root: HTMLElement, sessionId: string): TrialControll
     };
 
     img.addEventListener('load', () => {
-      const cssW = img.naturalWidth / dpr;
-      const cssH = img.naturalHeight / dpr;
+      const cssW = (img.naturalWidth * zoom) / dpr;
+      const cssH = (img.naturalHeight * zoom) / dpr;
       img.style.width = `${cssW}px`;
       img.style.height = `${cssH}px`;
       img.style.maxWidth = 'none'; // the stylesheet's max-width:100% would re-shrink it
@@ -136,24 +170,88 @@ export function startTrials(root: HTMLElement, sessionId: string): TrialControll
 
     const isPannable = () => panLimit.x > 0.5 || panLimit.y > 0.5;
 
-    let isB = false;
+    const viewSwitch = root.querySelector<HTMLDivElement>('#view-switch')!;
+    const zoomSwitch = root.querySelector<HTMLDivElement>('#zoom-switch')!;
+
+    const markActive = (host: HTMLElement, attr: string, value: string) => {
+      host.querySelectorAll<HTMLButtonElement>('button').forEach((b) => {
+        b.classList.toggle('on', b.dataset[attr] === value);
+      });
+    };
+
     function updateHint() {
-      if (currentSrc === 'ref') {
-        hint.textContent = 'showing original';
-        return;
-      }
-      const explore = isPannable() ? ' · drag to explore' : '';
-      hint.textContent = isPair ? `${isB ? 'B' : 'A'}${explore}` : `hold to compare with original${explore}`;
+      const bits: string[] = [];
+      if (isPannable()) bits.push('drag to explore');
+      if (!isPair) bits.push('or hold the image to compare');
+      hint.textContent = bits.join(' · ');
     }
 
-    // Hold-to-reveal: while held, show reference. On release, show the encoding.
+    /// Show a given image. The pan offset is deliberately untouched: switching
+    /// between A, B and the original must hold the observer on the same region,
+    /// or they are comparing different parts of the picture.
+    const showView = (which: 'a' | 'b' | 'ref') => {
+      if (which !== 'ref') choiceSrc = which;
+      setSrc(which);
+      markActive(viewSwitch, 'view', which);
+      updateHint();
+    };
+
+    viewSwitch.querySelectorAll<HTMLButtonElement>('button').forEach((b) => {
+      b.addEventListener('click', () => {
+        const v = b.dataset.view as 'a' | 'b' | 'ref' | undefined;
+        if (!v) return;
+        if (v === 'ref') state.revealCount += 1;
+        showView(v);
+      });
+    });
+
+    const applyZoom = (next: number) => {
+      if (next === zoom) return;
+      // Keep whatever is centred, centred: at 1×→2× the same feature sits
+      // twice as far from centre, so the offset scales with it.
+      const ratio = next / zoom;
+      pan.x *= ratio;
+      pan.y *= ratio;
+      zoom = next;
+      zoomFactor = next;
+      state.zoomUsed = true;
+      state.zoomFactor = next;
+      markActive(zoomSwitch, 'zoom', String(next));
+      // Mid-swap the image reports naturalWidth 0; sizing from that collapses
+      // the element and zeroes the pan limits. The load handler re-runs this
+      // with real dimensions, so skipping here is safe and avoids the flash.
+      if (img.naturalWidth === 0) return;
+      // Re-run the load sizing against the new factor.
+      const cssW = (img.naturalWidth * zoom) / dpr;
+      const cssH = (img.naturalHeight * zoom) / dpr;
+      img.style.width = `${cssW}px`;
+      img.style.height = `${cssH}px`;
+      const rect = viewport.getBoundingClientRect();
+      panLimit.x = Math.max(0, (cssW - rect.width) / 2);
+      panLimit.y = Math.max(0, (cssH - rect.height) / 2);
+      clampPan();
+      applyPan();
+      viewport.classList.toggle('pannable', isPannable());
+      updateHint();
+    };
+
+    zoomSwitch.querySelectorAll<HTMLButtonElement>('button').forEach((b) => {
+      b.addEventListener('click', () => {
+        const z = Number(b.dataset.zoom);
+        if (Number.isFinite(z) && z >= 1) applyZoom(z);
+      });
+    });
+    markActive(zoomSwitch, 'zoom', String(zoom));
+
+    // Press-and-hold on the image is a shortcut for "show me the original",
+    // available in BOTH trial types. Pair trials previously had no way to see
+    // the reference at all, while asking which encode was "closer to original".
     const startReveal = () => {
       if (currentSrc === 'ref') return;
       state.revealStartedAt = performance.now();
       state.revealCount += 1;
       root.querySelector('.trial')?.classList.add('revealing');
-      setSrc('ref');
-      updateHint();
+      showView('ref');
     };
     const endReveal = () => {
       if (state.revealStartedAt !== null) {
@@ -161,13 +259,12 @@ export function startTrials(root: HTMLElement, sessionId: string): TrialControll
         state.revealStartedAt = null;
       }
       root.querySelector('.trial')?.classList.remove('revealing');
-      setSrc(isB ? 'b' : 'a');
-      updateHint();
+      showView(choiceSrc);
     };
 
-    // Drag pans; a press that doesn't move is still a tap/hold. Both gestures
-    // share the viewport, so movement past a small threshold is what separates
-    // them — otherwise every pan would also toggle A/B or fire a reveal.
+    // Drag pans; a press that doesn't move is a tap/hold. Movement past a small
+    // threshold separates them, otherwise every pan would also fire a reveal or
+    // flip A/B.
     const DRAG_THRESHOLD_CSS = 6;
     let pointerId: number | null = null;
     let startX = 0;
@@ -182,11 +279,7 @@ export function startTrials(root: HTMLElement, sessionId: string): TrialControll
       startX = lastX = e.clientX ?? 0;
       startY = lastY = e.clientY ?? 0;
       dragging = false;
-      // Single-stimulus reveal is a press-and-hold, so it starts immediately;
-      // panning while revealed is intentional (explore the reference).
-      // Ordered before the capture call, and the capture is guarded: a throw
-      // from setPointerCapture must never cost the observer the reveal.
-      if (!isPair) startReveal();
+      startReveal();
       try {
         viewport.setPointerCapture(e.pointerId);
       } catch {
@@ -223,15 +316,7 @@ export function startTrials(root: HTMLElement, sessionId: string): TrialControll
       } catch {
         /* already released */
       }
-      if (!isPair) {
-        endReveal();
-      } else if (!dragging) {
-        // Pair trials toggle A↔B on tap. On pointerUP, not down, so a drag
-        // that starts on the image pans instead of flipping the stimulus.
-        isB = !isB;
-        setSrc(isB ? 'b' : 'a');
-        updateHint();
-      }
+      endReveal();
       dragging = false;
       viewport.classList.remove('panning');
     };
@@ -291,6 +376,7 @@ export function startTrials(root: HTMLElement, sessionId: string): TrialControll
         zoom_used: state.zoomUsed,
         pan_count: state.panCount,
         pan_distance_css: Math.round(state.panDistanceCss),
+        zoom_factor: state.zoomFactor,
         ...panGeometry(img, viewport),
         ...cond,
       });

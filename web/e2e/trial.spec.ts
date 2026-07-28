@@ -188,4 +188,106 @@ test.describe('trial loop', () => {
       held.transform,
     );
   });
+
+  /// A pair trial asks which encode is "closer to original". For that question
+  /// to mean anything the observer has to be able to SEE the original — and
+  /// for a while they could not: `startReveal` was gated behind `!isPair` and
+  /// nothing else reached the reference, which quietly turned a reference
+  /// comparison into a preference test.
+  test('pair trials can show the reference, and A/B/Original are distinct', async ({ page }) => {
+    await gotoFresh(page);
+    // The forced-choice study guarantees a pair trial.
+    await page.locator('.study-option[data-study="ssim2-nonphoto"]').click();
+    await clickBegin(page);
+    await page.getByRole('button', { name: /^Skip$/ }).click();
+    await completeProfileAndStart(page);
+    await page.waitForSelector('.pair-panel', { timeout: 15_000 });
+
+    const settle = () =>
+      page.waitForFunction(
+        () => {
+          const i = document.querySelector<HTMLImageElement>('#stimulus');
+          return !!i && i.complete && i.naturalWidth > 0;
+        },
+        undefined,
+        { timeout: 15_000 },
+      );
+    const srcNow = async () => {
+      await settle();
+      return page.evaluate(() => document.querySelector<HTMLImageElement>('#stimulus')!.src);
+    };
+
+    await expect(page.locator('.view-switch button[data-view="ref"]')).toBeVisible();
+    const a = await srcNow();
+    await page.locator('.view-switch button[data-view="b"]').click();
+    const b = await srcNow();
+    await page.locator('.view-switch button[data-view="ref"]').click();
+    const ref = await srcNow();
+
+    expect(a, 'A and B must be different encodings').not.toBe(b);
+    expect(ref, 'the reference must differ from A').not.toBe(a);
+    expect(ref, 'the reference must differ from B').not.toBe(b);
+    expect(ref, 'the reference should be the source proxy').toContain('/api/proxy/source/');
+  });
+
+  /// Magnification is integer-only and nearest-neighbour, and never goes below
+  /// 1:1. A fractional factor would size some source pixels 2 device px and
+  /// others 3 — fabricated structure in a study about which structure is real.
+  test('zoom magnifies by exact integers, never below 1:1', async ({ page }) => {
+    await gotoFresh(page);
+    await clickBegin(page);
+    await page.getByRole('button', { name: /^Skip$/ }).click();
+    await completeProfileAndStart(page);
+    await page.waitForSelector('.rating-panel, .pair-panel', { timeout: 15_000 });
+    await page
+      .waitForFunction(
+        () => {
+          const i = document.querySelector<HTMLImageElement>('#stimulus');
+          return !!i && i.complete && i.naturalWidth > 0 && i.style.width !== '';
+        },
+        undefined,
+        { timeout: 15_000 },
+      )
+      .catch(() => {});
+
+    const measure = () =>
+      page.evaluate(() => {
+        const i = document.querySelector<HTMLImageElement>('#stimulus')!;
+        return {
+          devicePxPerImagePx:
+            (i.getBoundingClientRect().width * window.devicePixelRatio) / i.naturalWidth,
+          rendering: getComputedStyle(i).imageRendering,
+        };
+      });
+
+    for (const z of [1, 2, 4]) {
+      await page.locator(`.zoom-switch button[data-zoom="${z}"]`).click();
+      await page.waitForTimeout(150);
+      const m = await measure();
+      expect(
+        Math.abs(m.devicePxPerImagePx - z),
+        `at ${z}x each image pixel must cover exactly ${z} device px`,
+      ).toBeLessThan(0.02);
+      expect(m.devicePxPerImagePx, 'never below 1:1').toBeGreaterThanOrEqual(0.98);
+      expect(m.rendering, 'must be nearest-neighbour, not interpolated').toBe('pixelated');
+    }
+  });
+
+  /// The A/B indicator was small muted text in a hint pill — the only cue for
+  /// which stimulus you were looking at, in a task entirely about telling them
+  /// apart. It is a segmented control with a thumb-sized target now.
+  test('the active view is labelled prominently', async ({ page }) => {
+    await gotoFresh(page);
+    await clickBegin(page);
+    await page.getByRole('button', { name: /^Skip$/ }).click();
+    await completeProfileAndStart(page);
+    await page.waitForSelector('.rating-panel, .pair-panel', { timeout: 15_000 });
+
+    const active = page.locator('.view-switch button.on');
+    await expect(active).toHaveCount(1);
+    const box = (await active.boundingBox())!;
+    expect(box.height, 'the view label must be a thumb-sized target').toBeGreaterThanOrEqual(40);
+    const size = await active.evaluate((el) => parseFloat(getComputedStyle(el).fontSize));
+    expect(size, 'the active-view label must not be tiny').toBeGreaterThanOrEqual(14);
+  });
 });

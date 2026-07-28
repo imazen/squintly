@@ -32,6 +32,28 @@ of the same session interleaving.
 | Upscaling boost | **none** | TSBPC scales to fill screen height; DSBQS does not |
 | Display ratio | observer's native dpr (intrinsic_to_device_ratio captured per trial) | dpr1 (1 image px = 1 CSS px); upscaled in TSBPC only |
 
+**Magnification rule.** Observers may zoom **in** — never out. Magnification is
+restricted to **integer factors** (1×, 2×, 4×) painted **nearest-neighbour**
+(`image-rendering: pixelated`), so one image pixel becomes an exact N×N block of
+device pixels.
+
+Both constraints are about not inventing evidence:
+
+* *Nearest-neighbour, not interpolation.* Bilinear/Lanczos upscaling synthesises
+  intermediate values the codec never produced. It smooths ringing, softens
+  blocking edges and fills in banding — precisely the artefacts under test. A
+  magnifier must enlarge the evidence, not redraw it.
+* *Integer factors only.* At a fractional factor some source pixels cover 2
+  device pixels while their neighbours cover 3. That beat pattern is structure
+  the observer can see which does not exist in the encode — a fabricated
+  artefact, in a study whose entire subject is which artefacts are real.
+
+`responses.zoom_factor` records the magnification per response (migration 0014,
+default 1.0). It is not a cosmetic preference: an artefact judged at 4×
+subtends four times the visual angle, and visual angle is the quantity this
+study conditions on. Zoom persists across trials within a session for
+usability, and is recorded per response so that costs no fidelity.
+
 **Display rule (mandatory).** The stimulus is presented at a hard minimum of
 **1:1 device pixels** — one image pixel per physical device pixel, i.e. CSS size
 = intrinsic / dpr. It is never scaled down to fit. A stimulus larger than the

@@ -3,6 +3,23 @@
 ## [Unreleased]
 
 ### Fixed
+- **Pair trials had no way to see the reference** (this change). The screen asks
+  which encode is "closer to original" while `startReveal` was gated behind
+  `!isPair` and nothing else reached the source — a preference test wearing a
+  reference comparison's label. There is now an A / B / **Original** segmented
+  control, and press-and-hold works in both trial types.
+- **The A/B indicator was small muted text** in the hint pill — the only cue for
+  which stimulus you were looking at, in a task entirely about telling them
+  apart. It is a 44px segmented control with a filled active state now.
+
+### Added
+- **Integer nearest-neighbour magnification (1× / 2× / 4×)**. Zoom in only,
+  never below 1:1. Nearest-neighbour because interpolation synthesises values
+  the codec never produced — smoothing exactly the ringing, blocking and
+  banding under test; integer factors because a fractional one makes some
+  source pixels cover 2 device px and neighbours 3, a visible beat pattern that
+  is not in the encode. `responses.zoom_factor` (migration 0014) records it per
+  response: an artefact judged at 4× subtends four times the visual angle.
 - **CLAUDE.md claimed "2AFC by default"; the sampler is 65% single-stimulus**
   (37005db9). `SamplerConfig::p_single = 0.65`, which matches the
   pre-registered `docs/STUDY.md` §4.2 mix — the doc line was the error, and it

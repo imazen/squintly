@@ -677,6 +677,10 @@ pub async fn next_trial(
     Ok(Json(payload))
 }
 
+fn one() -> f64 {
+    1.0
+}
+
 #[derive(Debug, Deserialize)]
 pub struct ResponseReq {
     pub choice: String,
@@ -700,6 +704,10 @@ pub struct ResponseReq {
     pub visible_w_css: f64,
     #[serde(default)]
     pub visible_h_css: f64,
+    /// Magnification at response time; 1.0 = native 1:1. Integers only, and
+    /// never below 1 — the display rule forbids downscaling.
+    #[serde(default = "one")]
+    pub zoom_factor: f64,
     pub viewport_w_css: i64,
     pub viewport_h_css: i64,
     pub orientation: String,
@@ -764,8 +772,8 @@ pub async fn record_response(
          zoom_used, viewport_w_css, viewport_h_css, orientation, image_displayed_w_css, \
          image_displayed_h_css, intrinsic_to_device_ratio, pixels_per_degree, response_flags, \
          responded_at, pan_count, pan_distance_css, pannable_w_css, pannable_h_css, \
-         visible_w_css, visible_h_css) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+         visible_w_css, visible_h_css, zoom_factor) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&trial_id)
     .bind(&req.choice)
@@ -788,6 +796,7 @@ pub async fn record_response(
     .bind(req.pannable_h_css)
     .bind(req.visible_w_css)
     .bind(req.visible_h_css)
+    .bind(req.zoom_factor.max(1.0))
     .execute(&state.pool)
     .await?;
 

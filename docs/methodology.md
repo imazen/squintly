@@ -33,7 +33,7 @@ of the same session interleaving.
 | Display ratio | observer's native dpr (intrinsic_to_device_ratio captured per trial) | dpr1 (1 image px = 1 CSS px); upscaled in TSBPC only |
 
 **Magnification rule.** Observers may zoom **in** — never out. Magnification is
-restricted to **integer factors** (1×, 2×, 4×) painted **nearest-neighbour**
+restricted to **integer factors** (1×, 2×, 4×, 8×) painted **nearest-neighbour**
 (`image-rendering: pixelated`), so one image pixel becomes an exact N×N block of
 device pixels.
 

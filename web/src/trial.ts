@@ -86,7 +86,7 @@ export function startTrials(root: HTMLElement, sessionId: string): TrialControll
                  <button data-view="ref">Original</button>`}
           </div>
           <div class="zoom-switch" id="zoom-switch" role="group" aria-label="Magnification">
-            ${[1, 2, 4].map((z) => `<button data-zoom="${z}" class="${z === 1 ? 'on' : ''}">${z}×</button>`).join('')}
+            ${[1, 2, 4, 8].map((z) => `<button data-zoom="${z}" class="${z === 1 ? 'on' : ''}">${z}×</button>`).join('')}
           </div>
         </div>
         <div class="reveal-hint" id="hint"></div>
@@ -184,6 +184,8 @@ export function startTrials(root: HTMLElement, sessionId: string): TrialControll
       if (isPannable()) bits.push('drag to explore');
       if (!isPair) bits.push('or hold the image to compare');
       hint.textContent = bits.join(' · ');
+      // An empty pill is just a stray blob of chrome under the controls.
+      hint.hidden = bits.length === 0;
     }
 
     /// Show a given image. The pan offset is deliberately untouched: switching

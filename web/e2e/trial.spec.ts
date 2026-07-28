@@ -260,7 +260,7 @@ test.describe('trial loop', () => {
         };
       });
 
-    for (const z of [1, 2, 4]) {
+    for (const z of [1, 2, 4, 8]) {
       await page.locator(`.zoom-switch button[data-zoom="${z}"]`).click();
       await page.waitForTimeout(150);
       const m = await measure();

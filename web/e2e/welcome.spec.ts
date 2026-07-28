@@ -6,9 +6,13 @@ test.describe('welcome screen', () => {
   test('renders the make-the-web-faster framing copy', async ({ page }) => {
     await gotoFresh(page);
     await expect(page.getByRole('heading', { name: /Image Discrimination Study/ })).toBeVisible();
-    await expect(page.getByText(/make the web faster/i)).toBeVisible();
-    await expect(page.getByText(/perceptual quality metric/i)).toBeVisible();
-    await expect(page.getByText(/No login required/i)).toBeVisible();
+    // Scoped to the screen's own paragraphs: the study picker's summary for the
+    // main study paraphrases this copy, so an unscoped getByText matches twice
+    // and fails on strict mode rather than on the copy being absent.
+    const intro = page.locator('[data-screen="welcome"] > p');
+    await expect(intro.filter({ hasText: /make the web faster/i })).toBeVisible();
+    await expect(intro.filter({ hasText: /perceptual quality metric/i })).toBeVisible();
+    await expect(intro.filter({ hasText: /No login required/i })).toBeVisible();
     await expect(page.getByRole('button', { name: /^Begin$/ })).toBeEnabled();
   });
 

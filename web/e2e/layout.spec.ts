@@ -96,7 +96,33 @@ test.describe('no horizontal overflow on any screen', () => {
       const i = img.getBoundingClientRect();
       const h = hint.getBoundingClientRect();
       const v = vp.getBoundingClientRect();
-      const overlaps = !(h.bottom <= i.top || h.top >= i.bottom || h.right <= i.left || h.left >= i.right);
+      // Test the hint against the *visible* stimulus, not the image's layout
+      // box. Under the 1:1 display rule a 3000x2200 source lays out far outside
+      // its frame (measured: top -112, bottom 726, against a viewport of
+      // 68..546) and `.viewport` clips it. Intersecting against the raw image
+      // rect therefore reported the hint as covering pixels that are not on
+      // screen at all — the hint sits below the frame, in its own grid row.
+      // Same trap as grading.rs's viewport_clipped, which went vacuous when
+      // downscale-to-fit became pan-at-1:1.
+      const seen = {
+        top: Math.max(i.top, v.top),
+        bottom: Math.min(i.bottom, v.bottom),
+        left: Math.max(i.left, v.left),
+        right: Math.min(i.right, v.right),
+      };
+      const stimulusVisible = seen.bottom > seen.top && seen.right > seen.left;
+      // A hidden pill has a zero rect at the origin; that is absence, not an
+      // overlap, so don't let it intersect anything.
+      const hintShown = !hint.hidden && h.width > 0 && h.height > 0;
+      const overlaps =
+        hintShown &&
+        stimulusVisible &&
+        !(
+          h.bottom <= seen.top ||
+          h.top >= seen.bottom ||
+          h.right <= seen.left ||
+          h.left >= seen.right
+        );
       return {
         viewportRight: v.right,
         viewportOverflowHidden: getComputedStyle(vp).overflow !== 'visible',

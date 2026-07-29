@@ -17,8 +17,8 @@ use chrono::NaiveDate;
 
 use crate::auth::{
     EmailAllowlist, EmailMessage, RateLimit, RateVerdict, ResendConfig, SESSION_TTL_MS,
-    TOKEN_TTL_MS, client_ip, generate_token, hash_ip, hash_token, looks_like_email, rate_verdict,
-    send_magic_link, session_cookie, session_from_cookie_header,
+    SendFailure, TOKEN_TTL_MS, client_ip, generate_token, hash_ip, hash_token, looks_like_email,
+    rate_verdict, send_magic_link, session_cookie, session_from_cookie_header,
 };
 use crate::coefficient::{CoefficientSource, EncodingMeta, Manifest};
 use crate::db::now_ms;
@@ -1206,14 +1206,28 @@ pub async fn auth_start(
         req.origin.trim_end_matches('/'),
         token
     );
-    send_magic_link(
+    if let Err(e) = send_magic_link(
         &cfg,
         EmailMessage {
             to: &email,
             link_url: &link,
         },
     )
-    .await?;
+    .await
+    {
+        // A recipient the mail provider won't deliver to is the caller's
+        // problem, not a server fault — telling someone who typo'd their
+        // address that the site is broken sends them to the wrong place.
+        if e.downcast_ref::<SendFailure>().is_some() {
+            tracing::warn!(email = %email, "mail provider refused the recipient");
+            return Err(AppError::BadRequest(format!(
+                "{email} was refused by our mail provider — it usually means the address \
+                 doesn't exist or has previously bounced. Check the spelling, or use a \
+                 different address. Anonymous use is unaffected."
+            )));
+        }
+        return Err(e.into());
+    }
 
     Ok(Json(AuthStartResp {
         ok: true,

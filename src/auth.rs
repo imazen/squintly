@@ -429,9 +429,36 @@ pub async fn send_magic_link(cfg: &MailerConfig, msg: EmailMessage<'_>) -> Resul
     if !resp.status().is_success() {
         let status = resp.status();
         let text = resp.text().await.unwrap_or_default();
+        if is_recipient_rejection(&text) {
+            return Err(SendFailure::RecipientRejected(text).into());
+        }
         anyhow::bail!("Postmark rejected the send ({status}): {text}");
     }
     Ok(())
+}
+
+/// Postmark refused the *recipient*, not the request.
+///
+/// Worth separating because it is the caller's problem to fix, not ours. This
+/// only became reachable in practice once sign-in opened to any address:
+/// before, a suppressed or non-existent address could not get as far as the
+/// mailer, and every Postmark failure really was a server fault. Reporting a
+/// dead address as a 500 tells someone who typo'd their email that the site is
+/// broken.
+#[derive(Debug, thiserror::Error)]
+pub enum SendFailure {
+    #[error("{0}")]
+    RecipientRejected(String),
+}
+
+/// Postmark `ErrorCode` 406 is "inactive recipient" — an address it has
+/// suppressed after a hard bounce or a spam complaint. 300 is a malformed
+/// recipient. Both mean the address will never receive this mail.
+fn is_recipient_rejection(body: &str) -> bool {
+    serde_json::from_str::<serde_json::Value>(body)
+        .ok()
+        .and_then(|v| v.get("ErrorCode").and_then(|c| c.as_i64()))
+        .is_some_and(|code| code == 406 || code == 300)
 }
 
 #[cfg(test)]
@@ -509,6 +536,30 @@ mod tests {
             EmailAllowlist::parse("b@x.test, a@x.test, @y.test").describe(),
             "a@x.test, b@x.test, @y.test"
         );
+    }
+
+    /// A refused *recipient* must be distinguishable from a refused *request*.
+    /// Only reachable in practice since sign-in opened to any address, and
+    /// misreporting it tells someone who mistyped their email that the site is
+    /// down.
+    #[test]
+    fn a_refused_recipient_is_told_apart_from_a_server_fault() {
+        // Postmark 406: inactive recipient (hard bounce or spam complaint).
+        assert!(is_recipient_rejection(
+            r#"{"ErrorCode":406,"Message":"You tried to send to a recipient that has been marked as inactive."}"#
+        ));
+        // 300: malformed recipient.
+        assert!(is_recipient_rejection(
+            r#"{"ErrorCode":300,"Message":"Invalid 'To' address"}"#
+        ));
+        // 10: a bad server token is our problem, not the recipient's.
+        assert!(!is_recipient_rejection(
+            r#"{"ErrorCode":10,"Message":"Bad or missing API token"}"#
+        ));
+        // Anything unparseable stays a server fault rather than being blamed on
+        // the address.
+        assert!(!is_recipient_rejection("<html>502 Bad Gateway</html>"));
+        assert!(!is_recipient_rejection(""));
     }
 
     // ---------- rate limiting ----------

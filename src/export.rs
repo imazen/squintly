@@ -695,7 +695,8 @@ pub async fn responses_tsv(pool: &SqlitePool) -> Result<String> {
          \tpixels_per_degree\tdevice_pixel_ratio\tscreen_w_css\tscreen_h_css\tcolor_gamut\
          \tdynamic_range_high\tprefers_dark\tviewing_distance_cm\tambient_light\tcss_px_per_mm\
          \tage_bracket\tvision_corrected\tresponded_at\tstudy_id\tpan_count\tpan_distance_css\
-         \tvisible_w_css\tvisible_h_css\tzoom_factor\n",
+         \tvisible_w_css\tvisible_h_css\tzoom_factor\tobserver_disposition\tobserver_r_s\
+         \tobserver_outlier_rate\texclusion_enforced\n",
     );
     let rows = sqlx::query(
         "SELECT t.id, t.session_id, s.observer_id, t.kind, t.source_hash, t.a_encoding_id, \
@@ -706,16 +707,24 @@ pub async fn responses_tsv(pool: &SqlitePool) -> Result<String> {
                 r.pixels_per_degree, s.device_pixel_ratio, s.screen_width_css, s.screen_height_css, \
                 s.color_gamut, s.dynamic_range_high, s.prefers_dark, s.viewing_distance_cm, \
                 s.ambient_light, s.css_px_per_mm, o.age_bracket, o.vision_corrected, r.responded_at, \
-                s.study_id, r.pan_count, r.pan_distance_css, r.visible_w_css, r.visible_h_css, r.zoom_factor \
+                s.study_id, r.pan_count, r.pan_distance_css, r.visible_w_css, r.visible_h_css, r.zoom_factor, \
+                d.disposition, d.r_s, d.outlier_rate, d.policy_enabled \
          FROM trials t \
          JOIN responses r ON r.trial_id = t.id \
          JOIN sessions  s ON s.id = t.session_id \
-         JOIN observers o ON o.id = s.observer_id",
+         JOIN observers o ON o.id = s.observer_id \
+         LEFT JOIN observer_dispositions d ON d.observer_id = s.observer_id",
     )
     .fetch_all(pool)
     .await?;
+    // Every response is emitted regardless of disposition — the screen is
+    // recorded on the row, never enforced by omission. A consumer that wants
+    // the screened subset filters on `observer_disposition`; one that wants the
+    // unscreened numbers ignores the column. Dropping rows here would make the
+    // two impossible to produce from one export, which is the whole point of
+    // carrying a disposition instead of deleting data.
     for row in rows {
-        for i in 0..46 {
+        for i in 0..50 {
             if i > 0 {
                 out.push('\t');
             }

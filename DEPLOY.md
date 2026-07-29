@@ -371,6 +371,47 @@ curl -s $BASE/api/studies | python3 -m json.tool     # what's offered
 railway variables --set "SQUINTLY_DEFAULT_STUDY=main"  # default for new sessions
 ```
 
+### Participant exclusion (default on/off per study)
+
+Screening follows zenpapers `docs/iqa-methods/reference-book/`
+`ch3-5_sampling_screening_cis.md` Ch. 4. Two screens run per observer, per
+study:
+
+* **§4.4** — Pearson correlation between the observer's ratings and the
+  per-stimulus mean over *other* observers. The chapter calls this "your first
+  sieve" on an un-gated run and reports flagging at `r_s < 0.25`.
+* **§4.2.1** — BT.500 kurtosis-2: `β₂ = m₄/m₂²` over the observer's own scores
+  picks a `2σ` band when `2 ≤ β₂ ≤ 4`, else `√20 σ`; then count how often they
+  fall outside `μ_e ± band·σ_e` taken over other observers.
+
+**The screens always run and are always recorded; the switch only decides
+whether anyone acts on the verdict.** That is deliberate — §4.2.2 is explicit
+that BT.500-style hard reject "loses all data from rejected subjects" and draws
+a sharp accept/reject boundary, which is why SUREAL-style soft weighting
+supersedes it. So `responses.tsv` carries every row plus an
+`observer_disposition` column, and one export can produce both the screened and
+the unscreened numbers.
+
+| study | default | why |
+|---|---|---|
+| `main` | **on** | anonymous, un-gated crowd — the regime §4.4 says the sieve is for |
+| `ssim2-nonphoto` | **off** | few expert observers; §4.6 puts the modelling under-identified below ~15 subjects |
+
+```bash
+railway variables --set "SQUINTLY_EXCLUSION=off"   # on|off|1|0|true|false; overrides every study
+```
+
+An unparseable value keeps the study default and warns rather than guessing.
+Boot logs one `participant exclusion policy` line per study.
+
+`insufficient_data` is a third disposition and is **not** a synonym for
+`included`: it means there were too few peers on those stimuli to screen at
+all. A single-expert run lands there for everyone by construction — with no
+peers there is nothing to be an outlier against — so solo runs need no special
+casing to avoid being excluded wholesale. Dispositions are rebuilt nightly
+alongside `observer_grades`, and can change without the observer doing anything
+new, because they depend on who else has rated the same stimuli.
+
 - `sessions.study_id` (migration 0013) records the choice; every trial and
   response inherits it, and `responses.tsv` carries `study_id` — without it the
   two studies are indistinguishable after the fact.

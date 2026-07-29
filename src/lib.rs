@@ -16,6 +16,7 @@ pub mod coefficient;
 pub mod curator;
 pub mod db;
 pub mod db_health;
+pub mod exclusion;
 pub mod export;
 pub mod grading;
 pub mod handlers;

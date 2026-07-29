@@ -37,6 +37,26 @@
 - Added `GET /api/auth/whoami` and `POST /api/auth/signout`.
 
 ### Added
+- **Participant exclusion disposition** (`src/exclusion.rs`, migration 0016),
+  following zenpapers `ch3-5_sampling_screening_cis.md` Ch. 4: §4.4 correlation
+  to the per-stimulus mean over *other* observers, and §4.2.1's BT.500
+  kurtosis-2 band (`2σ` when `2 ≤ β₂ ≤ 4`, else `√20 σ`). The screens **record**
+  a verdict and never delete a rating — §4.2.2 is explicit that hard reject
+  "loses all data from rejected subjects" and draws a sharp boundary, which is
+  why soft per-subject weighting supersedes it. `responses.tsv` gains
+  `observer_disposition`, `observer_r_s`, `observer_outlier_rate` and
+  `exclusion_enforced` (schema_version 2 → 3), so one export yields both the
+  screened and the unscreened numbers.
+  - Default is per study (`Study::exclusion_default`) and overridable with
+    `SQUINTLY_EXCLUSION`: on for `main` (un-gated crowd, the regime §4.4's
+    sieve is for), off for `ssim2-nonphoto` (§4.6 puts the modelling
+    under-identified below ~15 subjects).
+  - `insufficient_data` is a distinct verdict from `included`. A solo expert
+    has no peers to be an outlier against, so they land there by construction
+    rather than being excluded wholesale — no special-casing needed.
+  - BT.500's own rejection ratio is marked `[unverified]` in the corpus, so
+    `outlier_rate_ceiling` is an explicit configurable rather than a number
+    invented here and presented as ITU-R.
 - `POSTMARK_API_BASE` overrides the Postmark origin (default unchanged) so
   `tests/auth_allowlist.rs` can assert both directions of the allowlist against
   a local stub. Testing only the refusal would have left an inverted condition

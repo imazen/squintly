@@ -907,7 +907,7 @@ fn schema_version(kind: ExportKind) -> u32 {
         // the pan/visible-area telemetry that the 1:1 display rule made
         // necessary. Appended rather than inserted so positional consumers
         // keep working; the bump is here so strict ones can refuse.
-        ExportKind::Responses => 2,
+        ExportKind::Responses => 3,
         ExportKind::Unified => 1,
     }
 }
@@ -1925,8 +1925,9 @@ mod tests {
     fn responses_schema_version_reflects_the_appended_columns() {
         assert_eq!(
             schema_version(ExportKind::Responses),
-            2,
-            "study_id + pan/visible telemetry were added; bump when columns change"
+            3,
+            "v2 added study_id + pan/visible telemetry; v3 appends the participant \
+             exclusion disposition. Bump whenever columns change."
         );
         assert_eq!(schema_version(ExportKind::Pareto), 1, "pareto is unchanged");
     }

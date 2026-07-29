@@ -16,8 +16,14 @@ web component from `~/work/efficient-ui/`. No framework.
   it never writes back. Aggregated TSVs are the export channel.
 - **Viewing conditions are first-class data, not telemetry.** Every response row carries
   the conditions that produced it. We never aggregate them away in storage.
-- **Anonymous only.** No login, no email, no IP logging beyond a hashed bucket. The
-  observer ID is a UUID in localStorage.
+- **Anonymous by default; sign-in is optional and adds nothing to a trial.** The
+  observer ID is a UUID in localStorage and taking part never requires an
+  account. Email sign-in exists only so someone can carry that ID to a second
+  device (`src/auth.rs`), and is open to any address — an allowlist there would
+  lock participants out of their own data. `SQUINTLY_ADMIN_EMAILS` gates *admin*
+  instead, where unset grants nobody. Client addresses are never stored: only a
+  salted BLAKE3 bucket, used for the sign-in rate limit. (This invariant used to
+  read "No login, no email", which stopped being true once `auth.rs` landed.)
 - **Studies are selected at runtime; the trial mix belongs to the study.**
   `src/studies.rs` — `main` (65% single-stimulus / 35% pairwise, matching
   docs/STUDY.md §4.2) and `ssim2-nonphoto` (forced choice only, for
@@ -28,6 +34,16 @@ web component from `~/work/efficient-ui/`. No framework.
   Note `p_single = 0` does NOT give a forced-choice run: the sampler falls back
   to a single when no non-trivial pair exists, and honeypots and anchors are
   themselves single-stimulus. Use the study (or `SQUINTLY_PAIRWISE_ONLY=1`).
+- **Participant exclusion is a recorded disposition, never a delete.**
+  `src/exclusion.rs` runs the zenpapers Ch. 4 screens (§4.4 peer-mean
+  correlation, §4.2.1 BT.500 kurtosis-2 band) and writes
+  `observer_dispositions`; `responses.tsv` carries the verdict per row. The
+  screens run regardless of the switch — `Study::exclusion_default` /
+  `SQUINTLY_EXCLUSION` only decide whether consumers act on `excluded`. §4.2.2
+  is why: hard reject loses all data from rejected subjects and draws a sharp
+  boundary, so soft weighting (which `grading.rs` already does) supersedes it.
+  `insufficient_data` ≠ `included`; a solo expert lands there because there are
+  no peers to be an outlier against.
 - **Source-informing-sweep rule applies.** Sampling MUST cover all 4 size buckets and
   weight low-q encodings. See `src/sampling.rs`.
 

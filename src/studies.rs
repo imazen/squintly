@@ -38,6 +38,14 @@ pub struct Study {
     /// Hidden from the public picker. Still selectable by id — for operator or
     /// single-observer runs that shouldn't be offered to drive-by visitors.
     pub unlisted: bool,
+    /// Whether an `excluded` participant disposition is *acted on* by default.
+    ///
+    /// The screens always run and are always recorded (see `exclusion.rs`);
+    /// this only decides whether consumers drop the flagged data. It belongs to
+    /// the study because the right answer depends on who is rating: an
+    /// un-gated crowd wants the sieve, a handful of experts has no peer
+    /// distribution to be an outlier against. `SQUINTLY_EXCLUSION` overrides.
+    pub exclusion_default: bool,
     #[serde(skip)]
     pub sampler: SamplerConfig,
 }
@@ -54,6 +62,10 @@ pub const STUDIES: &[Study] = &[
                   Trains zensim, an open-source perceptual quality metric.",
         trial_style: "A mix of single-image ratings and A/B comparisons.",
         unlisted: false,
+        // Anonymous, un-gated crowd. ch3-5 §4.4 calls correlation-to-peer-mean
+        // "your first sieve" precisely for this regime; §4.3.2 notes the
+        // screens barely move a *pre-screened* pipeline, which this is not.
+        exclusion_default: true,
         sampler: SamplerConfig {
             p_single: 0.65,
             p_honeypot: 0.083,
@@ -68,6 +80,12 @@ pub const STUDIES: &[Study] = &[
                   line-art, charts — the way a human does? Every trial is a forced choice.",
         trial_style: "A/B comparisons only. No star ratings.",
         unlisted: false,
+        // A rank-agreement check run by a few careful observers. ch3-5 §4.6:
+        // below ~15 subjects the modelling is under-identified, and with few
+        // peers per stimulus the reference distribution the BT.500 band needs
+        // is noise. Screening still runs and is recorded; it just isn't acted
+        // on unless someone asks for it.
+        exclusion_default: false,
         sampler: SamplerConfig {
             // Forced choice only. `p_single: 0.0` alone would NOT be enough —
             // see SamplerConfig::pairwise_only for why (fallback to single, and

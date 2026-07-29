@@ -178,6 +178,24 @@ async fn main() -> Result<()> {
                     Ok(n) => tracing::info!(observers = n, "rebuilt observer_grades"),
                     Err(e) => tracing::warn!(error = %e, "observer_grades rebuild failed"),
                 }
+                // Participant exclusion runs beside the soft grade, not instead
+                // of it: the screens compare each observer against their peers,
+                // so the verdict can change as other people rate the same
+                // stimuli even when this observer has done nothing new.
+                match squintly::exclusion::rebuild_dispositions(&pool, |study| {
+                    squintly::exclusion::ExclusionPolicy::for_study(
+                        squintly::studies::by_id(study)
+                            .map(|s| s.exclusion_default)
+                            .unwrap_or(false),
+                    )
+                })
+                .await
+                {
+                    Ok(n) => tracing::info!(observers = n, "rebuilt observer_dispositions"),
+                    Err(e) => {
+                        tracing::warn!(error = %e, "observer_dispositions rebuild failed")
+                    }
+                }
                 tokio::time::sleep(std::time::Duration::from_secs(24 * 3600)).await;
             }
         });
@@ -361,6 +379,18 @@ async fn main() -> Result<()> {
         );
     } else {
         tracing::info!(admins = %admins.describe(), "admin roster");
+    }
+    // Whether an `excluded` disposition is acted on. Logged per study because
+    // it changes every aggregate downstream, and because the env override is
+    // silent by design once it has been applied.
+    for st in squintly::studies::STUDIES {
+        let p = squintly::exclusion::ExclusionPolicy::for_study(st.exclusion_default);
+        tracing::info!(
+            study = st.id,
+            enforced = p.enabled,
+            study_default = st.exclusion_default,
+            "participant exclusion policy"
+        );
     }
     let rl = squintly::auth::RateLimit::from_env();
     tracing::info!(

@@ -1370,7 +1370,10 @@ pub fn filter_candidates(
 /// the operator's machine.
 #[derive(Debug, Deserialize)]
 pub struct LoadR2Req {
-    pub admin_token: String,
+    /// Optional: a signed-in admin (`SQUINTLY_ADMIN_EMAILS`) needs no token.
+    /// Required only for scripts and `curl`, which have no cookie jar.
+    #[serde(default)]
+    pub admin_token: Option<String>,
     /// Public-read base, e.g. `https://pub-….r2.dev`. Trailing slashes ok.
     pub r2_public_base: String,
     /// Optional manifest path (default `manifest.jsonl`).
@@ -1404,9 +1407,10 @@ pub struct LoadR2Resp {
 
 pub async fn load_r2_public(
     State(state): State<SharedState>,
+    headers: axum::http::HeaderMap,
     Json(req): Json<LoadR2Req>,
 ) -> Result<Json<LoadR2Resp>, AppError> {
-    require_curator_admin(&Some(req.admin_token.clone()))?;
+    require_admin(&state.pool, &headers, &req.admin_token).await?;
     let base = req.r2_public_base.trim_end_matches('/').to_string();
     let manifest_path = req.manifest_path.as_deref().unwrap_or("manifest.jsonl");
     let url = format!("{base}/{manifest_path}");
@@ -1519,7 +1523,10 @@ pub async fn load_r2_public(
 /// per call so we can chunk a 1000-row backfill across several invocations.
 #[derive(Debug, Deserialize)]
 pub struct BackfillDimsReq {
-    pub admin_token: String,
+    /// Optional: a signed-in admin (`SQUINTLY_ADMIN_EMAILS`) needs no token.
+    /// Required only for scripts and `curl`, which have no cookie jar.
+    #[serde(default)]
+    pub admin_token: Option<String>,
     pub limit: Option<i64>,
     /// Bytes to range-fetch per blob (default 262_144 = 256 KB; jpeg/png/webp/
     /// avif headers fit comfortably in the first few KB but some progressive
@@ -1550,9 +1557,10 @@ pub struct BackfillDimsReqMode {
 
 pub async fn backfill_dims(
     State(state): State<SharedState>,
+    headers: axum::http::HeaderMap,
     Json(req): Json<BackfillDimsReq>,
 ) -> Result<Json<BackfillDimsResp>, AppError> {
-    require_curator_admin(&Some(req.admin_token.clone()))?;
+    require_admin(&state.pool, &headers, &req.admin_token).await?;
     let limit = req.limit.unwrap_or(500).clamp(1, 5000);
     let fetch_bytes = req
         .fetch_bytes
@@ -1732,6 +1740,11 @@ pub async fn backfill_dims(
 
 /// Curator-side admin gate. Reuses `SQUINTLY_SUGGESTION_ADMIN_TOKEN` so
 /// operators only need to set one secret. When unset, returns 503.
+/// Admin via the shared bearer token.
+///
+/// Kept alongside the signed-in path because scripts and one-off `curl`
+/// invocations have no cookie jar; [`require_admin`] is what request handlers
+/// should call so either credential works.
 fn require_curator_admin(provided: &Option<String>) -> Result<(), AppError> {
     let expected = std::env::var("SQUINTLY_SUGGESTION_ADMIN_TOKEN")
         .ok()
@@ -1746,6 +1759,36 @@ fn require_curator_admin(provided: &Option<String>) -> Result<(), AppError> {
         return Err(AppError::BadRequest("admin_token mismatch".into()));
     }
     Ok(())
+}
+
+/// Admin by either credential: a signed-in address on `SQUINTLY_ADMIN_EMAILS`,
+/// or the shared token.
+///
+/// The signed-in path is tried first so that the common case — an operator with
+/// a browser session — never depends on the shared token being configured at
+/// all. A deployment can now run with no shared secret in its environment.
+pub async fn require_admin(
+    pool: &sqlx::SqlitePool,
+    headers: &axum::http::HeaderMap,
+    token: &Option<String>,
+) -> Result<(), AppError> {
+    if let Some(who) = crate::handlers::signed_in(pool, headers).await? {
+        if who.is_admin {
+            return Ok(());
+        }
+        // Signed in but not an admin. Say so plainly instead of falling through
+        // to "admin_token mismatch", which would send an operator hunting for a
+        // token when the actual fix is adding their address to the roster.
+        if token.is_none() {
+            return Err(AppError::Forbidden(format!(
+                "{} is signed in but not an admin on this deployment. \
+                 Operators: add the address to {}.",
+                who.email,
+                crate::auth::ADMIN_EMAILS_ENV
+            )));
+        }
+    }
+    require_curator_admin(token)
 }
 
 /// Split a comma-separated query-string allow-list, trimming whitespace and
@@ -1775,7 +1818,10 @@ fn ct_eq_str(a: &str, b: &str) -> bool {
 
 #[derive(Debug, Deserialize)]
 pub struct DeleteCandidateReq {
-    pub admin_token: String,
+    /// Optional: a signed-in admin (`SQUINTLY_ADMIN_EMAILS`) needs no token.
+    /// Required only for scripts and `curl`, which have no cookie jar.
+    #[serde(default)]
+    pub admin_token: Option<String>,
     /// Exact sha256 of the candidate to remove.
     pub sha256: String,
 }
@@ -1799,9 +1845,10 @@ pub struct DeleteCandidateResp {
 /// curator operation that destroys others' work.
 pub async fn delete_candidate(
     State(state): State<SharedState>,
+    headers: axum::http::HeaderMap,
     Json(req): Json<DeleteCandidateReq>,
 ) -> Result<Json<DeleteCandidateResp>, AppError> {
-    require_curator_admin(&Some(req.admin_token.clone()))?;
+    require_admin(&state.pool, &headers, &req.admin_token).await?;
     if req.sha256.len() != 64 || !req.sha256.chars().all(|c| c.is_ascii_hexdigit()) {
         return Err(AppError::BadRequest("sha256 must be 64 hex chars".into()));
     }

@@ -58,7 +58,9 @@ zenjxl-decoder = { version = "0.3.8", default-features = false }
 
 [dev-dependencies]
 tempfile = "3"
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "multipart"] }
+# `cookies` is dev-only: the auth tests need a cookie jar to act as a browser
+# carrying a session across requests. The library itself never needs one.
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "multipart", "cookies"] }
 
 [profile.release]
 opt-level = 3

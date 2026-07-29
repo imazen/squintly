@@ -16,8 +16,9 @@ use uuid::Uuid;
 use chrono::NaiveDate;
 
 use crate::auth::{
-    EmailMessage, LoginAllowlist, ResendConfig, TOKEN_TTL_MS, generate_token, hash_token,
-    looks_like_email, send_magic_link,
+    EmailAllowlist, EmailMessage, RateLimit, RateVerdict, ResendConfig, SESSION_TTL_MS,
+    TOKEN_TTL_MS, client_ip, generate_token, hash_ip, hash_token, looks_like_email, rate_verdict,
+    send_magic_link, session_cookie, session_from_cookie_header,
 };
 use crate::coefficient::{CoefficientSource, EncodingMeta, Manifest};
 use crate::db::now_ms;
@@ -1071,8 +1072,31 @@ pub struct AuthStartResp {
     pub message: String,
 }
 
+/// Salt for the client-IP bucket.
+///
+/// Set `SQUINTLY_IP_HASH_SALT` in production. Unset, we generate one per
+/// process: still unreversible, but the per-network counters reset on every
+/// restart, so say so once rather than let a redeploy silently widen the limit.
+fn ip_hash_salt() -> String {
+    static SALT: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    SALT.get_or_init(|| {
+        std::env::var("SQUINTLY_IP_HASH_SALT")
+            .ok()
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| {
+                tracing::warn!(
+                    "SQUINTLY_IP_HASH_SALT unset — using a per-process salt, so per-network \
+                     sign-in rate limits reset on restart"
+                );
+                generate_token()
+            })
+    })
+    .clone()
+}
+
 pub async fn auth_start(
     State(state): State<SharedState>,
+    headers: HeaderMap,
     Json(req): Json<AuthStartReq>,
 ) -> Result<Json<AuthStartResp>, AppError> {
     let email = req.email.trim().to_lowercase();
@@ -1102,46 +1126,78 @@ pub async fn auth_start(
         )
     })?;
 
-    // Checked after the mailer config so that a deployment with no Postmark
-    // credentials keeps reporting the more fundamental fact ("this deployment
-    // cannot send mail at all") rather than an authorization verdict.
-    //
-    // The refusal names the address rather than returning a uniform "if an
-    // account exists…". That does let a caller test whether one specific
-    // address is listed, which is an acceptable trade at this size: the list is
-    // an operator roster of a few known addresses, not a user directory, so
-    // there is no membership to enumerate — while a silent accept-then-discard
-    // would leave a legitimate operator staring at "check your email" for a
-    // link that is never coming.
-    let allowlist = LoginAllowlist::from_env();
-    if !allowlist.allows(&email) {
+    // Sign-in is open to any address, so this is the only thing between the
+    // endpoint and an inbox. Counts come from `auth_tokens` itself — a row is
+    // written for every accepted request, so the token store *is* the request
+    // log and cannot disagree with it.
+    let now = now_ms();
+    let limit = RateLimit::from_env();
+    let ip = client_ip(
+        headers.get("x-forwarded-for").and_then(|v| v.to_str().ok()),
+        None,
+    );
+    let ip_hash = ip.as_deref().map(|s| hash_ip(s, &ip_hash_salt()));
+    let hour_ago = now - 3_600_000;
+
+    let last_for_email: Option<i64> =
+        sqlx::query_scalar("SELECT MAX(created_at) FROM auth_tokens WHERE email = ?")
+            .bind(&email)
+            .fetch_one(&state.pool)
+            .await?;
+    let email_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM auth_tokens WHERE email = ? AND created_at >= ?")
+            .bind(&email)
+            .bind(hour_ago)
+            .fetch_one(&state.pool)
+            .await?;
+    // No client address (direct hit with no proxy header) means no per-network
+    // limit is enforceable; the per-address limits still are.
+    let ip_count: i64 =
+        match ip_hash.as_deref() {
+            Some(h) => sqlx::query_scalar(
+                "SELECT COUNT(*) FROM auth_tokens WHERE requester_ip_hash = ? AND created_at >= ?",
+            )
+            .bind(h)
+            .bind(hour_ago)
+            .fetch_one(&state.pool)
+            .await?,
+            None => 0,
+        };
+
+    if let RateVerdict::Deny {
+        retry_after_s,
+        reason,
+    } = rate_verdict(&limit, now, last_for_email, email_count, ip_count)
+    {
         tracing::warn!(
             email = %email,
-            allowlist_configured = !allowlist.is_empty(),
-            "rejected magic-link request: address not on the sign-in allowlist"
+            email_count_last_hour = email_count,
+            ip_count_last_hour = ip_count,
+            retry_after_s,
+            "rate-limited a magic-link request"
         );
-        return Err(AppError::Forbidden(format!(
-            "{email} is not on this deployment's sign-in allowlist, so no link was sent. \
-             Anonymous use is unaffected — signing in only exists to carry an existing \
-             observer ID to another device. Operators: set {}.",
-            LoginAllowlist::ENV
-        )));
+        return Err(AppError::TooManyRequests {
+            retry_after_s,
+            message: format!(
+                "Slow down — {reason}. No link was sent. Anonymous use is unaffected."
+            ),
+        });
     }
 
     let token = generate_token();
     let token_hash = hash_token(&token);
-    let now = now_ms();
     let expires_at = now + TOKEN_TTL_MS;
 
     sqlx::query(
         "INSERT INTO auth_tokens (token_hash, email, requesting_observer_id, expires_at, \
-         consumed_at, created_at) VALUES (?, ?, ?, ?, NULL, ?)",
+         consumed_at, created_at, requester_ip_hash) VALUES (?, ?, ?, ?, NULL, ?, ?)",
     )
     .bind(&token_hash)
     .bind(&email)
     .bind(req.observer_id.as_deref())
     .bind(expires_at)
     .bind(now)
+    .bind(ip_hash.as_deref())
     .execute(&state.pool)
     .await?;
 
@@ -1282,10 +1338,145 @@ pub async fn auth_verify(
         .execute(&state.pool)
         .await?;
 
-    Ok(verify_page(
-        VerifyOutcome::Success { email },
-        Some(resolved_observer_id),
-    ))
+    // Mint a real session. Until now verify handed the browser an observer id
+    // and nothing more, so "signed in" was a claim only the client held and the
+    // server had no way to check — which is why admin could only be a shared
+    // token. The cookie is a second secret, stored hashed like the magic link.
+    let session_token = generate_token();
+    sqlx::query(
+        "INSERT INTO auth_sessions (token_hash, observer_id, email, created_at, expires_at) \
+         VALUES (?, ?, ?, ?, ?)",
+    )
+    .bind(hash_token(&session_token))
+    .bind(&resolved_observer_id)
+    .bind(&email)
+    .bind(now)
+    .bind(now + SESSION_TTL_MS)
+    .execute(&state.pool)
+    .await?;
+
+    let mut resp = verify_page(VerifyOutcome::Success { email }, Some(resolved_observer_id));
+    // The link is opened from a mail client, which may well be plain HTTP on a
+    // dev box; a Secure cookie would be dropped there and sign-in would appear
+    // to succeed while granting nothing.
+    let secure = use_secure_cookies();
+    if let Ok(v) = axum::http::HeaderValue::from_str(&session_cookie(
+        &session_token,
+        secure,
+        SESSION_TTL_MS / 1000,
+    )) {
+        resp.headers_mut().append("set-cookie", v);
+    }
+    Ok(resp)
+}
+
+/// Whether to mark the session cookie `Secure`.
+///
+/// Defaults to on — a public deployment is HTTPS and marking it insecure there
+/// would be a downgrade. `SQUINTLY_INSECURE_COOKIES=1` is the local-dev escape
+/// hatch, named so it cannot be mistaken for something to set in production.
+fn use_secure_cookies() -> bool {
+    !std::env::var("SQUINTLY_INSECURE_COOKIES")
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false)
+}
+
+/// The signed-in identity behind a request, if any.
+pub struct SignedIn {
+    pub observer_id: String,
+    pub email: String,
+    pub is_admin: bool,
+}
+
+/// Resolve the session cookie to an identity, and decide admin from the
+/// *current* allowlist rather than anything stored at sign-in time — so
+/// removing an address from `SQUINTLY_ADMIN_EMAILS` takes effect immediately.
+pub async fn signed_in(
+    pool: &sqlx::SqlitePool,
+    headers: &HeaderMap,
+) -> Result<Option<SignedIn>, AppError> {
+    let Some(raw) = headers
+        .get("cookie")
+        .and_then(|v| v.to_str().ok())
+        .and_then(session_from_cookie_header)
+    else {
+        return Ok(None);
+    };
+    if raw.len() != 64 || !raw.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Ok(None);
+    }
+    let row: Option<(String, String, i64, Option<i64>)> = sqlx::query_as(
+        "SELECT observer_id, email, expires_at, revoked_at FROM auth_sessions WHERE token_hash = ?",
+    )
+    .bind(hash_token(&raw))
+    .fetch_optional(pool)
+    .await?;
+    let Some((observer_id, email, expires_at, revoked_at)) = row else {
+        return Ok(None);
+    };
+    if revoked_at.is_some() || expires_at < now_ms() {
+        return Ok(None);
+    }
+    let email = email.trim().to_ascii_lowercase();
+    let is_admin = EmailAllowlist::admins().allows(&email);
+    Ok(Some(SignedIn {
+        observer_id,
+        email,
+        is_admin,
+    }))
+}
+
+#[derive(Debug, Serialize)]
+pub struct WhoAmIResp {
+    pub signed_in: bool,
+    pub email: Option<String>,
+    pub observer_id: Option<String>,
+    pub is_admin: bool,
+}
+
+/// GET /api/auth/whoami — lets the UI show admin controls only to admins.
+/// Authoritative for display only; every privileged route re-checks.
+pub async fn auth_whoami(
+    State(state): State<SharedState>,
+    headers: HeaderMap,
+) -> Result<Json<WhoAmIResp>, AppError> {
+    Ok(Json(match signed_in(&state.pool, &headers).await? {
+        Some(s) => WhoAmIResp {
+            signed_in: true,
+            email: Some(s.email),
+            observer_id: Some(s.observer_id),
+            is_admin: s.is_admin,
+        },
+        None => WhoAmIResp {
+            signed_in: false,
+            email: None,
+            observer_id: None,
+            is_admin: false,
+        },
+    }))
+}
+
+/// POST /api/auth/signout — revoke the current session.
+pub async fn auth_signout(
+    State(state): State<SharedState>,
+    headers: HeaderMap,
+) -> Result<Response, AppError> {
+    if let Some(raw) = headers
+        .get("cookie")
+        .and_then(|v| v.to_str().ok())
+        .and_then(session_from_cookie_header)
+    {
+        sqlx::query("UPDATE auth_sessions SET revoked_at = ? WHERE token_hash = ?")
+            .bind(now_ms())
+            .bind(hash_token(&raw))
+            .execute(&state.pool)
+            .await?;
+    }
+    let mut resp = (StatusCode::OK, "signed out").into_response();
+    if let Ok(v) = axum::http::HeaderValue::from_str(&session_cookie("", true, 0)) {
+        resp.headers_mut().append("set-cookie", v);
+    }
+    Ok(resp)
 }
 
 enum VerifyOutcome {
@@ -1690,6 +1881,8 @@ pub enum AppError {
     BadRequest(String),
     #[error("forbidden: {0}")]
     Forbidden(String),
+    #[error("too many requests: {message}")]
+    TooManyRequests { retry_after_s: i64, message: String },
     #[error("service unavailable: {0}")]
     ServiceUnavailable(String),
 }
@@ -1701,10 +1894,23 @@ impl IntoResponse for AppError {
             AppError::Conflict(s) => (StatusCode::CONFLICT, s.clone()),
             AppError::BadRequest(s) => (StatusCode::BAD_REQUEST, s.clone()),
             AppError::Forbidden(s) => (StatusCode::FORBIDDEN, s.clone()),
+            // 429 carries Retry-After below; a bare status would leave the
+            // caller guessing how long to wait, which is how clients end up
+            // hammering a limiter.
+            AppError::TooManyRequests { message, .. } => {
+                (StatusCode::TOO_MANY_REQUESTS, message.clone())
+            }
             AppError::ServiceUnavailable(s) => (StatusCode::SERVICE_UNAVAILABLE, s.clone()),
             _ => (StatusCode::INTERNAL_SERVER_ERROR, self.to_string()),
         };
         tracing::warn!(?code, %msg, "request failed");
+        if let AppError::TooManyRequests { retry_after_s, .. } = &self {
+            let mut r = (code, msg).into_response();
+            if let Ok(v) = axum::http::HeaderValue::from_str(&retry_after_s.to_string()) {
+                r.headers_mut().insert("retry-after", v);
+            }
+            return r;
+        }
         (code, msg).into_response()
     }
 }

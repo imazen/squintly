@@ -266,6 +266,8 @@ async fn main() -> Result<()> {
         .route("/observer/{id}/profile", get(handlers::observer_profile))
         .route("/auth/start", post(handlers::auth_start))
         .route("/auth/verify", get(handlers::auth_verify))
+        .route("/auth/whoami", get(handlers::auth_whoami))
+        .route("/auth/signout", post(handlers::auth_signout))
         .route("/calibration", get(handlers::calibration_list))
         .route(
             "/calibration/response",
@@ -345,21 +347,28 @@ async fn main() -> Result<()> {
     } else {
         tracing::info!(build_commit = handlers::BUILD_COMMIT, "build provenance");
     }
-    // Sign-in is opt-in and anonymous use never touches it, so an empty
-    // allowlist is a legitimate configuration — but it is silently
-    // indistinguishable from "I set the variable and fat-fingered it", which is
-    // exactly the mistake worth catching at boot rather than in a support
+    // Sign-in itself is open to any address; what is gated is admin. An empty
+    // roster is a legitimate configuration (a deployment with no operators) but
+    // is silently indistinguishable from "I set the variable and fat-fingered
+    // it", which is the mistake worth catching at boot rather than in a support
     // thread. Log what the process actually parsed either way.
-    let allowlist = squintly::auth::LoginAllowlist::from_env();
-    if allowlist.is_empty() {
+    let admins = squintly::auth::EmailAllowlist::admins();
+    if admins.is_empty() {
         tracing::warn!(
-            "{} is empty — email sign-in will refuse every address. Anonymous use is \
-             unaffected; set it to enable sign-in.",
-            squintly::auth::LoginAllowlist::ENV
+            "{} is empty — nobody can hold admin on this deployment. Sign-in and \
+             anonymous use are unaffected.",
+            squintly::auth::ADMIN_EMAILS_ENV
         );
     } else {
-        tracing::info!(allowlist = %allowlist.describe(), "email sign-in allowlist");
+        tracing::info!(admins = %admins.describe(), "admin roster");
     }
+    let rl = squintly::auth::RateLimit::from_env();
+    tracing::info!(
+        per_email_cooldown_ms = rl.per_email_cooldown_ms,
+        per_email_hourly = rl.per_email_hourly,
+        per_ip_hourly = rl.per_ip_hourly,
+        "sign-in rate limits"
+    );
     tracing::info!(addr = %bind, "squintly listening");
     let listener = tokio::net::TcpListener::bind(bind).await?;
     axum::serve(listener, app).await?;

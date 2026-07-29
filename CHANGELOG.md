@@ -3,19 +3,38 @@
 ## [Unreleased]
 
 ### Security
-- **Email sign-in is now restricted by `SQUINTLY_LOGIN_ALLOWLIST`** (this
-  change). `/api/auth/start` is unauthenticated by construction — it exists to
-  reach someone who cannot prove who they are yet — and it mailed a link to
-  whatever address the caller named, so any stranger could make the deployment
-  send mail from the operator's verified From address to a recipient of their
-  choosing. That spends sender reputation, which is far dearer than quota. An
-  unset variable now refuses **every** address rather than admitting every
-  address: forgetting it costs a 403 naming the variable, while the opposite
-  default leaves a public mail-sending endpoint open until somebody notices.
-  Entries are `user@host.tld` or `@host.tld` (whole domain, not sub-domains);
-  malformed entries are dropped with a warning instead of being widened.
-  Anonymous use is untouched — sign-in only carries an existing observer ID to
-  a second device.
+- **`/api/auth/start` is rate limited** (this change), per address *and* per
+  client network: a 60 s cooldown, 5 links per address per hour, 20 per network
+  per hour, all overridable. Either limit alone is trivially defeated — the
+  address cap by cycling through other people's addresses, the network cap by
+  spraying one inbox from many sources. Refusals are `429` with `Retry-After`
+  and send no mail. Counts come from `auth_tokens`, which already gets a row per
+  accepted request, so the request log and the token store cannot disagree.
+  Client addresses are stored only as a salted BLAKE3 bucket
+  (`SQUINTLY_IP_HASH_SALT`) — an unsalted hash of an IPv4 address is reversible
+  by brute force in seconds.
+- **Sign-in is open to any address; `SQUINTLY_ADMIN_EMAILS` gates admin
+  instead.** A short-lived `SQUINTLY_LOGIN_ALLOWLIST` (never released) gated
+  sign-in itself, which had the effect of locking ordinary participants out of
+  their own data on a second device — linking an email is a participant
+  feature, not a privilege. The allowlist now grants *admin*, where an unset
+  variable correctly grants it to nobody.
+- **Signing in mints a real session** (migration 0015, `auth_sessions`).
+  `auth_verify` previously handed the browser an observer id and nothing else,
+  so "signed in" was a client-side claim the server never checked — which is
+  why admin could only be a shared bearer token. The session is a second
+  32-byte secret in an HttpOnly `SameSite=Lax` cookie, stored hashed like a
+  magic-link token. `SameSite=Lax` specifically because `Strict` would drop the
+  cookie on the top-level navigation out of the mail client into
+  `/api/auth/verify`, i.e. on exactly the hop that establishes it.
+- **Curator admin routes accept a signed-in admin** (`curator::require_admin`),
+  so a deployment no longer has to keep a shared secret in its environment for
+  an operator with a browser to work. `admin_token` became optional on those
+  requests — as a required field it made the JSON extractor reject a
+  cookie-authenticated call with a 422 before the gate ever ran. Admin is
+  resolved from the *current* roster on every request rather than snapshotted
+  at sign-in, so removing an address revokes it immediately.
+- Added `GET /api/auth/whoami` and `POST /api/auth/signout`.
 
 ### Added
 - `POSTMARK_API_BASE` overrides the Postmark origin (default unchanged) so

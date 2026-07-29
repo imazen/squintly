@@ -98,10 +98,17 @@ generation. The SSRF that fell out of this is now closed (`guard_blob_url`,
 2026-07-27), but the underlying posture is unresolved: the curator is a
 *researcher* tool exposed on an *anonymous-participant* origin.
 
-Options, none chosen yet: gate every `/api/curator/*` mutation behind
-`SQUINTLY_SUGGESTION_ADMIN_TOKEN`; serve the curator from a separate
-deployment; or accept junk-injection risk and treat `curator_candidates` as
-untrusted at export time. **Decide before advertising the live URL widely.**
+**Partially addressed 2026-07-29.** There is now a real admin identity to gate
+on: signing in mints an `auth_sessions` cookie and `curator::require_admin`
+accepts either a signed-in address on `SQUINTLY_ADMIN_EMAILS` or the shared
+token. `load_r2_public`, `backfill_dims` and `delete_candidate` go through it.
+
+Still ungated: `POST /api/curator/manifest`, `/decision`, `/decision/undo`,
+`/generate-variant`, `/threshold`. Wrapping them is now a small mechanical
+change (add `headers`, call `require_admin`) — the reason not to do it blindly
+is that the curator UI is currently usable by an anonymous operator, so gating
+these turns curation into a sign-in-required flow. **Decide that trade before
+advertising the live URL widely.**
 
 ### R2 corpus blobs have no CORS — canvas paths must use the proxy
 

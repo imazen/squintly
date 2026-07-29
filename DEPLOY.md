@@ -74,22 +74,38 @@ railway variables --set \
 ```
 
 ```bash
-# Who may request an email sign-in link. `/api/auth/start` is unauthenticated
-# by construction and mails a link to whatever address the caller names, so
-# leaving it open lets anyone send mail from your verified From address to a
-# recipient they picked — that costs sender reputation, not just quota.
-# Comma- or space-separated; `user@host.tld` matches one address, `@host.tld`
-# matches a whole domain (not its sub-domains).
-railway variables --set "SQUINTLY_LOGIN_ALLOWLIST=lilith@imazen.io"
+# Who gets admin once signed in. Comma- or space-separated; `user@host.tld`
+# matches one address, `@host.tld` a whole domain (not its sub-domains).
+railway variables --set "SQUINTLY_ADMIN_EMAILS=lilith@imazen.io"
+
+# Salt for the client-IP bucket used by the sign-in rate limit. Unset, a
+# per-process salt is generated and the per-network counters reset on every
+# restart — set it so a redeploy doesn't silently widen the limit.
+railway variables --set "SQUINTLY_IP_HASH_SALT=$(openssl rand -hex 16)"
 ```
 
-An **unset or empty `SQUINTLY_LOGIN_ALLOWLIST` refuses every address** — it is
-not a "no restriction" default. That direction is deliberate: forgetting it
-costs a 403 that names the variable, whereas the other default would silently
-leave a public mail-sending endpoint open. Anonymous use never touches this;
-sign-in exists only to carry an existing observer ID to a second device, so a
-deployment with no allowlist is fully functional for observers. The boot log
-prints what it parsed (`email sign-in allowlist`) or warns that it is empty.
+**Sign-in itself is open to any address, on purpose.** Linking an email is how
+a participant carries their observer ID to a second device; an allowlist there
+would lock real participants out of their own data. What stops
+`/api/auth/start` from being a mail cannon is the rate limit, not a roster:
+
+| Variable | Default | Limit |
+|---|---|---|
+| `SQUINTLY_AUTH_COOLDOWN_MS` | `60000` | Minimum gap between links to one address |
+| `SQUINTLY_AUTH_PER_EMAIL_HOURLY` | `5` | Links per address per hour |
+| `SQUINTLY_AUTH_PER_IP_HOURLY` | `20` | Links per client network per hour |
+
+Both limits are needed: per-address alone is sidestepped by cycling through
+other people's addresses, per-network alone lets one inbox be buried from many
+sources. Setting any to `0` disables that rule. Refusals are `429` with
+`Retry-After`, and no mail is sent.
+
+**`SQUINTLY_ADMIN_EMAILS` is the opposite — unset grants admin to nobody.**
+Admin is a privilege nobody needs in order to take part, so it fails closed. A
+signed-in admin needs no `admin_token`; the shared
+`SQUINTLY_SUGGESTION_ADMIN_TOKEN` still works for scripts and `curl`, which
+have no cookie jar. The boot log prints the parsed roster (`admin roster`) and
+the active limits (`sign-in rate limits`).
 
 **Never** set `SQUINTLY_ALLOW_PRIVATE_BLOB_HOSTS=1` in production — it disables
 the private-address check that blocks `169.254.169.254` and friends. It exists

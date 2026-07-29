@@ -142,8 +142,15 @@ test.describe('trial loop', () => {
     await completeProfileAndStart(page);
 
     // Find a single-stimulus trial whose image overflows the viewport.
+    //
+    // The sampler is random, so this is a search, not a lookup: with 4 mock
+    // sources (1 oversized) and a 65% single-stimulus mix, roughly 1 trial in 6
+    // qualifies. A 20-trial budget therefore missed about 3% of the time —
+    // observed as a flake on 2026-07-29. 60 draws puts that near 1 in 30,000.
+    // The assertion is unchanged; only the budget for finding the case is.
+    const BUDGET = 60;
     let found = false;
-    for (let i = 0; i < 20 && !found; i++) {
+    for (let i = 0; i < BUDGET && !found; i++) {
       await page.waitForSelector('.trial[data-trial-id]', { timeout: 10_000 });
       await page
         .waitForFunction(
@@ -165,7 +172,7 @@ test.describe('trial loop', () => {
       });
       if (!found) await submitOneTrial(page);
     }
-    expect(found, 'no oversized single-stimulus trial appeared in 20 trials').toBe(true);
+    expect(found, `no oversized single-stimulus trial appeared in ${BUDGET} trials`).toBe(true);
 
     const box = (await page.locator('#viewport').boundingBox())!;
     const cx = box.x + box.width / 2;

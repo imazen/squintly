@@ -210,14 +210,37 @@ certificateStatus: CERTIFICATE_STATUS_TYPE_VALIDATING_OWNERSHIP
 `currentValue`, and treat `certificateStatus` as the real gate** — it stays at
 `VALIDATING_OWNERSHIP` until the value actually matches.
 
-### Only the CNAME
+### Two records: the CNAME **and** an ownership TXT
 
-Railway's public-networking guide says "the `CNAME` and `TXT` records Railway
-provides — both are required", but that is the general case: the TXT is an
-ACME-verification record for apex and wildcard domains, where a CNAME is not
-usable. This domain's own `status.dnsRecords` returns exactly one record,
-purpose `DNS_RECORD_PURPOSE_TRAFFIC_ROUTE`. **The API is the source of truth
-per domain** — don't add a TXT that was never asked for.
+| Type | Name (zone `imazen.org`) | Value |
+|---|---|---|
+| `CNAME` | `squintly` | `z4ru3495.up.railway.app` |
+| `TXT` | `_railway-verify.squintly` | `railway-verify=bfa3673ec02b954abb1c4cf989bcc8c9329ad797dbed85427ae17d63c398f0e4` |
+
+**`status.dnsRecords` does not list the TXT.** That array returned exactly one
+record (the `TRAFFIC_ROUTE` CNAME), which reads as "only the CNAME is
+required" and contradicts Railway's guide saying "the `CNAME` and `TXT`
+records Railway provides — both are required". The guide is right. The
+verification TXT is exposed in *different fields* on the same object:
+
+```
+status {
+  verified              # false until the TXT resolves
+  verificationDnsHost   # "_railway-verify.squintly"
+  verificationToken     # "railway-verify=<64 hex>"
+}
+```
+
+**Query `verified` / `verificationDnsHost` / `verificationToken` explicitly** —
+none of them appear unless you ask, and a `dnsRecords`-only status view will
+happily show `PROPAGATED` on a domain that can never issue a cert.
+
+This cost ~15 minutes of watching `VALIDATING_OWNERSHIP` with correct DNS, a
+manual `customDomainIssueCertificate` call that returned `true` and changed
+nothing, and a CAA check that came back clean — all because the missing record
+was invisible in the field set being queried. `certificateErrorMessage`,
+`certificateErrorType` and `certificateRetryable` were all `null` throughout;
+**the signal was `verified: false`, not an error field.**
 
 ### Keep it DNS-only (grey cloud)
 
@@ -252,12 +275,14 @@ API=https://backboard.railway.com/graphql/v2
 
 # Status: what does each domain require, and has its cert issued?
 curl -sS -X POST $API -H "Authorization: Bearer $TOK" -H 'content-type: application/json' \
-  -d "{\"query\":\"query(\$p:String!,\$e:String!,\$s:String!){ domains(projectId:\$p, environmentId:\$e, serviceId:\$s){ customDomains{ id domain status{ certificateStatus dnsRecords{ hostlabel requiredValue currentValue status zone purpose } } } } }\",\"variables\":{\"p\":\"$PROJ\",\"e\":\"$ENV\",\"s\":\"$SVC\"}}" \
+  -d "{\"query\":\"query(\$p:String!,\$e:String!,\$s:String!){ domains(projectId:\$p, environmentId:\$e, serviceId:\$s){ customDomains{ id domain status{ certificateStatus verified verificationDnsHost verificationToken certificateErrorMessage dnsRecords{ hostlabel requiredValue currentValue status zone purpose } } } } }\",\"variables\":{\"p\":\"$PROJ\",\"e\":\"$ENV\",\"s\":\"$SVC\"}}" \
   | python3 -m json.tool
 
-# Add:    mutation($i:CustomDomainCreateInput!){ customDomainCreate(input:$i){ id domain status{ dnsRecords{ requiredValue } } } }
+# Add:    mutation($i:CustomDomainCreateInput!){ customDomainCreate(input:$i){ id domain status{ verified verificationDnsHost verificationToken dnsRecords{ requiredValue } } } }
 #         variables: {"i":{"domain":"...","projectId":"...","environmentId":"...","serviceId":"..."}}
 # Remove: mutation($id:String!){ customDomainDelete(id:$id) }
+# Nudge:  mutation($id:String!){ customDomainIssueCertificate(id:$id) }
+#         (returns true regardless; it cannot help while verified=false)
 ```
 
 ### Creating the DNS record
@@ -288,8 +313,14 @@ curl -sS -X POST "https://api.cloudflare.com/client/v4/zones/$ZONE/dns_records" 
 Then confirm end-to-end:
 
 ```bash
-dig +short squintly.imazen.org
+dig +short squintly.imazen.org                          # -> z4ru3495.up.railway.app. -> 69.46.46.x
+dig +short TXT _railway-verify.squintly.imazen.org      # -> "railway-verify=..."  (empty = cert will never issue)
 curl -sS https://squintly.imazen.org/api/stats
+
+# The cert is only really issued when the served leaf names the host:
+echo | openssl s_client -servername squintly.imazen.org \
+  -connect squintly.imazen.org:443 2>/dev/null | openssl x509 -noout -subject
+# CN = *.up.railway.app  -> not issued yet (Railway's own wildcard)
 ```
 
 ## 9. Local Docker smoke

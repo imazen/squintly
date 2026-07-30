@@ -167,84 +167,129 @@ Three options:
 
 The first two are recommended for v0.1.
 
-## 8. Custom domain — `squintly.imazen.io`
+## 8. Custom domain — `squintly.imazen.org`
 
 Registered on the Railway service 2026-07-30 (custom domain id
-`cdc7cd3a-607b-4073-a3ab-877abffee61e`). One DNS record is required:
+`da7463d9-29a9-4fe3-9d1a-ad349a7d7539`). One DNS record is required:
 
 | Type | Name | Value | Proxy |
 |---|---|---|---|
-| `CNAME` | `squintly` (zone `imazen.io`) | `xgb5g1hb.up.railway.app` | **DNS only** |
+| `CNAME` | `squintly` (zone `imazen.org`) | `z4ru3495.up.railway.app` | **DNS only** |
 
-**Only the CNAME.** Railway's public-networking guide says "the `CNAME` and
-`TXT` records Railway provides — both are required", but that is the general
-case: the TXT is an ACME-verification record issued for apex and wildcard
-domains, where a CNAME is not usable. Querying this domain's own
-`status.dnsRecords` returns exactly one record, purpose
-`DNS_RECORD_PURPOSE_TRAFFIC_ROUTE`. **The API is the source of truth per
-domain** — check it rather than adding a TXT record that was never asked for.
+### The CNAME target is per-domain, not per-service
 
-**Create it DNS-only (grey cloud).** Railway sits at
-`certificateStatus: VALIDATING_OWNERSHIP` until the hostname resolves to it,
-and issues a cert itself. Behind Cloudflare's proxy, Cloudflare terminates TLS
-at its edge, so that validation has nothing to reach. If you later want
-Cloudflare in front for caching, the SSL/TLS mode must be **Full (strict)** —
-under *Flexible* the Cloudflare→origin hop is plain HTTP while Railway
-redirects HTTP→HTTPS, which is an infinite redirect loop.
+**Measured 2026-07-30, the hard way.** `squintly.imazen.io` was registered
+first and issued `xgb5g1hb.up.railway.app`; re-registering as
+`squintly.imazen.org` issued a *different* target, `z4ru3495.up.railway.app`.
+Both are `*.up.railway.app` and both resolve into Railway's edge, so pointing
+the record at the wrong one looks plausible and fails at TLS:
 
-### The CLI cannot do this; the API can
+```
+$ curl https://squintly.imazen.org/api/stats
+HTTP 000 | ssl_verify=1 | 69.46.46.96
+$ openssl s_client -servername squintly.imazen.org ... | openssl x509 -noout -subject
+subject=CN = *.up.railway.app          # does NOT cover squintly.imazen.org
+```
+
+Railway's edge only knows to serve a cert for your hostname on *that
+hostname's* target. **Never copy a target between domains** — always read
+`requiredValue` for the domain you are configuring.
+
+### `DNS_RECORD_STATUS_PROPAGATED` does not mean correct
+
+With the wrong value in place, the API reported:
+
+```
+status:            DNS_RECORD_STATUS_PROPAGATED     # <- a CNAME exists
+requiredValue:     z4ru3495.up.railway.app
+currentValue:      xgb5g1hb.up.railway.app          # <- but it is the wrong one
+certificateStatus: CERTIFICATE_STATUS_TYPE_VALIDATING_OWNERSHIP
+```
+
+`PROPAGATED` only means *a* CNAME was observed. **Compare `requiredValue` to
+`currentValue`, and treat `certificateStatus` as the real gate** — it stays at
+`VALIDATING_OWNERSHIP` until the value actually matches.
+
+### Only the CNAME
+
+Railway's public-networking guide says "the `CNAME` and `TXT` records Railway
+provides — both are required", but that is the general case: the TXT is an
+ACME-verification record for apex and wildcard domains, where a CNAME is not
+usable. This domain's own `status.dnsRecords` returns exactly one record,
+purpose `DNS_RECORD_PURPOSE_TRAFFIC_ROUTE`. **The API is the source of truth
+per domain** — don't add a TXT that was never asked for.
+
+### Keep it DNS-only (grey cloud)
+
+Railway validates ownership by being reachable at the hostname and issues the
+cert itself; behind Cloudflare's proxy, Cloudflare terminates TLS at its edge
+so that validation has nothing to reach. Verify it is unproxied by resolving —
+a proxied record answers with Cloudflare space (`104.x` / `172.67.x`), an
+unproxied one with Railway's edge:
+
+```bash
+dig +short squintly.imazen.org      # -> z4ru3495.up.railway.app. then 69.46.46.96
+```
+
+If you later want Cloudflare in front for caching, SSL/TLS mode must be **Full
+(strict)** — under *Flexible* the Cloudflare→origin hop is plain HTTP while
+Railway redirects HTTP→HTTPS, i.e. an infinite redirect loop.
+
+### The CLI cannot manage domains; the API can
 
 `railway domain <name>` returns `Unauthorized. Please run railway login again.`
-even with a valid, unexpired session where `railway whoami`, `railway status`
-and `railway variables` all work (measured 2026-07-30 — token had 1.0h left).
-The same operation over GraphQL with the CLI's own stored `accessToken`
-succeeds. Use the API and don't waste time re-logging-in:
+on a valid unexpired session where `railway whoami`, `railway status` and
+`railway variables` all work (measured 2026-07-30 — the token had 1.0h left).
+The same operations over GraphQL with the CLI's own stored `accessToken`
+succeed. Use the API and don't waste time re-logging-in:
 
 ```bash
 TOK=$(python3 -c "import json,pathlib; print(json.loads((pathlib.Path.home()/'.railway/config.json').read_text())['user']['accessToken'])")
 PROJ=3da5e21d-98a9-44a3-8db7-5707e570e76b
 ENV=d2d0990a-8ec9-4809-8af5-4506336125fa
 SVC=2ce0d56f-3e20-4251-87b0-599abcc6df90
+API=https://backboard.railway.com/graphql/v2
 
-# What DNS does Railway want, and has the cert issued yet?
-curl -sS -X POST https://backboard.railway.com/graphql/v2 \
-  -H "Authorization: Bearer $TOK" -H 'content-type: application/json' \
-  -d "{\"query\":\"query(\$p:String!,\$e:String!,\$s:String!){ domains(projectId:\$p, environmentId:\$e, serviceId:\$s){ customDomains{ domain status{ certificateStatus dnsRecords{ hostlabel recordType requiredValue currentValue status zone purpose } } } } }\",\"variables\":{\"p\":\"$PROJ\",\"e\":\"$ENV\",\"s\":\"$SVC\"}}" \
+# Status: what does each domain require, and has its cert issued?
+curl -sS -X POST $API -H "Authorization: Bearer $TOK" -H 'content-type: application/json' \
+  -d "{\"query\":\"query(\$p:String!,\$e:String!,\$s:String!){ domains(projectId:\$p, environmentId:\$e, serviceId:\$s){ customDomains{ id domain status{ certificateStatus dnsRecords{ hostlabel requiredValue currentValue status zone purpose } } } } }\",\"variables\":{\"p\":\"$PROJ\",\"e\":\"$ENV\",\"s\":\"$SVC\"}}" \
   | python3 -m json.tool
+
+# Add:    mutation($i:CustomDomainCreateInput!){ customDomainCreate(input:$i){ id domain status{ dnsRecords{ requiredValue } } } }
+#         variables: {"i":{"domain":"...","projectId":"...","environmentId":"...","serviceId":"..."}}
+# Remove: mutation($id:String!){ customDomainDelete(id:$id) }
 ```
 
 ### Creating the DNS record
 
-`imazen.io` is on Cloudflare (`bill.ns` / `cloe.ns`). **No credential on this
-box can write DNS** (measured 2026-07-30):
+`imazen.org` and `imazen.io` are both on Cloudflare (`bill.ns` / `cloe.ns`).
+**No credential on this box can write DNS** (measured 2026-07-30):
 
-- wrangler's OAuth grant is `zone (read)` — read-only, and wrangler has no
-  DNS-record commands at all. Being "logged into wrangler" is *not* enough.
-- `~/.config/cloudflare/r2-credentials` is R2-scoped; it authenticates fine
+- wrangler's OAuth grant is `zone (read)`, and wrangler has no DNS-record
+  commands at all. Being "logged into wrangler" is *not* enough.
+- `~/.config/cloudflare/r2-credentials` is R2-scoped; it authenticates
   (`/user/tokens/verify` → active) but returns an empty result for
   `?name=imazen.io`, i.e. it cannot see the zone.
 
-So this needs either a token with **Zone → DNS → Edit** on `imazen.io`, or the
-dashboard. With such a token:
+So this needs the dashboard, or a token with **Zone → DNS → Edit**:
 
 ```bash
-export CF_DNS_TOKEN=...                      # Zone:DNS:Edit on imazen.io
+export CF_DNS_TOKEN=...                      # Zone:DNS:Edit on imazen.org
 ZONE=$(curl -sS -H "Authorization: Bearer $CF_DNS_TOKEN" \
-  "https://api.cloudflare.com/client/v4/zones?name=imazen.io" \
+  "https://api.cloudflare.com/client/v4/zones?name=imazen.org" \
   | python3 -c "import json,sys; print(json.load(sys.stdin)['result'][0]['id'])")
 
 curl -sS -X POST "https://api.cloudflare.com/client/v4/zones/$ZONE/dns_records" \
   -H "Authorization: Bearer $CF_DNS_TOKEN" -H 'content-type: application/json' \
-  -d '{"type":"CNAME","name":"squintly","content":"xgb5g1hb.up.railway.app","proxied":false,"ttl":1}' \
+  -d '{"type":"CNAME","name":"squintly","content":"z4ru3495.up.railway.app","proxied":false,"ttl":1}' \
   | python3 -m json.tool
 ```
 
-Then watch `certificateStatus` in the query above go from
-`VALIDATING_OWNERSHIP` to issued, and confirm end-to-end:
+Then confirm end-to-end:
 
 ```bash
-dig +short squintly.imazen.io
-curl -sS https://squintly.imazen.io/api/stats
+dig +short squintly.imazen.org
+curl -sS https://squintly.imazen.org/api/stats
 ```
 
 ## 9. Local Docker smoke

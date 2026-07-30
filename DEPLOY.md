@@ -167,14 +167,85 @@ Three options:
 
 The first two are recommended for v0.1.
 
-## 8. Custom domain
+## 8. Custom domain — `squintly.imazen.io`
+
+Registered on the Railway service 2026-07-30 (custom domain id
+`cdc7cd3a-607b-4073-a3ab-877abffee61e`). One DNS record is required:
+
+| Type | Name | Value | Proxy |
+|---|---|---|---|
+| `CNAME` | `squintly` (zone `imazen.io`) | `xgb5g1hb.up.railway.app` | **DNS only** |
+
+**Only the CNAME.** Railway's public-networking guide says "the `CNAME` and
+`TXT` records Railway provides — both are required", but that is the general
+case: the TXT is an ACME-verification record issued for apex and wildcard
+domains, where a CNAME is not usable. Querying this domain's own
+`status.dnsRecords` returns exactly one record, purpose
+`DNS_RECORD_PURPOSE_TRAFFIC_ROUTE`. **The API is the source of truth per
+domain** — check it rather than adding a TXT record that was never asked for.
+
+**Create it DNS-only (grey cloud).** Railway sits at
+`certificateStatus: VALIDATING_OWNERSHIP` until the hostname resolves to it,
+and issues a cert itself. Behind Cloudflare's proxy, Cloudflare terminates TLS
+at its edge, so that validation has nothing to reach. If you later want
+Cloudflare in front for caching, the SSL/TLS mode must be **Full (strict)** —
+under *Flexible* the Cloudflare→origin hop is plain HTTP while Railway
+redirects HTTP→HTTPS, which is an infinite redirect loop.
+
+### The CLI cannot do this; the API can
+
+`railway domain <name>` returns `Unauthorized. Please run railway login again.`
+even with a valid, unexpired session where `railway whoami`, `railway status`
+and `railway variables` all work (measured 2026-07-30 — token had 1.0h left).
+The same operation over GraphQL with the CLI's own stored `accessToken`
+succeeds. Use the API and don't waste time re-logging-in:
 
 ```bash
-railway domain                                  # current domain
-railway domain --custom squintly.imazen.io      # add a custom domain
+TOK=$(python3 -c "import json,pathlib; print(json.loads((pathlib.Path.home()/'.railway/config.json').read_text())['user']['accessToken'])")
+PROJ=3da5e21d-98a9-44a3-8db7-5707e570e76b
+ENV=d2d0990a-8ec9-4809-8af5-4506336125fa
+SVC=2ce0d56f-3e20-4251-87b0-599abcc6df90
+
+# What DNS does Railway want, and has the cert issued yet?
+curl -sS -X POST https://backboard.railway.com/graphql/v2 \
+  -H "Authorization: Bearer $TOK" -H 'content-type: application/json' \
+  -d "{\"query\":\"query(\$p:String!,\$e:String!,\$s:String!){ domains(projectId:\$p, environmentId:\$e, serviceId:\$s){ customDomains{ domain status{ certificateStatus dnsRecords{ hostlabel recordType requiredValue currentValue status zone purpose } } } } }\",\"variables\":{\"p\":\"$PROJ\",\"e\":\"$ENV\",\"s\":\"$SVC\"}}" \
+  | python3 -m json.tool
 ```
 
-DNS: add a CNAME pointing at the Railway-assigned hostname. Cert is auto.
+### Creating the DNS record
+
+`imazen.io` is on Cloudflare (`bill.ns` / `cloe.ns`). **No credential on this
+box can write DNS** (measured 2026-07-30):
+
+- wrangler's OAuth grant is `zone (read)` — read-only, and wrangler has no
+  DNS-record commands at all. Being "logged into wrangler" is *not* enough.
+- `~/.config/cloudflare/r2-credentials` is R2-scoped; it authenticates fine
+  (`/user/tokens/verify` → active) but returns an empty result for
+  `?name=imazen.io`, i.e. it cannot see the zone.
+
+So this needs either a token with **Zone → DNS → Edit** on `imazen.io`, or the
+dashboard. With such a token:
+
+```bash
+export CF_DNS_TOKEN=...                      # Zone:DNS:Edit on imazen.io
+ZONE=$(curl -sS -H "Authorization: Bearer $CF_DNS_TOKEN" \
+  "https://api.cloudflare.com/client/v4/zones?name=imazen.io" \
+  | python3 -c "import json,sys; print(json.load(sys.stdin)['result'][0]['id'])")
+
+curl -sS -X POST "https://api.cloudflare.com/client/v4/zones/$ZONE/dns_records" \
+  -H "Authorization: Bearer $CF_DNS_TOKEN" -H 'content-type: application/json' \
+  -d '{"type":"CNAME","name":"squintly","content":"xgb5g1hb.up.railway.app","proxied":false,"ttl":1}' \
+  | python3 -m json.tool
+```
+
+Then watch `certificateStatus` in the query above go from
+`VALIDATING_OWNERSHIP` to issued, and confirm end-to-end:
+
+```bash
+dig +short squintly.imazen.io
+curl -sS https://squintly.imazen.io/api/stats
+```
 
 ## 9. Local Docker smoke
 

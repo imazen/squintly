@@ -2,6 +2,51 @@
 
 ## [Unreleased]
 
+### Changed
+- **Every variant of a trial is preloaded; switching A / B / original is now a
+  visibility toggle** (this change). One `<img>` had its `src` rewritten on each
+  switch, so every flip re-fetched and re-decoded — and the cost is invisible in
+  the test suite (512 px mocks over localhost, ~4 ms) but not in the study:
+  measured against the live corpus, a real source is **9.5 MB and 0.33–1.1 s
+  cold** from R2. That was being paid on the first flick to the original, i.e.
+  exactly when the comparison matters. A/B comparison is a
+  same-place-different-picture task, and latency between the two pictures is
+  latency the observer has to bridge from memory.
+- **The trial screen says when it is loading.** A spinner covers the frame and
+  the response panel is disabled until the judged image is painted — answering
+  before it appears would record a judgement of something never seen. Time from
+  render to paint is recorded as `ui_ready_ms` so it stays separable from
+  `dwell_ms`: waiting for a decode is not deliberation.
+- The *next* trial is deliberately **not** prefetched. `enhance_pair_with_asap`
+  chooses it by expected information gain over the responses so far, so fetching
+  it early would pick the next stimulus without the current answer — trading
+  measurement efficiency for a saved round trip.
+
+### Added
+- **Keyboard control of the whole trial loop.** Letters commit, arrows look,
+  digits zoom or rate: `←`/`→` cycle A → B → original, `space` (held) peeks at
+  the original, `a`/`b`/`c` answer a pair trial, `1`–`4` rate a single-stimulus
+  one, `+`/`−`/`0` magnify, `?` shows a cheatsheet. One deliberate asymmetry:
+  digits rate on single trials (matching the numerals on the buttons) and
+  magnify on pair trials (where nothing owns them); `+`/`−`/`0` are the mapping
+  that never changes meaning.
+- **`hold` interaction mode** (desktop, `pointer: fine` only — it needs distinct
+  mouse buttons). The *original* is what you see at rest; hold left for A, right
+  for B, release to snap back. Faster for spotting a difference, because the eye
+  stays fixed and the picture changes under it. Selectable from the trial screen;
+  `tap` remains the default and the only mode offered on touch.
+- `responses.input_mode`, `keyboard_used`, `ui_ready_ms` (migration 0017;
+  `responses.tsv` schema_version 3 → 4). `input_mode` is stored rather than
+  inferred because it changes what `reveal_ms_total` measures — under `hold` the
+  reference is the resting state, so that column is naturally large. Pooling the
+  two without knowing which is which would put two quantities in one column.
+
+### Fixed
+- Switching to a variant that had not finished decoding computed pan limits of
+  zero and clamped the pan back to centre, losing the observer's place — the one
+  thing carrying pan across views exists to prevent. Caught by the existing
+  pan-preservation spec on the Z Fold inner display.
+
 ### Security
 - **`/api/auth/start` is rate limited** (this change), per address *and* per
   client network: a 60 s cooldown, 5 links per address per hour, 20 per network
@@ -58,10 +103,10 @@
     `outlier_rate_ceiling` is an explicit configurable rather than a number
     invented here and presented as ITU-R.
 - `POSTMARK_API_BASE` overrides the Postmark origin (default unchanged) so
-  `tests/auth_allowlist.rs` can assert both directions of the allowlist against
-  a local stub. Testing only the refusal would have left an inverted condition
+  `tests/auth_rate_limit_and_admin.rs` can assert both directions against a
+  local stub. Testing only the refusal would leave an inverted condition
   undetectable, and the magic-link flow previously had no way to be exercised
-  without sending real mail.
+  at all without sending real mail.
 
 ### Fixed
 - **Pair trials had no way to see the reference** (this change). The screen asks

@@ -90,6 +90,8 @@ p, label { line-height: 1.4; color: var(--fg); }
   height: 100dvh;
   gap: 8px;
   padding: max(8px, env(safe-area-inset-top)) 8px max(8px, env(safe-area-inset-bottom));
+  /* The keyboard-help overlay is absolutely positioned against this. */
+  position: relative;
 }
 .progress {
   display: flex;
@@ -150,6 +152,107 @@ p, label { line-height: 1.4; color: var(--fg); }
   /* Nearest-neighbour on the off-chance anything ever scales it: a blurry
      resample would hide exactly the artefacts under test. */
   image-rendering: pixelated;
+}
+
+/* Every variant (A, B, original) is a stacked layer, all loaded up front, and
+   switching only flips which is visible. Absolute + inset:0 + margin:auto
+   centres an element that has an explicit width/height, which leaves
+   `transform` free to carry the pan offset alone. */
+.viewport img.layer {
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  /* `visibility` rather than `display:none`: a hidden layer keeps its box and
+     stays decoded, so revealing it is a paint and not a re-layout. */
+  visibility: hidden;
+}
+.viewport img.layer.shown { visibility: visible; }
+
+/* Loading state. The panel is disabled until the judged image is painted, so
+   this is the only thing between the observer and answering — it has to be
+   visible without hiding the frame it sits in. */
+.viewport-status {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: rgba(0, 0, 0, 0.55);
+  z-index: 2;
+}
+.viewport:not(.is-loading) .viewport-status { display: none; }
+
+.spinner {
+  width: 34px;
+  height: 34px;
+  border: 3px solid rgba(255, 255, 255, 0.25);
+  border-top-color: var(--accent, #6cf);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  .spinner { animation-duration: 2.4s; }
+}
+.trial-loading { gap: 1rem; }
+
+/* Interaction-mode picker (desktop only — `hold` needs a mouse). */
+.mode-picker select {
+  font: inherit;
+  padding: 0.4rem 0.5rem;
+  min-height: 44px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--card);
+  color: inherit;
+}
+.keys-btn {
+  min-width: 44px;
+  min-height: 44px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--card);
+  color: inherit;
+  font-size: 1.1rem;
+}
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.key-help {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: rgba(0, 0, 0, 0.7);
+  z-index: 5;
+}
+.key-help-card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 1rem 1.25rem;
+  max-width: min(92vw, 26rem);
+}
+.key-help-card h3 { margin: 0 0 0.5rem; }
+.key-help-card dl {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.35rem 0.9rem;
+  margin: 0 0 0.6rem;
+}
+.key-help-card dt { font-family: ui-monospace, monospace; white-space: nowrap; }
+.key-help-card dd { margin: 0; }
+
+/* A disabled response button must read as "not yet", not as broken. */
+.rating-panel button:disabled,
+.pair-panel button:disabled {
+  opacity: 0.45;
+  cursor: progress;
 }
 .reveal-hint {
   justify-self: center;

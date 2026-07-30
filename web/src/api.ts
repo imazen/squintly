@@ -107,6 +107,13 @@ export interface ResponseReq {
   pannable_h_css: number;
   visible_w_css: number;
   visible_h_css: number;
+  /// How the observer drove the UI. Changes what `reveal_ms_total` measures
+  /// (see migration 0017), so it travels with every response rather than being
+  /// inferred later.
+  input_mode: 'tap' | 'hold';
+  keyboard_used: boolean;
+  /// Render → judged-image-painted, kept out of `dwell_ms`'s interpretation.
+  ui_ready_ms: number | null;
   viewport_w_css: number;
   viewport_h_css: number;
   orientation: 'portrait' | 'landscape';

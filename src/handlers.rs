@@ -697,6 +697,16 @@ fn one() -> f64 {
     1.0
 }
 
+fn tap_mode() -> String {
+    "tap".to_string()
+}
+
+/// The input modes the UI can be driven in. An unrecognised value is refused
+/// rather than stored: this column tells an analyst how to read
+/// `reveal_ms_total`, so a typo silently persisted would quietly mislabel the
+/// data it exists to disambiguate.
+pub const INPUT_MODES: &[&str] = &["tap", "hold"];
+
 #[derive(Debug, Deserialize)]
 pub struct ResponseReq {
     pub choice: String,
@@ -731,6 +741,18 @@ pub struct ResponseReq {
     pub image_displayed_h_css: f64,
     pub intrinsic_to_device_ratio: f64,
     pub pixels_per_degree: Option<f64>,
+    /// How the observer drove the UI: `tap` (segmented control, hold-to-reveal)
+    /// or `hold` (reference at rest, mouse button flicks to A/B). It changes
+    /// what `reveal_ms_total` measures — see migration 0017 — so it is stored
+    /// rather than inferred. Unknown values are rejected, not coerced.
+    #[serde(default = "tap_mode")]
+    pub input_mode: String,
+    #[serde(default)]
+    pub keyboard_used: bool,
+    /// Time from trial render to the judged image being painted. Kept out of
+    /// `dwell_ms`'s interpretation: a slow first paint is not deliberation.
+    #[serde(default)]
+    pub ui_ready_ms: Option<i64>,
 }
 
 #[derive(Debug, Serialize)]
@@ -758,6 +780,13 @@ pub async fn record_response(
             Some(r) => (r.get(0), r.get(1), r.get(2), r.get(3)),
             None => return Err(AppError::NotFound(format!("trial {trial_id}"))),
         };
+    if !INPUT_MODES.contains(&req.input_mode.as_str()) {
+        return Err(AppError::BadRequest(format!(
+            "unknown input_mode {:?}; known: {:?}",
+            req.input_mode, INPUT_MODES
+        )));
+    }
+
     // Heuristic for dpr at trial time: image_displayed_w_css * dpr ≈ on-screen device px.
     // We don't carry dpr in the response payload; pull from the session.
     let dpr_row: (f64,) = sqlx::query_as(
@@ -788,8 +817,8 @@ pub async fn record_response(
          zoom_used, viewport_w_css, viewport_h_css, orientation, image_displayed_w_css, \
          image_displayed_h_css, intrinsic_to_device_ratio, pixels_per_degree, response_flags, \
          responded_at, pan_count, pan_distance_css, pannable_w_css, pannable_h_css, \
-         visible_w_css, visible_h_css, zoom_factor) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+         visible_w_css, visible_h_css, zoom_factor, input_mode, keyboard_used, ui_ready_ms) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&trial_id)
     .bind(&req.choice)
@@ -813,6 +842,9 @@ pub async fn record_response(
     .bind(req.visible_w_css)
     .bind(req.visible_h_css)
     .bind(req.zoom_factor.max(1.0))
+    .bind(&req.input_mode)
+    .bind(req.keyboard_used as i64)
+    .bind(req.ui_ready_ms)
     .execute(&state.pool)
     .await?;
 
@@ -907,7 +939,7 @@ fn schema_version(kind: ExportKind) -> u32 {
         // the pan/visible-area telemetry that the 1:1 display rule made
         // necessary. Appended rather than inserted so positional consumers
         // keep working; the bump is here so strict ones can refuse.
-        ExportKind::Responses => 3,
+        ExportKind::Responses => 4,
         ExportKind::Unified => 1,
     }
 }
@@ -1939,9 +1971,10 @@ mod tests {
     fn responses_schema_version_reflects_the_appended_columns() {
         assert_eq!(
             schema_version(ExportKind::Responses),
-            3,
-            "v2 added study_id + pan/visible telemetry; v3 appends the participant \
-             exclusion disposition. Bump whenever columns change."
+            4,
+            "v2 added study_id + pan/visible telemetry; v3 the participant exclusion \
+             disposition; v4 input_mode + keyboard_used + ui_ready_ms. Bump whenever \
+             columns change."
         );
         assert_eq!(schema_version(ExportKind::Pareto), 1, "pareto is unchanged");
     }

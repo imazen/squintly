@@ -44,6 +44,19 @@ web component from `~/work/efficient-ui/`. No framework.
   boundary, so soft weighting (which `grading.rs` already does) supersedes it.
   `insufficient_data` ≠ `included`; a solo expert lands there because there are
   no peers to be an outlier against.
+- **Trial variants are preloaded; the next trial is not.** `trial.ts` stacks A,
+  B and the original as separate `<img>` layers loaded up front, so switching is
+  a visibility toggle rather than a `src` rewrite (a real source is 9.5 MB /
+  0.33–1.1 s cold from R2 — measured 2026-07-30 — and that was paid on the first
+  flick to the original). The response panel is disabled until the judged image
+  paints. The *next trial* is deliberately not prefetched: `enhance_pair_with_asap`
+  picks it by expected information gain over the answers so far, so fetching
+  early would choose the stimulus without the current response.
+- **`input_mode` is recorded because it changes what other columns mean.**
+  `tap` shows the encoding and peeks at the reference; `hold` (desktop only)
+  inverts that — the reference is the resting view. So `reveal_ms_total` measures
+  a peek in one and the default state in the other. Migration 0017; same
+  reasoning as `study_id`.
 - **Source-informing-sweep rule applies.** Sampling MUST cover all 4 size buckets and
   weight low-q encodings. See `src/sampling.rs`.
 

@@ -3,6 +3,30 @@
 ## [Unreleased]
 
 ### Fixed
+- **The better image was always B on pair trials** (this change). `try_pair`
+  takes two adjacent rungs from a quality-ascending list as
+  `(sorted[i], sorted[i+1])`, so slot B held the higher-quality — and larger —
+  encoding on every trial: **60/60 measured against the live deployment**, both
+  by quality and by bytes. In a 2AFC asking "which is closer to the original"
+  that makes the answer constant, so an observer who notices scores perfectly
+  without looking, and every pair response conflates a judgement about quality
+  with a preference for a side. Neither the Bradley–Terry fit nor a SROCC
+  against a metric can separate the two afterwards.
+  - `sampling::counterbalance_pair` randomises the slots, applied at **one**
+    choke point in `next_trial` after every path that can build a pair (the
+    ASAP override included), so no route can bypass it.
+  - `expected_choice` is flipped with the slots. A golden pair whose answer is
+    recorded as "a" becomes "b" once the encodings trade places; not flipping it
+    would turn counterbalancing into a honeypot that fails every honest
+    observer. `"tie"` names no side and is left alone.
+  - zenpapers `ch3-5_sampling_screening_cis.md` §4.6 prescribes exactly this —
+    a suspected side-biased UI needs "explicit position-counterbalancing" (JPEG
+    XL CfP) before per-subject modelling means anything.
+  - Verified by reintroducing the bug: the new e2e went red reporting slot B at
+    **100%** of trials.
+  - **Pair responses recorded before this are not usable for rank agreement.**
+    They cannot be distinguished from position preference. 23 responses existed
+    live at the time of the fix, most of them single-stimulus.
 - **`ssim2-nonphoto` was serving photographs** (this change). The study
   constrained only the trial *mix* (forced choice) and never the *content*, so
   it drew from all 21 canonical strata — 8 of which are photographic. On the

@@ -133,6 +133,52 @@ test.describe('study selection', () => {
     expect(sawPhoto, 'the unrestricted study must still see photographs').toBe(true);
   });
 
+  // Position counterbalancing, at the endpoint the observer actually hits.
+  //
+  // `try_pair` builds `(sorted[i], sorted[i+1])` from a quality-ascending list,
+  // so slot B held the better image on every trial — 60/60 measured against the
+  // live deployment. That makes "which is closer to the original" have a
+  // constant answer, and no downstream fit can tell a quality judgement from a
+  // side preference afterwards. The unit tests cover the swap helper; this
+  // covers the wiring, which is what was actually missing.
+  test('the better image is not always in the same slot', async ({ request }) => {
+    const sess = await (
+      await request.post('/api/session', {
+        data: {
+          observer_id: null,
+          user_agent: 'e2e',
+          device_pixel_ratio: 2,
+          screen_width_css: 400,
+          screen_height_css: 800,
+          local_date: new Date().toISOString().slice(0, 10),
+          supported_codecs: ['jpeg', 'webp'],
+          study_id: 'ssim2-nonphoto',
+        },
+      })
+    ).json();
+
+    let bBetter = 0;
+    let total = 0;
+    for (let i = 0; i < 80; i++) {
+      const r = await request.get(`/api/trial/next?session_id=${sess.session_id}`);
+      if (!r.ok()) continue;
+      const t = await r.json();
+      if (t.kind !== 'pair' || t.a?.quality == null || t.b?.quality == null) continue;
+      total += 1;
+      if (t.b.quality > t.a.quality) bBetter += 1;
+    }
+
+    expect(total, 'needed pair trials to measure').toBeGreaterThan(20);
+    const frac = bBetter / total;
+    // Binomial(n>=20, 0.5). A generous band keeps this from flaking while still
+    // failing hard on the actual bug, which sat at 1.00.
+    expect(
+      frac,
+      `the better image was in slot B ${(frac * 100).toFixed(0)}% of ${total} trials`,
+    ).toBeGreaterThan(0.2);
+    expect(frac).toBeLessThan(0.8);
+  });
+
   test('picking a study on the welcome screen tags the session', async ({ page }) => {
     await gotoFresh(page);
     const picker = page.locator('#study-picker');

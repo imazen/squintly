@@ -589,6 +589,13 @@ pub async fn next_trial(
     // silently if the fit is under-determined.
     let plan = enhance_pair_with_asap(&state.pool, &manifest, plan).await;
 
+    // Position counterbalancing, applied here and nowhere else: this is the one
+    // point every pair passes through, whether it came from `try_pair` or the
+    // ASAP override. Without it slot B held the higher-quality encoding on every
+    // trial (measured 60/60 live), so "which is closer to the original" had the
+    // same answer every time. See `sampling::counterbalance_pair`.
+    let plan = crate::sampling::counterbalance_pair(plan, &mut rand::rng());
+
     let trial_id = Uuid::new_v4().to_string();
     let served_at = now_ms();
 

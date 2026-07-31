@@ -34,6 +34,13 @@ web component from `~/work/efficient-ui/`. No framework.
   Note `p_single = 0` does NOT give a forced-choice run: the sampler falls back
   to a single when no non-trivial pair exists, and honeypots and anchors are
   themselves single-stimulus. Use the study (or `SQUINTLY_PAIRWISE_ONLY=1`).
+- **Pair slots are counterbalanced; never assume A/B ordering.**
+  `sampling::counterbalance_pair` randomises which encoding lands in slot A,
+  applied once in `next_trial` after every pair-building path. Before it,
+  `try_pair`'s `(sorted[i], sorted[i+1])` put the better image in B on 60/60
+  live trials, making the 2AFC answer constant. `expected_choice` flips with
+  the slots. Anything downstream must key on `a_encoding_id`/`b_encoding_id`,
+  never on "b is the better one".
 - **A study's content restriction is as load-bearing as its trial mix.**
   `src/content_class.rs` maps a source's `corpus` (the stratum name — the only
   content signal `SourceMeta` carries) to photo / non-photo, and

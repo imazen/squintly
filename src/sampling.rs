@@ -79,6 +79,63 @@ fn source_passes_content(manifest: &Manifest, source_hash: &str, content: Conten
     }
 }
 
+/// Randomise which encoding lands in slot A and which in slot B.
+///
+/// **Position counterbalancing.** `try_pair` picks two adjacent rungs from a
+/// quality-sorted list as `(sorted[i], sorted[i + 1])`, so slot B held the
+/// higher-quality encoding on *every* pair trial — measured 60/60 against the
+/// live deployment. In a 2AFC asking "which is closer to the original", that
+/// makes B the correct answer every time: an observer who notices scores
+/// perfectly without looking, and every response conflates a judgement about
+/// quality with a preference for a side. Neither the Bradley-Terry fit nor a
+/// SROCC against a metric can separate the two after the fact.
+///
+/// zenpapers `ch3-5_sampling_screening_cis.md` §4.6 names this directly — a
+/// suspected side-biased UI calls for "explicit position-counterbalancing"
+/// (JPEG XL CfP) before any of the per-subject modelling is meaningful.
+///
+/// Applied at one choke point in `handlers::next_trial`, after every path that
+/// can build a pair (including the ASAP override), so no route can skip it.
+/// `expected_choice` is flipped with the slots — a golden pair whose answer is
+/// recorded as "a" is answered "b" once the encodings trade places, and not
+/// flipping it would turn counterbalancing into a honeypot that fails everyone.
+pub fn counterbalance_pair<R: Rng + ?Sized>(plan: TrialPlan, r: &mut R) -> TrialPlan {
+    let TrialPlan::Pair {
+        source,
+        a,
+        b,
+        is_golden,
+        expected_choice,
+        held_out,
+    } = plan
+    else {
+        return plan;
+    };
+    if r.random::<bool>() {
+        return TrialPlan::Pair {
+            source,
+            a,
+            b,
+            is_golden,
+            expected_choice,
+            held_out,
+        };
+    }
+    TrialPlan::Pair {
+        source,
+        a: b,
+        b: a,
+        is_golden,
+        expected_choice: expected_choice.map(|c| match c.as_str() {
+            "a" => "b".to_string(),
+            "b" => "a".to_string(),
+            // "tie" and anything else is position-free.
+            _ => c,
+        }),
+        held_out,
+    }
+}
+
 fn codec_allowed(codec: &str, allowed: Option<&HashSet<String>>) -> bool {
     let Some(allowed) = allowed else { return true };
     let family = codec_browser_family(codec);
@@ -995,6 +1052,156 @@ mod tests {
         );
         // The same manifest still serves an unrestricted study.
         assert!(pick_trial(&manifest, &SamplerConfig::default(), None, None, None).is_some());
+    }
+
+    /// The bug: `try_pair` returns `(sorted[i], sorted[i+1])` from a
+    /// quality-ascending list, so slot B was the better image on every trial —
+    /// 60/60 measured live. In a "which is closer to the original" task that
+    /// makes the answer constant, and no downstream fit can separate a quality
+    /// judgement from a side preference after the fact.
+    #[test]
+    fn pair_slots_are_counterbalanced() {
+        let src = SourceMeta {
+            hash: "s1".into(),
+            width: 512,
+            height: 512,
+            size_bytes: 1000,
+            corpus: Some("imazen26-7000-lilith-plots".into()),
+            filename: None,
+        };
+        let enc = |id: &str, q: f32| EncodingMeta {
+            id: id.into(),
+            source_hash: "s1".into(),
+            codec: "mozjpeg".into(),
+            quality: Some(q),
+            effort: None,
+            bytes: (q as u64) * 100,
+        };
+
+        let mut r = rng();
+        let mut b_better = 0;
+        const N: usize = 2000;
+        for _ in 0..N {
+            let plan = TrialPlan::Pair {
+                source: src.clone(),
+                a: enc("low", 30.0),
+                b: enc("high", 60.0),
+                is_golden: false,
+                expected_choice: None,
+                held_out: false,
+            };
+            if let TrialPlan::Pair { a, b, .. } = counterbalance_pair(plan, &mut r) {
+                assert_ne!(a.id, b.id, "counterbalancing must not duplicate a side");
+                if b.quality.unwrap() > a.quality.unwrap() {
+                    b_better += 1;
+                }
+            }
+        }
+        // Binomial(2000, 0.5): ±5% is ~4.5 sigma, so this is tight without
+        // being flaky.
+        let frac = b_better as f64 / N as f64;
+        assert!(
+            (0.45..=0.55).contains(&frac),
+            "better image landed in B {:.1}% of the time; expected ~50%",
+            frac * 100.0
+        );
+    }
+
+    /// A golden pair records which side is correct. Swapping the encodings
+    /// without swapping the answer would turn counterbalancing into a honeypot
+    /// that every honest observer fails.
+    #[test]
+    fn counterbalancing_flips_the_expected_answer_with_the_slots() {
+        let src = SourceMeta {
+            hash: "s1".into(),
+            width: 512,
+            height: 512,
+            size_bytes: 1000,
+            corpus: None,
+            filename: None,
+        };
+        let enc = |id: &str, q: f32| EncodingMeta {
+            id: id.into(),
+            source_hash: "s1".into(),
+            codec: "mozjpeg".into(),
+            quality: Some(q),
+            effort: None,
+            bytes: 1000,
+        };
+        let mut r = rng();
+        let mut swapped = 0;
+        let mut kept = 0;
+        for _ in 0..500 {
+            let plan = TrialPlan::Pair {
+                source: src.clone(),
+                a: enc("worse", 30.0),
+                b: enc("better", 60.0),
+                is_golden: true,
+                // The better image is "b" in the unswapped layout.
+                expected_choice: Some("b".to_string()),
+                held_out: false,
+            };
+            // Slot A identifies the layout on its own; B is implied.
+            let TrialPlan::Pair {
+                a, expected_choice, ..
+            } = counterbalance_pair(plan, &mut r)
+            else {
+                unreachable!()
+            };
+            // Whatever the layout, the expected answer must name the slot that
+            // actually holds the better encoding.
+            let better_slot = if a.id == "better" { "a" } else { "b" };
+            assert_eq!(
+                expected_choice.as_deref(),
+                Some(better_slot),
+                "expected_choice must follow the encoding, not the slot"
+            );
+            if a.id == "better" {
+                swapped += 1;
+            } else {
+                kept += 1;
+            }
+        }
+        assert!(swapped > 0 && kept > 0, "both layouts must occur");
+    }
+
+    /// "tie" names no side, so it must survive a swap untouched.
+    #[test]
+    fn a_tie_expectation_is_position_free() {
+        let src = SourceMeta {
+            hash: "s1".into(),
+            width: 1,
+            height: 1,
+            size_bytes: 1,
+            corpus: None,
+            filename: None,
+        };
+        let enc = |id: &str| EncodingMeta {
+            id: id.into(),
+            source_hash: "s1".into(),
+            codec: "mozjpeg".into(),
+            quality: Some(50.0),
+            effort: None,
+            bytes: 1,
+        };
+        let mut r = rng();
+        for _ in 0..50 {
+            let plan = TrialPlan::Pair {
+                source: src.clone(),
+                a: enc("x"),
+                b: enc("y"),
+                is_golden: true,
+                expected_choice: Some("tie".to_string()),
+                held_out: false,
+            };
+            let TrialPlan::Pair {
+                expected_choice, ..
+            } = counterbalance_pair(plan, &mut r)
+            else {
+                unreachable!()
+            };
+            assert_eq!(expected_choice.as_deref(), Some("tie"));
+        }
     }
 
     #[test]

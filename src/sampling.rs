@@ -9,6 +9,7 @@ use rand::prelude::SliceRandom;
 use rand::{Rng, rng};
 
 use crate::coefficient::{EncodingMeta, Manifest, SourceMeta};
+use crate::content_class::{ContentFilter, classify};
 
 /// Map a codec name (as coefficient emits it) to the browser's native-decode
 /// family. Keep aligned with `web/src/codec-probe.ts`.
@@ -68,6 +69,16 @@ fn choose_codec<'a, 'b>(
     None
 }
 
+/// Does the manifest source behind this hash satisfy the study's content
+/// restriction? A hash the manifest doesn't know cannot be classified, so it is
+/// refused under any restriction — same fail-closed rule as an unknown stratum.
+fn source_passes_content(manifest: &Manifest, source_hash: &str, content: ContentFilter) -> bool {
+    match manifest.sources.iter().find(|s| s.hash == source_hash) {
+        Some(s) => content.accepts(classify(s.corpus.as_deref())),
+        None => content == ContentFilter::Any,
+    }
+}
+
 fn codec_allowed(codec: &str, allowed: Option<&HashSet<String>>) -> bool {
     let Some(allowed) = allowed else { return true };
     let family = codec_browser_family(codec);
@@ -114,6 +125,14 @@ pub struct SamplerConfig {
     /// Probability of overriding with an anchor (non-golden) trial when the
     /// source has registered anchors. CID22 ≈ 30% of session slots reserved.
     pub p_anchor: f32,
+    /// Which sources the study will draw from.
+    ///
+    /// The trial *mix* and the *content* are separate axes and both belong to
+    /// the study. `ssim2-nonphoto` constrained only the mix for a while, so it
+    /// served forced-choice trials over the whole corpus — including the 8
+    /// photographic strata — under a label that says it is about non-photo
+    /// content. See `content_class`.
+    pub content: ContentFilter,
     /// Serve **only** pairwise (2AFC) trials, never single-stimulus ratings.
     ///
     /// For a rank-agreement study — e.g. validating SSIMULACRA2 as the
@@ -136,6 +155,7 @@ impl Default for SamplerConfig {
             p_single: 0.65,
             p_honeypot: 0.083,
             p_anchor: 0.30,
+            content: ContentFilter::Any,
             pairwise_only: false,
         }
     }
@@ -176,6 +196,7 @@ impl SamplerConfig {
             },
             p_honeypot: prob("SQUINTLY_P_HONEYPOT", d.p_honeypot),
             p_anchor: prob("SQUINTLY_P_ANCHOR", d.p_anchor),
+            content: d.content,
             pairwise_only,
         }
     }
@@ -256,7 +277,9 @@ pub fn pick_trial(
     // for some manifest source, return one immediately.
     if let Some(pool) = anchors.filter(|_| inject_singles) {
         if !pool.honeypots.is_empty() && r.random::<f32>() < cfg.p_honeypot {
-            if let Some(plan) = pick_honeypot(manifest, pool, allowed_codecs, flags, &mut r) {
+            if let Some(plan) =
+                pick_honeypot(manifest, pool, allowed_codecs, flags, cfg.content, &mut r)
+            {
                 return Some(plan);
             }
         }
@@ -265,13 +288,28 @@ pub fn pick_trial(
     // Second chance: anchor (non-golden). Same idea, lower probability.
     if let Some(pool) = anchors.filter(|_| inject_singles) {
         if !pool.anchors.is_empty() && r.random::<f32>() < cfg.p_anchor {
-            if let Some(plan) = pick_anchor(manifest, pool, allowed_codecs, flags, &mut r) {
+            if let Some(plan) =
+                pick_anchor(manifest, pool, allowed_codecs, flags, cfg.content, &mut r)
+            {
                 return Some(plan);
             }
         }
     }
 
-    let mut order: Vec<&SourceMeta> = manifest.sources.iter().collect();
+    // Content restriction applies to the *whole* draw, honeypots and anchors
+    // included — an anchor from a photographic stratum is still a photo trial
+    // filed under a non-photo study.
+    let mut order: Vec<&SourceMeta> = manifest
+        .sources
+        .iter()
+        .filter(|s| cfg.content.accepts(classify(s.corpus.as_deref())))
+        .collect();
+    if order.is_empty() {
+        // No fallback to the unrestricted pool. Serving a photo here is exactly
+        // the bug this filter exists to fix; a caller seeing None reports a
+        // clear shortage instead.
+        return None;
+    }
     order.shuffle(&mut r);
     let prefer_single = r.random::<f32>() < cfg.p_single;
 
@@ -380,12 +418,16 @@ fn pick_honeypot<R: Rng + ?Sized>(
     pool: &AnchorPool,
     allowed_codecs: Option<&HashSet<String>>,
     flags: Option<&SourceFlagMap>,
+    content: ContentFilter,
     r: &mut R,
 ) -> Option<TrialPlan> {
+    // A honeypot from a photographic stratum is still a photo trial, so the
+    // content restriction has to reach here too — not just the general draw.
     let candidates: Vec<&AnchorEntry> = pool
         .honeypots
         .iter()
         .filter(|h| codec_allowed(&h.codec, allowed_codecs))
+        .filter(|h| source_passes_content(manifest, &h.source_hash, content))
         .collect();
     if candidates.is_empty() {
         return None;
@@ -415,12 +457,14 @@ fn pick_anchor<R: Rng + ?Sized>(
     pool: &AnchorPool,
     allowed_codecs: Option<&HashSet<String>>,
     flags: Option<&SourceFlagMap>,
+    content: ContentFilter,
     r: &mut R,
 ) -> Option<TrialPlan> {
     let candidates: Vec<&AnchorEntry> = pool
         .anchors
         .iter()
         .filter(|a| codec_allowed(&a.codec, allowed_codecs))
+        .filter(|a| source_passes_content(manifest, &a.source_hash, content))
         .collect();
     if candidates.is_empty() {
         return None;
@@ -842,6 +886,117 @@ mod tests {
     /// enough — a source with no non-trivial adjacent pair still yields a
     /// rating. For a rank-agreement study (imazen/squintly#4) that silently
     /// mixes two different scales into one analysis.
+    /// The bug this filter fixes: `ssim2-nonphoto` drew from the whole corpus,
+    /// so photographic strata appeared in a study whose name says they cannot.
+    #[test]
+    fn a_non_photo_study_never_draws_a_photographic_source() {
+        // A manifest shaped like the live one: photo and non-photo strata mixed.
+        let strata = [
+            ("imazen26-1400-lilith-nature", true),
+            ("imazen26-2000-unsplash-people", true),
+            ("imazen26-3300-met-museum-photos", true),
+            ("imazen26-8000-lilith-mobile-screenshots", false),
+            ("imazen26-7000-lilith-plots", false),
+            ("imazen26-6800-ia-scans-manuscript-text", false),
+        ];
+        let mut sources = Vec::new();
+        let mut encodings = Vec::new();
+        for (i, (corpus, _)) in strata.iter().enumerate() {
+            let hash = format!("src{i}");
+            sources.push(SourceMeta {
+                hash: hash.clone(),
+                width: 512,
+                height: 512,
+                size_bytes: 100_000,
+                corpus: Some((*corpus).to_string()),
+                filename: Some(format!("{corpus}.png")),
+            });
+            for (j, q) in [20.0f32, 40.0, 60.0, 80.0].iter().enumerate() {
+                encodings.push(EncodingMeta {
+                    id: format!("{hash}-e{j}"),
+                    source_hash: hash.clone(),
+                    codec: "mozjpeg".into(),
+                    quality: Some(*q),
+                    effort: None,
+                    bytes: (5_000 * (j + 1)) as u64,
+                });
+            }
+        }
+        let manifest = Manifest { sources, encodings };
+
+        let cfg = SamplerConfig {
+            p_single: 0.0,
+            p_honeypot: 0.0,
+            p_anchor: 0.0,
+            content: ContentFilter::NonPhotoOnly,
+            pairwise_only: true,
+        };
+
+        let photo: std::collections::HashSet<&str> = strata
+            .iter()
+            .filter(|(_, is_photo)| *is_photo)
+            .map(|(c, _)| *c)
+            .collect();
+
+        let mut seen = std::collections::HashSet::new();
+        for _ in 0..400 {
+            let plan = pick_trial(&manifest, &cfg, None, None, None).expect("pool is non-empty");
+            let corpus = match &plan {
+                TrialPlan::Single { source, .. } => source.corpus.clone(),
+                TrialPlan::Pair { source, .. } => source.corpus.clone(),
+            }
+            .unwrap();
+            assert!(
+                !photo.contains(corpus.as_str()),
+                "non-photo study served a photographic stratum: {corpus}"
+            );
+            seen.insert(corpus);
+        }
+        // ...and it must reach all three non-photo strata, not collapse onto one.
+        assert_eq!(
+            seen.len(),
+            3,
+            "expected every non-photo stratum, saw {seen:?}"
+        );
+    }
+
+    /// An unregistered stratum must not slip into a restricted study, and an
+    /// empty pool must refuse rather than quietly fall back to the full corpus
+    /// — falling back is precisely the original bug.
+    #[test]
+    fn an_unclassifiable_pool_refuses_rather_than_falling_back() {
+        let manifest = Manifest {
+            sources: vec![SourceMeta {
+                hash: "s1".into(),
+                width: 512,
+                height: 512,
+                size_bytes: 1000,
+                corpus: Some("some-stratum-added-later".into()),
+                filename: None,
+            }],
+            encodings: (0..4)
+                .map(|j| EncodingMeta {
+                    id: format!("e{j}"),
+                    source_hash: "s1".into(),
+                    codec: "mozjpeg".into(),
+                    quality: Some(20.0 * (j + 1) as f32),
+                    effort: None,
+                    bytes: 5_000 * (j + 1),
+                })
+                .collect(),
+        };
+        let restricted = SamplerConfig {
+            content: ContentFilter::NonPhotoOnly,
+            ..SamplerConfig::default()
+        };
+        assert!(
+            pick_trial(&manifest, &restricted, None, None, None).is_none(),
+            "an unknown stratum must not be admitted to a restricted study"
+        );
+        // The same manifest still serves an unrestricted study.
+        assert!(pick_trial(&manifest, &SamplerConfig::default(), None, None, None).is_some());
+    }
+
     #[test]
     fn pairwise_only_never_emits_a_single() {
         use crate::coefficient::{EncodingMeta, Manifest, SourceMeta};
@@ -895,6 +1050,7 @@ mod tests {
             p_single: 0.0,
             p_honeypot: 1.0,
             p_anchor: 1.0,
+            content: ContentFilter::Any,
             pairwise_only: true,
         };
         let mut allowed = HashSet::new();

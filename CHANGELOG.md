@@ -2,6 +2,38 @@
 
 ## [Unreleased]
 
+### Fixed
+- **`ssim2-nonphoto` was serving photographs** (this change). The study
+  constrained only the trial *mix* (forced choice) and never the *content*, so
+  it drew from all 21 canonical strata — 8 of which are photographic. On the
+  live corpus (4 sources per stratum) that is roughly **38% of its trials**.
+  Nothing looked broken: each one is a valid pairwise judgement, filed under a
+  label that says it is about non-photo content, which makes it an answer to a
+  question nobody asked. `src/content_class.rs` classifies a source from its
+  stratum and `SamplerConfig::content` restricts the draw; the study now
+  declares `ContentFilter::NonPhotoOnly`.
+  - The restriction covers honeypots and anchors too — an anchor from a
+    photographic stratum is still a photo trial.
+  - An **unregistered stratum is refused**, not admitted. Defaulting the other
+    way would let a stratum added to `build_demo_corpus.py` but not to the Rust
+    registry quietly enter the non-photo pool — the same silent mislabelling,
+    moved. Failing closed makes it a visible shortage instead.
+  - An emptied pool returns a 409 that **names the restriction and counts the
+    eligible sources**, rather than the generic "empty manifest or no matching
+    codecs" — which would send an operator to inspect the sampler when the
+    answer is the corpus.
+  - Guards: `content_class::strata_agree_with_the_corpus_builder` (the
+    counterpart to the licensing drift guard),
+    `studies::studies_claiming_a_content_type_restrict_it` (catches the next
+    study added by copy-paste), and `tests/nonphoto_live_manifest.rs`, which
+    asserts the classification against the corpus values the live deployment
+    actually serves. Verified by reintroducing the bug: both the unit guards and
+    the e2e went red, the latter naming the stratum it served.
+  - `web/e2e/mock-coefficient.ts` now carries real stratum names instead of
+    `corpus: 'test'`. Everything classified as `Unknown` before, which made the
+    restriction untestable — and, prior to the filter, hid that the study was
+    serving photographs at all.
+
 ### Changed
 - **Every variant of a trial is preloaded; switching A / B / original is now a
   visibility toggle** (this change). One `<img>` had its `src` rewritten on each

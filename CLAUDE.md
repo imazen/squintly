@@ -34,6 +34,15 @@ web component from `~/work/efficient-ui/`. No framework.
   Note `p_single = 0` does NOT give a forced-choice run: the sampler falls back
   to a single when no non-trivial pair exists, and honeypots and anchors are
   themselves single-stimulus. Use the study (or `SQUINTLY_PAIRWISE_ONLY=1`).
+- **A study's content restriction is as load-bearing as its trial mix.**
+  `src/content_class.rs` maps a source's `corpus` (the stratum name — the only
+  content signal `SourceMeta` carries) to photo / non-photo, and
+  `SamplerConfig::content` restricts the draw. `ssim2-nonphoto` served ~38%
+  photographs while constraining only `pairwise_only`, because the name was the
+  only thing asserting the content. Unknown strata are REFUSED by a restricted
+  study, never admitted; keep the table in sync with
+  `scripts/build_demo_corpus.py::R2_STRATA` (guarded by
+  `strata_agree_with_the_corpus_builder`).
 - **Participant exclusion is a recorded disposition, never a delete.**
   `src/exclusion.rs` runs the zenpapers Ch. 4 screens (§4.4 peer-mean
   correlation, §4.2.1 BT.500 kurtosis-2 band) and writes

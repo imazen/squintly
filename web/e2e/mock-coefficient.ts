@@ -111,15 +111,25 @@ interface SourceMeta { hash: string; width: number; height: number; size_bytes: 
 interface EncodingMeta { id: string; source_hash: string; codec_name: string; quality: number; encoded_size: number }
 
 function buildManifest() {
+  // `corpus` carries the canonical stratum name, exactly as the live manifest
+  // does — the server derives photo vs non-photo from it (`content_class`), so
+  // a mock that said `corpus: 'test'` classified everything as Unknown and made
+  // the content-restricted study untestable (and, before the filter existed,
+  // hid the fact that it was serving photographs).
+  //
+  // The mix is deliberate: two non-photo strata and two photographic ones, so
+  // `ssim2-nonphoto` has a real pool AND something it must exclude.
   const sources: SourceMeta[] = [
-    { hash: 'src01', width: 256, height: 256, size_bytes: 24_000, corpus: 'test', filename: 'a.png' },
-    { hash: 'src02', width: 1024, height: 1024, size_bytes: 310_000, corpus: 'test', filename: 'b.png' },
-    { hash: 'src03', width: 512, height: 384, size_bytes: 61_000, corpus: 'test', filename: 'c.png' },
+    { hash: 'src01', width: 256, height: 256, size_bytes: 24_000, corpus: 'imazen26-8000-lilith-mobile-screenshots', filename: 'a.png' },
+    { hash: 'src02', width: 1024, height: 1024, size_bytes: 310_000, corpus: 'imazen26-1400-lilith-nature', filename: 'b.png' },
+    { hash: 'src03', width: 512, height: 384, size_bytes: 61_000, corpus: 'imazen26-7000-lilith-plots', filename: 'c.png' },
     // Deliberately larger than any test viewport at its DPR. The stimulus is
     // displayed at a hard 1:1 device pixels, so this is the only source that
     // exercises the panning path — without it the 1:1/pan invariants are
-    // untestable and would regress unnoticed.
-    { hash: 'src04', width: 3000, height: 2200, size_bytes: 2_400_000, corpus: 'test', filename: 'big.png' },
+    // untestable and would regress unnoticed. Photographic, so it also keeps
+    // the non-photo study honest about excluding a source it would otherwise
+    // reach for.
+    { hash: 'src04', width: 3000, height: 2200, size_bytes: 2_400_000, corpus: 'imazen26-2000-unsplash-people', filename: 'big.png' },
   ];
   const codecs: Array<{ name: string; mime: string; ext: string }> = [
     { name: 'mozjpeg', mime: 'image/jpeg', ext: 'jpeg' },

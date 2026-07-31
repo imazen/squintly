@@ -65,6 +65,74 @@ test.describe('study selection', () => {
     expect(kinds.has('pair')).toBe(true);
   });
 
+  // The study's name is a claim about its data. It constrained only the trial
+  // mix for a while, so it served forced-choice trials over the whole corpus —
+  // photographic strata included — which is valid data filed under the wrong
+  // question. The mock carries real stratum names so this is checkable.
+  test('the non-photo study never serves a photographic source', async ({ request }) => {
+    const sess = await (
+      await request.post('/api/session', {
+        data: {
+          observer_id: null,
+          user_agent: 'e2e',
+          device_pixel_ratio: 2,
+          screen_width_css: 400,
+          screen_height_css: 800,
+          local_date: new Date().toISOString().slice(0, 10),
+          supported_codecs: ['jpeg', 'webp'],
+          study_id: 'ssim2-nonphoto',
+        },
+      })
+    ).json();
+
+    const PHOTO = ['1400-lilith-nature', '2000-unsplash-people'];
+    const seen = new Set<string>();
+    for (let i = 0; i < 30; i++) {
+      const r = await request.get(`/api/trial/next?session_id=${sess.session_id}`);
+      if (!r.ok()) continue;
+      const t = await r.json();
+      const corpus: string = t.source_corpus ?? '';
+      for (const p of PHOTO) {
+        expect(corpus.includes(p), `non-photo study served ${corpus}`).toBe(false);
+      }
+      seen.add(corpus);
+    }
+    expect(seen.size, 'expected some trials to compare against').toBeGreaterThan(0);
+    // ...and it must still reach more than one non-photo stratum.
+    expect(seen.size).toBeGreaterThan(1);
+  });
+
+  // The default study is unrestricted, so it must still reach the photographic
+  // strata — a content filter leaking onto every study would silently narrow
+  // the main crowd study.
+  test('the main study still draws from photographic strata', async ({ request }) => {
+    const sess = await (
+      await request.post('/api/session', {
+        data: {
+          observer_id: null,
+          user_agent: 'e2e',
+          device_pixel_ratio: 2,
+          screen_width_css: 400,
+          screen_height_css: 800,
+          local_date: new Date().toISOString().slice(0, 10),
+          supported_codecs: ['jpeg', 'webp'],
+          study_id: 'main',
+        },
+      })
+    ).json();
+
+    let sawPhoto = false;
+    for (let i = 0; i < 40 && !sawPhoto; i++) {
+      const r = await request.get(`/api/trial/next?session_id=${sess.session_id}`);
+      if (!r.ok()) continue;
+      const corpus: string = (await r.json()).source_corpus ?? '';
+      if (corpus.includes('1400-lilith-nature') || corpus.includes('2000-unsplash-people')) {
+        sawPhoto = true;
+      }
+    }
+    expect(sawPhoto, 'the unrestricted study must still see photographs').toBe(true);
+  });
+
   test('picking a study on the welcome screen tags the session', async ({ page }) => {
     await gotoFresh(page);
     const picker = page.locator('#study-picker');

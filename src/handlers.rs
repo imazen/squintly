@@ -561,7 +561,27 @@ pub async fn next_trial(
         Some(&*anchors),
         Some(&*flags),
     )
-    .ok_or_else(|| AppError::Conflict("no trials available — empty manifest or no encodings match this session's supported codecs".into()))?;
+    .ok_or_else(|| {
+        // Name the content restriction. A study that filters its pool and then
+        // reports the generic message sends an operator to look at the sampler
+        // or the codec list when the real answer is that the corpus has no
+        // matching sources.
+        let eligible = manifest
+            .sources
+            .iter()
+            .filter(|s| {
+                sampler
+                    .content
+                    .accepts(crate::content_class::classify(s.corpus.as_deref()))
+            })
+            .count();
+        AppError::Conflict(format!(
+            "no trials available for study {study_id:?} ({}): {eligible} of {} manifest sources \
+             match, and none of those had encodings this session's codecs can decode",
+            sampler.content.describe(),
+            manifest.sources.len(),
+        ))
+    })?;
 
     // ASAP active-sampling override: when `pick_trial` returns a non-golden Pair
     // and we have enough prior pair responses on this source to fit BT, replace

@@ -22,6 +22,7 @@
 
 use serde::Serialize;
 
+use crate::content_class::ContentFilter;
 use crate::sampling::SamplerConfig;
 
 #[derive(Debug, Clone, Serialize)]
@@ -70,6 +71,9 @@ pub const STUDIES: &[Study] = &[
             p_single: 0.65,
             p_honeypot: 0.083,
             p_anchor: 0.30,
+            // The crowd study wants the whole corpus; content coverage across
+            // photo and non-photo is part of what it measures.
+            content: ContentFilter::Any,
             pairwise_only: false,
         },
     },
@@ -77,7 +81,8 @@ pub const STUDIES: &[Study] = &[
         id: "ssim2-nonphoto",
         label: "Non-photo oracle check (A/B only)",
         summary: "Does SSIMULACRA2 rank non-photo content — screenshots, documents, \
-                  line-art, charts — the way a human does? Every trial is a forced choice.",
+                  line-art, charts — the way a human does? Every trial is a forced choice, \
+                  and every image is non-photographic.",
         trial_style: "A/B comparisons only. No star ratings.",
         unlisted: false,
         // A rank-agreement check run by a few careful observers. ch3-5 §4.6:
@@ -93,6 +98,11 @@ pub const STUDIES: &[Study] = &[
             p_single: 0.0,
             p_honeypot: 0.0,
             p_anchor: 0.0,
+            // The name is a claim about the data. Without this the study drew
+            // from all 21 canonical strata, 8 of them photographic, so ~38% of
+            // its trials were photos — valid judgements filed under a label
+            // that says they are about non-photo content.
+            content: ContentFilter::NonPhotoOnly,
             pairwise_only: true,
         },
     },
@@ -159,6 +169,39 @@ mod tests {
     /// `p_single: 0.0` is not sufficient on its own — the sampler falls back to
     /// a single when no non-trivial pair exists, and honeypots/anchors are
     /// themselves single-stimulus.
+    /// The study's name is a claim about its data. It drew from the whole
+    /// corpus — photographic strata included — while calling itself
+    /// "non-photo", which produces valid judgements filed under the wrong
+    /// question.
+    #[test]
+    fn the_non_photo_study_actually_restricts_content() {
+        let s = by_id("ssim2-nonphoto").expect("study must exist");
+        assert_eq!(
+            s.sampler.content,
+            ContentFilter::NonPhotoOnly,
+            "a study named nonphoto must filter content, not just the trial mix"
+        );
+    }
+
+    /// Any study whose id or label claims a content type must back it with a
+    /// filter. Catches the next one added by copy-paste.
+    #[test]
+    fn studies_claiming_a_content_type_restrict_it() {
+        for st in STUDIES {
+            let claims_nonphoto = st.id.contains("nonphoto")
+                || st.label.to_lowercase().contains("non-photo")
+                || st.summary.to_lowercase().contains("non-photo");
+            if claims_nonphoto {
+                assert_eq!(
+                    st.sampler.content,
+                    ContentFilter::NonPhotoOnly,
+                    "study {} claims non-photo content but does not filter for it",
+                    st.id
+                );
+            }
+        }
+    }
+
     #[test]
     fn rank_agreement_study_is_strictly_pairwise() {
         let s = by_id("ssim2-nonphoto").expect("study must exist");

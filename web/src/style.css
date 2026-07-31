@@ -130,6 +130,11 @@ p, label { line-height: 1.4; color: var(--fg); }
   align-items: center;
   justify-content: center;
   touch-action: none;
+  /* In `hold` mode a long press on the picture IS the primary gesture, so the
+     platform's long-press callout / text selection must not fire on top of it. */
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
   /* Grid/flex items default to min-width:auto, i.e. they refuse to shrink
      below their content's min-content width. With a real stimulus that is the
      image's intrinsic width (up to 2400px), so the trial grid — and the layout

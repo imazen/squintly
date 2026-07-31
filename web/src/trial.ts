@@ -5,10 +5,10 @@
 import { nextTrial, recordResponse, type TrialPayload } from './api';
 import { captureTrial, loadCalibration } from './conditions';
 import {
-  INPUT_MODE_HINTS,
   INPUT_MODE_LABELS,
   INPUT_MODES,
   type InputMode,
+  inputModeHint,
   loadInputMode,
   saveInputMode,
   supportsHoldMode,
@@ -280,7 +280,7 @@ export function startTrials(root: HTMLElement, sessionId: string): TrialControll
     function updateHint() {
       const bits: string[] = [];
       if (isPannable()) bits.push('drag to explore');
-      bits.push(INPUT_MODE_HINTS[inputMode]);
+      bits.push(inputModeHint(inputMode, isPair));
       hint.textContent = bits.join(' · ');
       hint.hidden = bits.length === 0;
     }
@@ -427,7 +427,15 @@ export function startTrials(root: HTMLElement, sessionId: string): TrialControll
     let lastY = 0;
     let dragging = false;
 
-    // `hold` mode uses the right button as a first-class control.
+    /// Which half of the frame a press landed in.
+    const pressedHalf = (e: PointerEvent): 'left' | 'right' => {
+      const r = viewport.getBoundingClientRect();
+      return e.clientX < r.left + r.width / 2 ? 'left' : 'right';
+    };
+
+    // A long press over an image raises the callout/context menu on both mobile
+    // and desktop, which would interrupt the hold exactly when it is the
+    // primary gesture.
     viewport.addEventListener('contextmenu', (e) => {
       if (inputMode === 'hold') e.preventDefault();
     });
@@ -439,8 +447,15 @@ export function startTrials(root: HTMLElement, sessionId: string): TrialControll
       startY = lastY = e.clientY ?? 0;
       dragging = false;
       if (inputMode === 'hold') {
-        // Left flicks to A, right to B; the reference is what you return to.
-        showView(e.button === 2 && isPair ? 'b' : 'a');
+        // Which half you press picks the variant — A on the left, B on the
+        // right, matching the view switch and the answer buttons. Split on the
+        // *viewport*, not the image: this is about where your finger is on the
+        // screen, and the image may be panned or larger than the frame.
+        //
+        // Decided once, on press, and held for the whole gesture. Re-evaluating
+        // as the pointer moves would fight panning — a drag that crossed the
+        // midline would swap the variant out from under a comparison.
+        showView(pressedHalf(e) === 'right' && isPair ? 'b' : 'a');
       } else if (currentSrc !== 'ref') {
         showView('ref');
       }

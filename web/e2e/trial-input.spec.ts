@@ -171,18 +171,16 @@ test.describe('trial input', () => {
 });
 
 test.describe('hold-to-compare mode', () => {
-  // `hold` needs distinct mouse buttons, so it is desktop-only. On the phone
-  // projects the picker must not even be offered.
-  test('the mode picker is desktop-only', async ({ page }, testInfo) => {
+  // Splitting by half rather than by mouse button is what makes this work with
+  // a thumb, so it must be offered on every device — including the phone
+  // projects, which are the ones the study actually runs on.
+  test('the mode is offered on every device', async ({ page }) => {
     await toTrial(page);
-    const desktop = testInfo.project.name === 'chromium-desktop';
-    await expect(page.locator('#input-mode')).toHaveCount(desktop ? 1 : 0);
+    await expect(page.locator('#input-mode')).toHaveCount(1);
+    await expect(page.locator('#input-mode option[value="hold"]')).toHaveCount(1);
   });
 
-  test('left button shows A, right shows B, release shows the original', async ({
-    page,
-  }, testInfo) => {
-    test.skip(testInfo.project.name !== 'chromium-desktop', 'hold mode needs a mouse');
+  test('left half shows A, right half shows B, release shows the original', async ({ page }) => {
     await toTrial(page);
     expect(await toKind(page, 'pair'), 'needed a pair trial').toBe(true);
 
@@ -197,18 +195,79 @@ test.describe('hold-to-compare mode', () => {
     expect(await shown(), 'the original is the resting view in hold mode').toBe('ref');
 
     const box = (await page.locator('#viewport').boundingBox())!;
-    const cx = box.x + box.width / 2;
-    const cy = box.y + box.height / 2;
+    const y = box.y + box.height / 2;
+    const leftX = box.x + box.width * 0.25;
+    const rightX = box.x + box.width * 0.75;
 
-    await page.mouse.move(cx, cy);
-    await page.mouse.down({ button: 'left' });
-    expect(await shown(), 'holding left shows A').toBe('a');
-    await page.mouse.up({ button: 'left' });
+    await page.mouse.move(leftX, y);
+    await page.mouse.down();
+    expect(await shown(), 'pressing the left half shows A').toBe('a');
+    // The view switch tracks the hold — with no overlay on the picture, that
+    // highlight is the observer's feedback about which variant they are seeing.
+    await expect(page.locator('.view-switch button[data-view="a"]')).toHaveClass(/\bon\b/);
+    await page.mouse.up();
     expect(await shown(), 'releasing returns to the original').toBe('ref');
 
-    await page.mouse.down({ button: 'right' });
-    expect(await shown(), 'holding right shows B').toBe('b');
-    await page.mouse.up({ button: 'right' });
+    await page.mouse.move(rightX, y);
+    await page.mouse.down();
+    expect(await shown(), 'pressing the right half shows B').toBe('b');
+    await expect(page.locator('.view-switch button[data-view="b"]')).toHaveClass(/\bon\b/);
+    await page.mouse.up();
     expect(await shown()).toBe('ref');
+  });
+
+  // Panning has to keep working under a hold, and crossing the midline mid-drag
+  // must NOT swap the variant — that would change the picture out from under a
+  // comparison the observer is in the middle of making.
+  test('the half is decided on press and survives a drag across the midline', async ({ page }) => {
+    await toTrial(page);
+    expect(await toKind(page, 'pair'), 'needed a pair trial').toBe(true);
+    await page.locator('#input-mode').selectOption('hold');
+    await page.waitForSelector('.trial[data-input-mode="hold"]');
+    await page.waitForSelector('.viewport:not(.is-loading)');
+
+    const shown = () =>
+      page.evaluate(
+        () => document.querySelector<HTMLImageElement>('.viewport img.shown')!.dataset.layer,
+      );
+    const box = (await page.locator('#viewport').boundingBox())!;
+    const y = box.y + box.height / 2;
+
+    await page.mouse.move(box.x + box.width * 0.2, y);
+    await page.mouse.down();
+    expect(await shown()).toBe('a');
+    // Drag well past the centre into the right half.
+    for (let i = 1; i <= 6; i++) {
+      await page.mouse.move(box.x + box.width * (0.2 + i * 0.1), y);
+    }
+    expect(await shown(), 'crossing the midline must not swap A for B mid-gesture').toBe('a');
+    await page.mouse.up();
+    expect(await shown()).toBe('ref');
+  });
+
+  // A single-stimulus trial has no B, so the halves collapse to one gesture:
+  // hold to see the encoding, release for the original.
+  test('on a single-stimulus trial either half shows the compressed image', async ({ page }) => {
+    await toTrial(page);
+    expect(await toKind(page, 'single'), 'needed a rating trial').toBe(true);
+    await page.locator('#input-mode').selectOption('hold');
+    await page.waitForSelector('.trial[data-input-mode="hold"]');
+    await page.waitForSelector('.viewport:not(.is-loading)');
+
+    const shown = () =>
+      page.evaluate(
+        () => document.querySelector<HTMLImageElement>('.viewport img.shown')!.dataset.layer,
+      );
+    expect(await shown()).toBe('ref');
+
+    const box = (await page.locator('#viewport').boundingBox())!;
+    const y = box.y + box.height / 2;
+    for (const frac of [0.25, 0.75]) {
+      await page.mouse.move(box.x + box.width * frac, y);
+      await page.mouse.down();
+      expect(await shown(), `half at ${frac} shows the compressed image`).toBe('a');
+      await page.mouse.up();
+      expect(await shown()).toBe('ref');
+    }
   });
 });

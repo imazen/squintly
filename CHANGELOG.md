@@ -30,11 +30,22 @@
   digits rate on single trials (matching the numerals on the buttons) and
   magnify on pair trials (where nothing owns them); `+`/`−`/`0` are the mapping
   that never changes meaning.
-- **`hold` interaction mode** (desktop, `pointer: fine` only — it needs distinct
-  mouse buttons). The *original* is what you see at rest; hold left for A, right
-  for B, release to snap back. Faster for spotting a difference, because the eye
-  stays fixed and the picture changes under it. Selectable from the trial screen;
-  `tap` remains the default and the only mode offered on touch.
+- **`hold` interaction mode, on every device.** The *original* is what you see
+  at rest; press and hold the **left half** of the picture for A, the **right
+  half** for B, release to snap back. Faster for spotting a difference, because
+  the eye stays fixed and the picture changes under it. Selectable from the
+  trial screen; `tap` remains the default.
+  - Splitting by *half* rather than by mouse button is what makes it work with a
+    thumb. The first cut used left/right buttons and was wrong twice over: it
+    was desktop-only on a phone-first study, and it needed the context menu
+    suppressed. Halves also land where the labels already are — A left, B right,
+    matching the view switch and the answer buttons.
+  - The half is decided on press and held for the whole gesture. Re-deciding as
+    the pointer moves would fight panning: a drag crossing the midline would
+    swap the variant out from under a comparison in progress.
+  - No overlay marks the split. The stimulus is never occluded (see the hint-pill
+    note in CLAUDE.md), so the affordance is the hint text plus the view switch
+    highlighting live as you hold.
 - `responses.input_mode`, `keyboard_used`, `ui_ready_ms` (migration 0017;
   `responses.tsv` schema_version 3 → 4). `input_mode` is stored rather than
   inferred because it changes what `reveal_ms_total` measures — under `hold` the

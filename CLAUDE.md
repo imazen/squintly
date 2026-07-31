@@ -53,8 +53,10 @@ web component from `~/work/efficient-ui/`. No framework.
   picks it by expected information gain over the answers so far, so fetching
   early would choose the stimulus without the current response.
 - **`input_mode` is recorded because it changes what other columns mean.**
-  `tap` shows the encoding and peeks at the reference; `hold` (desktop only)
-  inverts that — the reference is the resting view. So `reveal_ms_total` measures
+  `tap` shows the encoding and peeks at the reference; `hold` inverts that — the
+  reference is the resting view, and holding the left/right half of the
+  *viewport* flicks to A/B (decided on press, so a drag across the midline can't
+  swap the variant mid-comparison). So `reveal_ms_total` measures
   a peek in one and the default state in the other. Migration 0017; same
   reasoning as `study_id`.
 - **Source-informing-sweep rule applies.** Sampling MUST cover all 4 size buckets and

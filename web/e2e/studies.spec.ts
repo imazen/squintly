@@ -208,3 +208,75 @@ test.describe('study selection', () => {
     expect(stored).toBe('ssim2-nonphoto');
   });
 });
+
+test.describe('content provenance in the export', () => {
+  // imazen/squintly#4 wants per-category SROCC, and `responses.tsv` carried no
+  // corpus or content column at all — so that analysis could not be run from
+  // the export, and a check for "did the non-photo study serve photographs"
+  // silently read a missing field and always answered no. A vacuous check is
+  // worse than a missing one: it reports reassurance.
+  test('every response carries the stratum and content class it was served as', async ({
+    request,
+  }) => {
+    const sess = await (
+      await request.post('/api/session', {
+        data: {
+          observer_id: null,
+          user_agent: 'e2e',
+          device_pixel_ratio: 2,
+          screen_width_css: 400,
+          screen_height_css: 800,
+          local_date: new Date().toISOString().slice(0, 10),
+          supported_codecs: ['jpeg', 'webp'],
+          study_id: 'ssim2-nonphoto',
+        },
+      })
+    ).json();
+
+    const t = await (
+      await request.get(`/api/trial/next?session_id=${sess.session_id}`)
+    ).json();
+    const ok = await request.post(`/api/trial/${t.trial_id}/response`, {
+      data: {
+        choice: 'tie',
+        dwell_ms: 4000,
+        reveal_count: 1,
+        reveal_ms_total: 900,
+        zoom_used: false,
+        pan_count: 0,
+        pan_distance_css: 0,
+        zoom_factor: 1,
+        input_mode: 'tap',
+        keyboard_used: false,
+        ui_ready_ms: 120,
+        pannable_w_css: 0,
+        pannable_h_css: 0,
+        visible_w_css: 300,
+        visible_h_css: 300,
+        viewport_w_css: 400,
+        viewport_h_css: 600,
+        orientation: 'portrait',
+        image_displayed_w_css: 300,
+        image_displayed_h_css: 300,
+        intrinsic_to_device_ratio: 1,
+        pixels_per_degree: null,
+      },
+    });
+    expect(ok.ok(), await ok.text()).toBeTruthy();
+
+    const tsv = await (await request.get('/api/export/responses.tsv')).text();
+    const [header, ...lines] = tsv.trim().split('\n');
+    const cols = header.split('\t');
+    expect(cols, 'export must name the stratum').toContain('source_corpus');
+    expect(cols, 'export must name the content class').toContain('content_class');
+
+    const row = lines.map((l) => l.split('\t')).find((r) => r[0] === t.trial_id);
+    expect(row, 'the response just recorded should be in the export').toBeTruthy();
+    const cls = row![cols.indexOf('content_class')];
+    const corpus = row![cols.indexOf('source_corpus')];
+    // The non-photo study must record what it actually served, and it must be
+    // non-photo — this is the check that was previously vacuous.
+    expect(cls, `content_class for ${corpus}`).toBe('non_photo');
+    expect(corpus.length, 'stratum must be recorded').toBeGreaterThan(0);
+  });
+});

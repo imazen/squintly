@@ -43,6 +43,17 @@ pub enum ContentClass {
     Unknown,
 }
 
+impl ContentClass {
+    /// Stable string for storage and export.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ContentClass::Photo => "photo",
+            ContentClass::NonPhoto => "non_photo",
+            ContentClass::Unknown => "unknown",
+        }
+    }
+}
+
 /// Which sources a study will draw from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ContentFilter {
@@ -74,6 +85,30 @@ impl ContentFilter {
         }
     }
 }
+
+/// Strata where our classification deliberately differs from
+/// `build_demo_corpus.py::R2_STRATA`, and why.
+///
+/// The builder's `is_photo` flag records **provenance** — was this captured by
+/// a camera. This module needs **appearance** — does it carry photographic
+/// image statistics, because that is what decides whether SSIMULACRA2 is being
+/// asked about the regime it was tuned on. The two diverge precisely for
+/// photorealistic synthetic content.
+///
+/// `strata_agree_with_the_corpus_builder` still fails on any *other*
+/// disagreement, so accidental drift is caught; only what is listed here is
+/// allowed to differ.
+#[cfg(test)]
+const INTENTIONAL_OVERRIDES: &[(&str, ContentClass, &str)] = &[(
+    "9226-lilith-ai-products",
+    ContentClass::Photo,
+    "AI-generated product shots are photorealistic by design: continuous tone, \
+     fabric texture, soft studio shadow, seamless background. The builder calls \
+     them non-photo because nothing was photographed, but they behave like \
+     photographs and would tell us nothing about ssim2 on non-photo content. \
+     Reported from the live study — 'there are product images like the baby \
+     clothing' — and confirmed by eye against the served image.",
+)];
 
 /// Stratum suffix → is it photographic.
 ///
@@ -112,7 +147,9 @@ const STRATA: &[(&str, ContentClass)] = &[
     ("8100-lilith-web-screenshots", ContentClass::NonPhoto),
     ("9000-lilith-ai-clipart", ContentClass::NonPhoto),
     ("9094-lilith-ai-illustrations", ContentClass::NonPhoto),
-    ("9226-lilith-ai-products", ContentClass::NonPhoto),
+    // Photorealistic on purpose — AI product photography is *trying* to look
+    // like a studio shot, and does. See INTENTIONAL_OVERRIDES.
+    ("9226-lilith-ai-products", ContentClass::Photo),
 ];
 
 /// Classify a corpus/stratum string. `None` (a source with no corpus at all)
@@ -220,6 +257,15 @@ mod tests {
         );
         for (stratum, is_photo) in expected {
             let got = classify(Some(&format!("imazen26-{stratum}")));
+            if let Some((_, want, why)) = INTENTIONAL_OVERRIDES.iter().find(|(s, ..)| s == stratum)
+            {
+                assert_eq!(
+                    got, *want,
+                    "stratum {stratum} is listed as an intentional override but does not \
+                     classify that way. Reason on record: {why}"
+                );
+                continue;
+            }
             let want = if *is_photo {
                 ContentClass::Photo
             } else {
@@ -227,14 +273,16 @@ mod tests {
             };
             assert_eq!(
                 got, want,
-                "stratum {stratum}: builder says is_photo={is_photo}, registry says {got:?}"
+                "stratum {stratum}: builder says is_photo={is_photo}, registry says {got:?}. \
+                 If this divergence is deliberate, add it to INTENTIONAL_OVERRIDES with a \
+                 reason rather than editing this expectation."
             );
         }
     }
 
     /// The non-photo pool has to be big enough to run a study on. If a future
-    /// corpus change tipped most strata into `Photo`, #4 would be starved and
-    /// the only symptom would be 409s.
+    /// corpus change (or another override) tipped most strata into `Photo`, #4
+    /// would be starved and the only symptom would be 409s.
     #[test]
     fn the_non_photo_pool_is_the_larger_half() {
         let non_photo = STRATA

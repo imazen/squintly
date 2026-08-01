@@ -2,6 +2,34 @@
 
 ## [Unreleased]
 
+### Fixed
+- **AI product shots were classified as non-photo, so the non-photo study was
+  serving photographs.** `9226-lilith-ai-products` is photorealistic by design —
+  continuous tone, fabric texture, soft studio shadow, seamless background — and
+  reading it back from the live corpus confirms it looks exactly like a studio
+  product photo. The corpus builder's `is_photo` flag records **provenance**
+  (was a camera involved); this module needs **appearance** (does it carry
+  photographic image statistics, which is what decides whether SSIMULACRA2 is
+  being asked about the regime it was tuned on). Those diverge precisely for
+  photorealistic synthetic content. Reported from the live study.
+  - `INTENTIONAL_OVERRIDES` records the divergence and its reason, and the drift
+    guard still fails on any *other* disagreement with the builder — so this is
+    a documented exception, not a silenced test.
+  - All 13 non-photo strata were reviewed by eye against the served images, not
+    just the reported one. The rest hold up: documents and screenshots that
+    embed photographs are still document and screenshot *content*, which is the
+    regime the gate targets.
+- **`responses.tsv` carried no corpus or content column** (migration 0018;
+  schema_version 4 → 5). Two consequences: imazen/squintly#4's per-category
+  SROCC could not be run from the export at all, and a check for "did the
+  non-photo study serve photographs" silently read a missing field and always
+  answered no — a vacuous check is worse than a missing one, because it reports
+  reassurance. Classification is recorded **at serve time**, so reclassifying a
+  stratum later cannot relabel history.
+- `migrations_immutable` now fails on any *unpinned* migration. 0018 would
+  otherwise have been unguarded, and editing an unguarded migration is what took
+  production down earlier.
+
 ### Changed
 - **The deployment now serves non-photo content only.** `ssim2-nonphoto` is the
   compiled default and `main` is unlisted, so a visitor who names no study lands

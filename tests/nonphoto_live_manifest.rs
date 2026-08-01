@@ -61,13 +61,22 @@ fn the_live_corpus_splits_the_way_the_builder_says() {
         .filter(|c| classify(Some(c)) == ContentClass::NonPhoto)
         .collect();
 
-    // 8 photographic strata out of 21 is what made roughly 38% of the study's
-    // trials photographs before the filter existed.
-    assert_eq!(photo.len(), 8, "photo strata: {photo:?}");
-    assert_eq!(non_photo.len(), 13, "non-photo strata: {non_photo:?}");
+    // 9 of 21 are photographic. Was 8 until `9226-lilith-ai-products` was
+    // reclassified: AI product shots are photorealistic by design, so leaving
+    // them in the non-photo pool meant asking ssim2 about photographs under a
+    // label that says otherwise. Reported from the live study.
+    assert_eq!(photo.len(), 9, "photo strata: {photo:?}");
+    assert_eq!(non_photo.len(), 12, "non-photo strata: {non_photo:?}");
 
-    // Spot-check the two whose names do NOT give the answer away — those are
-    // where a misclassification would be least visible on review.
+    // Spot-check the ones whose names do NOT give the answer away — those are
+    // where a misclassification is least visible on review, and where the
+    // baby-clothing miss actually happened.
+    assert_eq!(
+        classify(Some("imazen26-9226-lilith-ai-products")),
+        ContentClass::Photo,
+        "AI product shots are photorealistic; 'ai-' in the name does not make \
+         content synthetic"
+    );
     assert_eq!(
         classify(Some("imazen26-2200-unsplash-renders")),
         ContentClass::NonPhoto,
@@ -86,8 +95,9 @@ fn a_non_photo_study_accepts_only_the_non_photo_half() {
         .iter()
         .filter(|c| ContentFilter::NonPhotoOnly.accepts(classify(Some(c))))
         .count();
-    assert_eq!(accepted, 13);
-    // And the pool has to be big enough to actually run imazen/squintly#4 on.
+    assert_eq!(accepted, 12);
+    // And the pool has to be big enough to actually run imazen/squintly#4 on:
+    // the issue wants ~40-60 references.
     assert!(
         accepted * 4 >= 40,
         "only {} sources would be eligible",

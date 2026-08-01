@@ -92,6 +92,10 @@ fn expected() -> BTreeMap<&'static str, &'static str> {
             "0017_input_mode.sql",
             "7bc23a29a895a3a9ca685f80e500b95c777c54ce03bb83d99df2328c1893d503",
         ),
+        (
+            "0018_trial_content.sql",
+            "bdad7a8ca81a5a952f43dc8599016475afe00eb6eb465baf2f9fc4391692ba89",
+        ),
     ])
 }
 
@@ -111,6 +115,15 @@ fn shipped_migrations_are_unmodified() {
 
     let exp = expected();
     let mut drifted = Vec::new();
+    // An unpinned file is an unguarded file. Editing it would then take
+    // production down at boot with nothing having failed here first.
+    for name in actual.keys() {
+        assert!(
+            exp.contains_key(name.as_str()),
+            "migration {name} is not pinned. Run with SHOW_MIGRATION_HASHES=1 and paste \
+             its line into `expected()`."
+        );
+    }
     for (name, want) in &exp {
         if want.is_empty() {
             continue; // not yet pinned

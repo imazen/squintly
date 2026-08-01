@@ -611,8 +611,8 @@ pub async fn next_trial(
             sqlx::query(
                 "INSERT INTO trials (id, session_id, kind, source_hash, a_encoding_id, a_codec, \
                  a_quality, a_bytes, intrinsic_w, intrinsic_h, staircase_target, is_golden, \
-                 expected_choice, held_out, served_at) \
-                 VALUES (?, ?, 'single', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                 expected_choice, held_out, served_at, source_corpus, content_class) \
+                 VALUES (?, ?, 'single', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             )
             .bind(&trial_id)
             .bind(&q.session_id)
@@ -628,6 +628,11 @@ pub async fn next_trial(
             .bind(expected_choice.as_deref())
             .bind(held_out as i64)
             .bind(served_at)
+            // Recorded as classified AT SERVE TIME. Deriving it at export time
+            // would relabel history whenever the registry changed — which it
+            // just did, when AI product shots moved from non-photo to photo.
+            .bind(source.corpus.as_deref())
+            .bind(crate::content_class::classify(source.corpus.as_deref()).as_str())
             .execute(&state.pool)
             .await?;
 
@@ -664,8 +669,9 @@ pub async fn next_trial(
             sqlx::query(
                 "INSERT INTO trials (id, session_id, kind, source_hash, a_encoding_id, a_codec, \
                  a_quality, a_bytes, b_encoding_id, b_codec, b_quality, b_bytes, intrinsic_w, \
-                 intrinsic_h, is_golden, expected_choice, held_out, served_at) \
-                 VALUES (?, ?, 'pair', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                 intrinsic_h, is_golden, expected_choice, held_out, served_at, source_corpus, \
+                 content_class) \
+                 VALUES (?, ?, 'pair', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             )
             .bind(&trial_id)
             .bind(&q.session_id)
@@ -684,6 +690,11 @@ pub async fn next_trial(
             .bind(expected_choice.as_deref())
             .bind(held_out as i64)
             .bind(served_at)
+            // Recorded as classified AT SERVE TIME. Deriving it at export time
+            // would relabel history whenever the registry changed — which it
+            // just did, when AI product shots moved from non-photo to photo.
+            .bind(source.corpus.as_deref())
+            .bind(crate::content_class::classify(source.corpus.as_deref()).as_str())
             .execute(&state.pool)
             .await?;
 
@@ -980,7 +991,7 @@ fn schema_version(kind: ExportKind) -> u32 {
         // the pan/visible-area telemetry that the 1:1 display rule made
         // necessary. Appended rather than inserted so positional consumers
         // keep working; the bump is here so strict ones can refuse.
-        ExportKind::Responses => 4,
+        ExportKind::Responses => 5,
         ExportKind::Unified => 1,
     }
 }
@@ -2012,10 +2023,10 @@ mod tests {
     fn responses_schema_version_reflects_the_appended_columns() {
         assert_eq!(
             schema_version(ExportKind::Responses),
-            4,
+            5,
             "v2 added study_id + pan/visible telemetry; v3 the participant exclusion \
-             disposition; v4 input_mode + keyboard_used + ui_ready_ms. Bump whenever \
-             columns change."
+             disposition; v4 input_mode + keyboard_used + ui_ready_ms; v5 source_corpus + \
+             content_class. Bump whenever columns change."
         );
         assert_eq!(schema_version(ExportKind::Pareto), 1, "pareto is unchanged");
     }

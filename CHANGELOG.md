@@ -3,6 +3,29 @@
 ## [Unreleased]
 
 ### Fixed
+- **Multi-touch: lifting one finger while another was down showed the
+  original.** The pointer handling tracked a single `pointerId` and ignored any
+  pointer that arrived while one was already down, so on a phone — one finger
+  left, a second right, lift the first — the release ran the end-of-gesture
+  handler even though a finger was still held, and the second finger's own
+  release was then discarded because its id no longer matched. Every active
+  pointer is tracked now, and the most recent one still held decides what stays
+  on screen; the resting view returns only when the last finger lifts.
+
+### Added
+- **Pinch to zoom**, snapping onto whole factors. It could not work before: the
+  second finger was never admitted, so no gesture with two contacts existed.
+  The ladder is walked by finger-distance ratio, so the gesture feels
+  continuous while the result never is — a fractional factor would resample the
+  stimulus. A second finger arriving no longer swaps the variant, either:
+  changing the picture mid-pinch would move the thing being sized.
+- **Double tap fits the image at a whole factor** and re-centres. "Fits" can
+  only magnify a small stimulus up to the frame, never shrink a large one down,
+  because below 1:1 the browser resamples the encode — so an oversized source
+  resolves to 1×, which is also the useful answer there ("put me back to the
+  start").
+
+### Fixed
 - **The blind-spot distance test used the wrong eye, so it could never work.**
   It said "close your right eye" while sweeping the target to the *right* of
   the fixation ×. Each eye's blind spot sits ~12–15° into its **temporal**

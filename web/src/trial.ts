@@ -432,17 +432,98 @@ export function startTrials(root: HTMLElement, sessionId: string): TrialControll
     // threshold separates them, otherwise every pan would also fire a reveal or
     // flip A/B.
     const DRAG_THRESHOLD_CSS = 6;
-    let pointerId: number | null = null;
-    let startX = 0;
-    let startY = 0;
-    let lastX = 0;
-    let lastY = 0;
-    let dragging = false;
+    const DOUBLE_TAP_MS = 300;
+    const DOUBLE_TAP_SLOP_CSS = 30;
+
+    interface Held {
+      startX: number;
+      startY: number;
+      lastX: number;
+      lastY: number;
+      /// Which variant this finger/button selects, decided on press.
+      view: View | null;
+      downAt: number;
+      moved: boolean;
+    }
+
+    // EVERY active pointer is tracked, not just the first.
+    //
+    // The old model kept a single `pointerId` and ignored any pointer that
+    // arrived while one was down. Two consequences on a touchscreen, both
+    // reported: putting one finger on the left and a second on the right, then
+    // lifting the first, snapped to the original — the release ran the
+    // end-of-gesture handler even though a finger was still down, and the
+    // second finger's own release was then ignored because its id no longer
+    // matched. And pinch could not exist at all, because the second finger was
+    // never admitted.
+    const held = new Map<number, Held>();
+    let gesture: 'none' | 'pan' | 'pinch' = 'none';
+    let pinchStartDist = 0;
+    let pinchStartZoom = 1;
+    let lastTapAt = 0;
+    let lastTapX = 0;
+    let lastTapY = 0;
 
     /// Which half of the frame a press landed in.
-    const pressedHalf = (e: PointerEvent): 'left' | 'right' => {
+    const pressedHalf = (x: number): 'left' | 'right' => {
       const r = viewport.getBoundingClientRect();
-      return e.clientX < r.left + r.width / 2 ? 'left' : 'right';
+      return x < r.left + r.width / 2 ? 'left' : 'right';
+    };
+
+    /// The variant a given press selects, per input mode.
+    const viewForPress = (e: PointerEvent): View | null => {
+      if (inputMode === 'buttons') return e.button === 2 && isPair ? 'b' : 'a';
+      if (inputMode === 'hold') return pressedHalf(e.clientX) === 'right' && isPair ? 'b' : 'a';
+      return 'ref'; // `tap`: press-and-hold peeks at the reference
+    };
+
+    /// The view implied by whatever is still held — the most recent remaining
+    /// press wins. Lifting one finger while another is down must leave the
+    /// other finger's variant on screen, not snap to the resting view.
+    const viewFromHeld = (): View => {
+      let latest: Held | null = null;
+      for (const h of held.values()) {
+        if (h.view && (!latest || h.downAt > latest.downAt)) latest = h;
+      }
+      if (latest?.view) return latest.view;
+      return inputMode === 'tap' ? choiceSrc : 'ref';
+    };
+
+    const twoPointerDistance = (): number => {
+      const [a, b] = [...held.values()];
+      if (!a || !b) return 0;
+      return Math.hypot(a.lastX - b.lastX, a.lastY - b.lastY);
+    };
+
+    /// Largest whole factor at which the entire image still fits the frame.
+    ///
+    /// "Fits" can only ever mean magnifying a small stimulus up to the frame —
+    /// never shrinking a large one down, because display below 1:1 resamples
+    /// the encode and is the one thing this viewer refuses to do. So an
+    /// oversized source resolves to 1x, which is also the useful answer there:
+    /// double-tap becomes "put me back to the start".
+    const fitFactor = (): number => {
+      const el = layers[currentSrc];
+      if (!el.naturalWidth || !el.naturalHeight) return 1;
+      const r = viewport.getBoundingClientRect();
+      let best = 1;
+      for (const z of ZOOM_LADDER) {
+        const w = (el.naturalWidth * z) / dpr;
+        const h = (el.naturalHeight * z) / dpr;
+        if (w <= r.width && h <= r.height) best = z;
+      }
+      return best;
+    };
+
+    const resetToFit = () => {
+      state.zoomUsed = true;
+      applyZoom(fitFactor());
+      // Re-centre: "the whole image just fits" is meaningless if it is still
+      // scrolled off to one side.
+      pan.x = 0;
+      pan.y = 0;
+      clampPan();
+      applyPan();
     };
 
     // A long press over an image raises the callout/context menu on both mobile
@@ -453,48 +534,70 @@ export function startTrials(root: HTMLElement, sessionId: string): TrialControll
     });
 
     viewport.addEventListener('pointerdown', (e: PointerEvent) => {
-      if (pointerId !== null) return;
-      pointerId = e.pointerId;
-      startX = lastX = e.clientX ?? 0;
-      startY = lastY = e.clientY ?? 0;
-      dragging = false;
-      if (inputMode === 'buttons') {
-        // The button picks the side: left for A, right for B.
-        showView(e.button === 2 && isPair ? 'b' : 'a');
-      } else if (inputMode === 'hold') {
-        // Which half you press picks the variant — A on the left, B on the
-        // right, matching the view switch and the answer buttons. Split on the
-        // *viewport*, not the image: this is about where your finger is on the
-        // screen, and the image may be panned or larger than the frame.
-        //
-        // Decided once, on press, and held for the whole gesture. Re-evaluating
-        // as the pointer moves would fight panning — a drag that crossed the
-        // midline would swap the variant out from under a comparison.
-        showView(pressedHalf(e) === 'right' && isPair ? 'b' : 'a');
-      } else if (currentSrc !== 'ref') {
-        showView('ref');
-      }
+      held.set(e.pointerId, {
+        startX: e.clientX,
+        startY: e.clientY,
+        lastX: e.clientX,
+        lastY: e.clientY,
+        view: viewForPress(e),
+        downAt: performance.now(),
+        moved: false,
+      });
       try {
         viewport.setPointerCapture(e.pointerId);
       } catch {
         /* no capture (synthetic or already-released pointer); drag still works */
       }
+
+      if (held.size >= 2) {
+        // Second finger down: this is a pinch, not a comparison gesture. Leave
+        // whatever is on screen alone — flipping the variant mid-pinch would
+        // change the picture while the observer is sizing it.
+        gesture = 'pinch';
+        pinchStartDist = twoPointerDistance();
+        pinchStartZoom = zoom;
+        viewport.classList.remove('panning');
+        return;
+      }
+      gesture = 'none';
+      showView(viewFromHeld());
     });
 
     viewport.addEventListener('pointermove', (e: PointerEvent) => {
-      if (e.pointerId !== pointerId) return;
-      if (!dragging) {
-        const moved = Math.hypot(e.clientX - startX, e.clientY - startY);
-        if (moved < DRAG_THRESHOLD_CSS) return;
-        dragging = true;
+      const h = held.get(e.pointerId);
+      if (!h) return;
+      const dx = e.clientX - h.lastX;
+      const dy = e.clientY - h.lastY;
+      h.lastX = e.clientX;
+      h.lastY = e.clientY;
+      if (Math.hypot(e.clientX - h.startX, e.clientY - h.startY) >= DRAG_THRESHOLD_CSS) {
+        h.moved = true;
+      }
+
+      if (gesture === 'pinch') {
+        // Pinch magnifies, snapping onto whole factors — a fractional one would
+        // resample the stimulus. The ladder is walked by ratio, so the gesture
+        // feels continuous even though the result never is.
+        const d = twoPointerDistance();
+        if (pinchStartDist > 0 && d > 0) {
+          state.zoomUsed = true;
+          const want = pinchStartZoom * (d / pinchStartDist);
+          let nearest = ZOOM_LADDER[0];
+          for (const z of ZOOM_LADDER) {
+            if (Math.abs(z - want) < Math.abs(nearest - want)) nearest = z;
+          }
+          applyZoom(nearest);
+        }
+        return;
+      }
+
+      if (!h.moved) return;
+      if (gesture !== 'pan') {
+        gesture = 'pan';
         state.panCount += 1;
         if (isPannable()) viewport.classList.add('panning');
       }
       if (!isPannable()) return;
-      const dx = e.clientX - lastX;
-      const dy = e.clientY - lastY;
-      lastX = e.clientX;
-      lastY = e.clientY;
       pan.x += dx;
       pan.y += dy;
       state.panDistanceCss += Math.hypot(dx, dy);
@@ -503,16 +606,41 @@ export function startTrials(root: HTMLElement, sessionId: string): TrialControll
     });
 
     const endPointer = (e: PointerEvent) => {
-      if (e.pointerId !== pointerId) return;
-      pointerId = null;
+      const h = held.get(e.pointerId);
+      if (!h) return;
+      held.delete(e.pointerId);
       try {
         viewport.releasePointerCapture(e.pointerId);
       } catch {
         /* already released */
       }
-      showView(inputMode === 'tap' ? choiceSrc : 'ref');
-      dragging = false;
-      viewport.classList.remove('panning');
+
+      const wasPinch = gesture === 'pinch';
+      if (held.size < 2 && wasPinch) gesture = 'none';
+
+      // A quick, still press is a tap. Two of them in the same place reset the
+      // magnification to "the whole image just fits".
+      const quiet = !h.moved && !wasPinch;
+      if (quiet && performance.now() - h.downAt < DOUBLE_TAP_MS * 2) {
+        const now = performance.now();
+        const near =
+          Math.hypot(e.clientX - lastTapX, e.clientY - lastTapY) < DOUBLE_TAP_SLOP_CSS;
+        if (now - lastTapAt < DOUBLE_TAP_MS && near) {
+          resetToFit();
+          lastTapAt = 0;
+        } else {
+          lastTapAt = now;
+          lastTapX = e.clientX;
+          lastTapY = e.clientY;
+        }
+      }
+
+      if (held.size === 0) {
+        gesture = 'none';
+        viewport.classList.remove('panning');
+      }
+      // Whatever is still held decides what stays on screen.
+      showView(viewFromHeld());
     };
     viewport.addEventListener('pointerup', endPointer);
     viewport.addEventListener('pointercancel', endPointer);

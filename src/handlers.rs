@@ -732,6 +732,20 @@ fn tap_mode() -> String {
 /// rather than stored: this column tells an analyst how to read
 /// `reveal_ms_total`, so a typo silently persisted would quietly mislabel the
 /// data it exists to disambiguate.
+///
+/// * `tap` — the encoding is on screen; tap A / B / Original, or press and hold
+///   to peek at the reference. `reveal_ms_total` is a deliberate peek.
+/// * `hold` — the reference is the resting view; press the left or right *half*
+///   of the frame for A or B. `reveal_ms_total` measures the default state and
+///   is naturally large.
+/// * `buttons` — as `hold`, but the mouse *button* picks the side rather than
+///   the position pressed. Desktop only.
+///
+/// Documented here rather than in migration 0017, whose comments described only
+/// the first two: sqlx checksums migration files, so editing an applied one —
+/// even its comments — fails every subsequent startup with "migration 17 was
+/// previously applied but has been modified". Migrations are immutable once
+/// shipped; prose about the column belongs next to the code that validates it.
 pub const INPUT_MODES: &[&str] = &["tap", "hold", "buttons"];
 
 #[derive(Debug, Deserialize)]

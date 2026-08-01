@@ -11,9 +11,6 @@
 -- on screen" — but pooling them without knowing which is which would put two
 -- different quantities in one column. Same reason `study_id` exists.
 --
--- A third mode, 'buttons', shares `hold`'s inverted resting state but picks the
--- side with the mouse button instead of the half of the frame pressed.
---
 -- 'tap' is the historical behaviour, so existing rows are correctly labelled by
 -- the default.
 ALTER TABLE responses ADD COLUMN input_mode TEXT NOT NULL DEFAULT 'tap';

@@ -167,11 +167,28 @@ p, label { line-height: 1.4; color: var(--fg); }
   position: absolute;
   inset: 0;
   margin: auto;
-  /* `visibility` rather than `display:none`: a hidden layer keeps its box and
-     stays decoded, so revealing it is a paint and not a re-layout. */
-  visibility: hidden;
+  /* Hidden by OPACITY, not `visibility`.
+     
+     `visibility: hidden` keeps the box but skips painting entirely, so the
+     first flip to a variant had to rasterise it on the spot — one dropped
+     frame, seen as a flash between the two pictures being compared. Opacity 0
+     with `will-change` promotes each layer to its own compositor layer, so
+     showing one is a compositor property change: no repaint, no reflow, no
+     decode.
+
+     Exactly 0, never 0.001: a faintly-visible second variant would composite
+     over the stimulus under test, which is worse than any flash.
+
+     The cost is one GPU texture per variant while a trial is mounted (three at
+     most, torn down on every advance). That is the trade being made for a
+     switch that cannot stutter. */
+  opacity: 0;
+  will-change: opacity;
+  /* A fully transparent layer must still be reachable by nothing — the visible
+     one owns interaction, and the viewport handles pointers itself. */
+  pointer-events: none;
 }
-.viewport img.layer.shown { visibility: visible; }
+.viewport img.layer.shown { opacity: 1; }
 
 /* Loading state. The panel is disabled until the judged image is painted, so
    this is the only thing between the observer and answering — it has to be

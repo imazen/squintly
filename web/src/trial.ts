@@ -260,7 +260,7 @@ export function startTrials(root: HTMLElement, sessionId: string): TrialControll
       // would collapse the limits and `clampPan` would snap the observer back
       // to the centre — losing their place on a swap to a still-loading
       // variant, which is exactly what carrying the pan across views exists to
-      // prevent. Keep the existing limits; `onLayerReady` recomputes for real.
+      // prevent. Keep the existing limits; `markReady` recomputes for real.
       if (!(w > 0) || !(h > 0)) return;
       // Centred by `margin:auto`, so it can travel half the overflow each way.
       panLimit.x = Math.max(0, (w - rect.width) / 2);
@@ -346,38 +346,74 @@ export function startTrials(root: HTMLElement, sessionId: string): TrialControll
 
     // ---- load / decode tracking -----------------------------------------
     let pending = views.length;
-    const onLayerReady = (v: View) => {
+    /// Nothing is interactive until EVERY variant is paint-ready.
+    ///
+    /// This used to unlock as soon as the *judged* layer arrived, which left
+    /// two ways to see an empty frame. Pressing B (or the view switch) while B
+    /// was still on the wire showed nothing at all — a real source is ~9.5 MB,
+    /// so that is not a flash but a blank viewport. And `load` only means
+    /// "decodable", not decoded: a `visibility: hidden` layer is never painted,
+    /// so the first flip had to decode and rasterise on the spot, costing a
+    /// frame. `decode()` exists for exactly this — it resolves when the bitmap
+    /// is ready to paint without a hitch.
+    ///
+    /// A switch that flashes is not merely untidy here: it injects a visual
+    /// transient between the two pictures being compared, at the instant of
+    /// comparison.
+    // Idempotent per layer. A variant that finishes between the `load` listener
+    // being attached and the already-cached sweep below satisfies BOTH paths,
+    // so without this the same layer decrements `pending` twice and the trial
+    // reports itself ready while another variant is still on the wire —
+    // exactly the "clickable before B has arrived" bug this gate exists to
+    // close, reintroduced through the back door.
+    const settled = new Set<View>();
+    const markReady = (v: View) => {
+      if (settled.has(v)) return;
+      settled.add(v);
       sizeLayer(layers[v]);
       pending -= 1;
-      if (v === currentSrc) {
-        // The judged image is up: start the clock and let the observer answer.
-        if (state.shownAt === 0) {
-          state.shownAt = performance.now();
-          state.uiReadyMs = Math.round(state.shownAt - renderedAt);
-        }
-        viewport.classList.remove('is-loading');
-        status.hidden = true;
-        setPanelEnabled(true);
-        recomputePanLimits();
+      if (pending > 0) return;
+
+      viewport.classList.add('all-ready');
+      viewport.classList.remove('is-loading');
+      status.hidden = true;
+      setPanelEnabled(true);
+      recomputePanLimits();
+      if (state.shownAt === 0) {
+        state.shownAt = performance.now();
+        state.uiReadyMs = Math.round(state.shownAt - renderedAt);
       }
-      if (pending <= 0) viewport.classList.add('all-ready');
     };
 
     for (const v of views) {
       const el = layers[v];
-      el.addEventListener('load', () => onLayerReady(v));
+      const ready = () => {
+        // `decode()` rejects if the element is torn down mid-flight (the
+        // observer answered), which is not an error worth surfacing.
+        el.decode()
+          .catch(() => {})
+          .then(() => markReady(v));
+      };
+      el.addEventListener('load', ready);
       el.addEventListener('error', () => {
+        if (settled.has(v)) return;
+        settled.add(v);
         pending -= 1;
-        if (v === currentSrc) {
-          status.innerHTML = `<p class="muted">That image failed to load.</p>`;
-          status.hidden = false;
-        }
+        status.innerHTML = `<p class="muted">An image failed to load.</p>`;
+        status.hidden = false;
       });
       el.src = srcFor(v);
     }
     showView(restingView);
     // Anything already in cache resolves before the listener attached above.
-    for (const v of views) if (layers[v].complete && layers[v].naturalWidth > 0) onLayerReady(v);
+    for (const v of views) {
+      const el = layers[v];
+      if (el.complete && el.naturalWidth > 0) {
+        el.decode()
+          .catch(() => {})
+          .then(() => markReady(v));
+      }
+    }
 
     viewSwitch.querySelectorAll<HTMLButtonElement>('button').forEach((b) => {
       b.addEventListener('click', () => {

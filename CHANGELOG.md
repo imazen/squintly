@@ -3,6 +3,38 @@
 ## [Unreleased]
 
 ### Fixed
+- **Switching A/B could show a blank frame or flash.** Two causes, both closed:
+  - The response panel unlocked as soon as the *judged* layer arrived, not when
+    all of them had. On a pair trial you could press B — or the view switch —
+    while B was still on the wire, and a real source is ~9.5 MB, so that is an
+    empty viewport rather than a flicker. `all-ready` was computed but nothing
+    gated on it. Everything now waits for every variant.
+  - `load` only means "decodable". A `visibility: hidden` layer is never
+    painted, so the first flip had to decode and rasterise on the spot, costing
+    a frame. Layers now await `img.decode()` and hide by **opacity 0 with
+    `will-change: opacity`**, giving each its own compositor layer so a swap is
+    a compositor property change — no repaint, no reflow, no decode. Exactly 0,
+    never 0.001: a faintly visible second variant would composite over the
+    stimulus under test, which is worse than any flash. The cost is one GPU
+    texture per variant while a trial is mounted (three at most).
+  - A flash here is not cosmetic: it injects a visual transient between the two
+    pictures being compared, at the instant of comparison.
+- **Readiness could be reported early.** A variant finishing between its `load`
+  listener being attached and the already-cached sweep satisfied both paths and
+  decremented the pending count twice, so a trial marked itself ready while
+  another variant was still loading — the exact bug the new gate exists to
+  close, through the back door. Settling is now idempotent per layer. Found by
+  instrumenting a flaky test rather than guessing: `all-ready` was true while
+  layer `a` reported `complete: false, naturalWidth: 0`.
+- Two e2e specs waited on `#stimulus` being sized, which is now weaker than the
+  app's own gate, so they measured mid-setup (`ratio: NaN`, empty hint). They
+  wait on `.viewport.all-ready` and advance by trial-id change instead.
+- `trial-input.spec.ts`'s panel-disabled test was **vacuous**: it routed
+  `**/api/sources/**`, but references are served from `/api/proxy/source/`, so
+  the gate never applied and its `if (loading)` branch never ran. Corrected and
+  made unconditional.
+
+### Fixed
 - **Multi-touch: lifting one finger while another was down showed the
   original.** The pointer handling tracked a single `pointerId` and ignored any
   pointer that arrived while one was already down, so on a phone — one finger

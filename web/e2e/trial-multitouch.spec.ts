@@ -148,18 +148,30 @@ test.describe('multi-touch', () => {
     const cx = box.x + box.width / 2;
     const cy = box.y + box.height / 2;
 
-    // Magnify away from the fit, then double-tap back.
+    // What the fit *should* be for this image in this frame. Computed rather
+    // than assumed: the sampler is random, and asserting merely that the zoom
+    // "changed" is wrong whenever the current factor already is the fit.
+    const expectedFit = await page.evaluate(() => {
+      const i = document.querySelector<HTMLImageElement>('#stimulus')!;
+      const r = document.querySelector<HTMLElement>('#viewport')!.getBoundingClientRect();
+      let best = 1;
+      for (const z of [1, 2, 3, 4, 5, 6, 7, 8]) {
+        if ((i.naturalWidth * z) / devicePixelRatio <= r.width &&
+            (i.naturalHeight * z) / devicePixelRatio <= r.height) best = z;
+      }
+      return best;
+    });
+
+    // Magnify away from wherever we are, then double-tap back.
     await page.keyboard.press('ArrowUp');
     await page.keyboard.press('ArrowUp');
-    const before = await page.locator('#zoom-readout').textContent();
 
     await touch(page, 'pointerdown', 1, cx, cy);
     await touch(page, 'pointerup', 1, cx, cy);
     await touch(page, 'pointerdown', 1, cx, cy);
     await touch(page, 'pointerup', 1, cx, cy);
 
-    const after = (await page.locator('#zoom-readout').textContent())!;
-    expect(after, `double tap should change magnification from ${before}`).not.toBe(before);
+    await expect(page.locator('#zoom-readout')).toHaveText(`${expectedFit}×`);
 
     const m = await page.evaluate(() => {
       const i = document.querySelector<HTMLImageElement>('#stimulus')!;

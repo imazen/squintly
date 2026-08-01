@@ -84,15 +84,18 @@ test.describe('trial input', () => {
     // Hold the images so the loading state is observable rather than a flash.
     let release: () => void = () => {};
     const gate = new Promise<void>((r) => (release = r));
-    await page.route('**/api/sources/**', async (route) => {
+    await page.route('**/api/proxy/source/**', async (route) => {
       await gate;
       await route.continue();
     });
     await completeProfileAndStart(page);
     await page.waitForSelector('.trial[data-trial-id]');
 
-    // The reference is gated, so on a single-stimulus trial the encoding may
-    // already be up; assert the invariant that actually matters instead.
+    // The reference is held on the wire, so the trial cannot be complete —
+    // asserted unconditionally. This used to be wrapped in `if (loading)`,
+    // which made it vacuous: the route pattern matched nothing (references are
+    // served from /api/proxy/source/, not /api/sources/), so the gate never
+    // applied and the branch never ran.
     const state = await page.evaluate(() => {
       const btn = document.querySelector<HTMLButtonElement>(
         '.rating-panel button, .pair-panel button',
@@ -100,10 +103,9 @@ test.describe('trial input', () => {
       const vp = document.querySelector('.viewport');
       return { disabled: btn?.disabled ?? null, loading: vp?.classList.contains('is-loading') };
     });
-    if (state.loading) {
-      expect(state.disabled, 'cannot answer while the judged image is still loading').toBe(true);
-      await expect(page.locator('.viewport-status .spinner')).toBeVisible();
-    }
+    expect(state.loading, 'a held reference means the trial is still loading').toBe(true);
+    expect(state.disabled, 'cannot answer while a variant is still loading').toBe(true);
+    await expect(page.locator('.viewport-status .spinner')).toBeVisible();
 
     release();
     await page.waitForSelector('.viewport:not(.is-loading)');
@@ -409,5 +411,93 @@ test.describe('surround indicator', () => {
     const b = parseInt(ink!.slice(4, 6), 16);
     expect(Math.max(r, g, b) - Math.min(r, g, b), 'must be neutral grey').toBe(0);
     expect(r, 'must stay dark so it cannot shift adaptation').toBeLessThan(0x60);
+  });
+});
+
+test.describe('no flash on switch', () => {
+  // "Always preload both A and B prior to click." The panel used to unlock as
+  // soon as the *judged* layer arrived, so on a pair trial you could press B
+  // while B was still on the wire — a real source is ~9.5 MB, so that is a
+  // blank viewport, not a flicker.
+  test('the panel stays locked until every variant has arrived', async ({ page }) => {
+    await gotoFresh(page);
+    await clickBegin(page);
+    await page.getByRole('button', { name: /^Skip$/ }).click();
+
+    // Hold the reference (and only the reference) on the wire.
+    let release: () => void = () => {};
+    const gate = new Promise<void>((r) => (release = r));
+    let gated = 0;
+    await page.route('**/api/proxy/source/**', async (route) => {
+      gated += 1;
+      await gate;
+      await route.continue();
+    });
+
+    await completeProfileAndStart(page);
+    await page.waitForSelector('.trial[data-trial-id]');
+    // Give the encodings time to land while the reference is still blocked.
+    await page.waitForTimeout(600);
+
+    const mid = await page.evaluate(() => {
+      const btn = document.querySelector<HTMLButtonElement>(
+        '.rating-panel button, .pair-panel button',
+      );
+      const vp = document.querySelector<HTMLElement>('#viewport')!;
+      return {
+        disabled: btn?.disabled ?? null,
+        allReady: vp.classList.contains('all-ready'),
+        decoded: [...document.querySelectorAll<HTMLImageElement>('.viewport img.layer')].map(
+          (i) => i.naturalWidth > 0,
+        ),
+      };
+    });
+    expect(gated, 'the reference request should have been intercepted').toBeGreaterThan(0);
+    expect(mid.allReady, 'not all variants are in yet').toBe(false);
+    expect(mid.disabled, 'answering must be impossible until every variant is in').toBe(true);
+    expect(mid.decoded.some((d) => !d), 'a layer should still be outstanding').toBe(true);
+
+    release();
+    await page.waitForSelector('.viewport.all-ready', { timeout: 20_000 });
+    const done = await page.evaluate(() => ({
+      disabled: document.querySelector<HTMLButtonElement>(
+        '.rating-panel button, .pair-panel button',
+      )!.disabled,
+      decoded: [...document.querySelectorAll<HTMLImageElement>('.viewport img.layer')].every(
+        (i) => i.naturalWidth > 0,
+      ),
+    }));
+    expect(done.decoded, 'every variant decoded').toBe(true);
+    expect(done.disabled, 'unlocked once everything is in').toBe(false);
+  });
+
+  // Hiding by `visibility` skips painting entirely, so the first flip has to
+  // rasterise on the spot — one dropped frame, seen as a flash between the two
+  // pictures being compared. Opacity + compositor promotion makes the swap a
+  // compositor property change instead.
+  test('hidden variants stay composited so a swap cannot repaint', async ({ page }) => {
+    await toTrial(page);
+    await page.waitForSelector('.viewport.all-ready');
+    const styles = await page.evaluate(() =>
+      [...document.querySelectorAll<HTMLImageElement>('.viewport img.layer')].map((i) => {
+        const cs = getComputedStyle(i);
+        return {
+          shown: i.classList.contains('shown'),
+          opacity: cs.opacity,
+          visibility: cs.visibility,
+          willChange: cs.willChange,
+        };
+      }),
+    );
+    for (const s of styles) {
+      expect(s.visibility, 'layers must stay visible to remain painted').toBe('visible');
+      expect(s.opacity, 'hidden layers are transparent, shown ones opaque').toBe(
+        s.shown ? '1' : '0',
+      );
+      expect(s.willChange, 'each layer needs its own compositor layer').toContain('opacity');
+    }
+    // Exactly 0 — a faintly visible second variant would composite over the
+    // stimulus under test, which is worse than any flash.
+    expect(styles.filter((s) => !s.shown).every((s) => s.opacity === '0')).toBe(true);
   });
 });

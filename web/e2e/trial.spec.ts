@@ -95,16 +95,10 @@ test.describe('trial loop', () => {
 
     for (let i = 0; i < 6; i++) {
       await page.waitForSelector('.trial[data-trial-id]', { timeout: 10_000 });
-      await page
-        .waitForFunction(
-          () => {
-            const im = document.querySelector<HTMLImageElement>('#stimulus');
-            return !!im && im.complete && im.naturalWidth > 0 && im.style.width !== '';
-          },
-          undefined,
-          { timeout: 10_000 },
-        )
-        .catch(() => {});
+      // Wait on the app's own readiness gate, not on the judged layer alone.
+      // Nothing is interactive — and the hint is not computed — until every
+      // variant is decoded, so a weaker wait reads the screen mid-setup.
+      await page.waitForSelector('.viewport.all-ready', { timeout: 15_000 }).catch(() => {});
 
       const m = await page.evaluate(() => {
         const im = document.querySelector<HTMLImageElement>('#stimulus')!;
@@ -127,7 +121,17 @@ test.describe('trial loop', () => {
         expect(m.hint, 'an oversized stimulus must advertise panning').toContain('drag');
       }
 
+      // Advance and wait for the *new* trial, by id. Waiting on selectors alone
+      // races the outgoing trial, which is still mounted and already
+      // `all-ready` — the next measurement then lands mid-swap and reads a
+      // zero-width box (ratio NaN).
+      const before = await page.locator('.trial').getAttribute('data-trial-id');
       await submitOneTrial(page);
+      await expect
+        .poll(async () => page.locator('.trial').getAttribute('data-trial-id'), {
+          timeout: 15_000,
+        })
+        .not.toBe(before);
     }
   });
 
@@ -150,16 +154,11 @@ test.describe('trial loop', () => {
     let found = false;
     for (let i = 0; i < BUDGET && !found; i++) {
       await page.waitForSelector('.trial[data-trial-id]', { timeout: 10_000 });
-      await page
-        .waitForFunction(
-          () => {
-            const im = document.querySelector<HTMLImageElement>('#stimulus');
-            return !!im && im.complete && im.style.width !== '';
-          },
-          undefined,
-          { timeout: 10_000 },
-        )
-        .catch(() => {});
+      // Wait for the app's own gate. A layer is sized as soon as *it* decodes,
+      // but pan limits are only computed once every variant is in — so a
+      // weaker wait can measure an oversized image whose panLimit is still 0,
+      // and the drag below then does nothing.
+      await page.waitForSelector('.viewport.all-ready', { timeout: 15_000 }).catch(() => {});
       found = await page.evaluate(() => {
         const im = document.querySelector<HTMLImageElement>('#stimulus')!;
         const vp = document.querySelector<HTMLElement>('#viewport')!;

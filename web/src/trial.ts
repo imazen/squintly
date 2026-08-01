@@ -6,8 +6,9 @@ import { nextTrial, recordResponse, type TrialPayload } from './api';
 import { captureTrial, loadCalibration } from './conditions';
 import {
   INPUT_MODE_LABELS,
-  INPUT_MODES,
+  availableInputModes,
   type InputMode,
+  isInputMode,
   inputModeHint,
   loadInputMode,
   saveInputMode,
@@ -16,7 +17,14 @@ import {
 
 type View = 'a' | 'b' | 'ref';
 
-const ZOOM_LADDER = [1, 2, 4, 8];
+/// Whole-number magnification only, every step available.
+///
+/// Was `[1, 2, 4, 8]`. Integer factors are non-negotiable (a fractional one
+/// sizes some source pixels 2 device px and others 3 — fabricated structure in
+/// a study about which structure is real), but there is no reason to skip 3, 5,
+/// 6 and 7: they are just as exact. The wheel snaps onto these stops rather
+/// than scaling continuously.
+const ZOOM_LADDER = [1, 2, 3, 4, 5, 6, 7, 8];
 
 interface TrialState {
   shownAt: number;
@@ -114,7 +122,7 @@ export function startTrials(root: HTMLElement, sessionId: string): TrialControll
       ? `<label class="mode-picker">
            <span class="sr-only">Interaction mode</span>
            <select id="input-mode" aria-label="Interaction mode">
-             ${INPUT_MODES.map(
+             ${availableInputModes().map(
                (m) =>
                  `<option value="${m}"${m === inputMode ? ' selected' : ''}>${INPUT_MODE_LABELS[m]}</option>`,
              ).join('')}
@@ -152,9 +160,9 @@ export function startTrials(root: HTMLElement, sessionId: string): TrialControll
             }
           </div>
           <div class="zoom-switch" id="zoom-switch" role="group" aria-label="Magnification">
-            ${ZOOM_LADDER.map(
-              (z) => `<button data-zoom="${z}" class="${z === 1 ? 'on' : ''}">${z}×</button>`,
-            ).join('')}
+            <button data-zoom-step="-1" aria-label="Magnify less">−</button>
+            <output id="zoom-readout" aria-live="polite">1×</output>
+            <button data-zoom-step="1" aria-label="Magnify more">+</button>
           </div>
           ${modePicker}
           <button class="keys-btn" id="keys-btn" aria-label="Keyboard shortcuts" title="Keyboard shortcuts (?)">⌨</button>
@@ -197,7 +205,7 @@ export function startTrials(root: HTMLElement, sessionId: string): TrialControll
     const panLimit = { x: 0, y: 0 };
     // In `hold` mode the reference is what you see at rest; in `tap` mode the
     // encoding is, and the reference is a peek.
-    const restingView: View = inputMode === 'hold' ? 'ref' : 'a';
+    const restingView: View = inputMode === 'tap' ? 'a' : 'ref';
     let currentSrc: View = restingView;
     // Which encoding the observer is judging, independent of whether they are
     // momentarily looking at the reference. Kept separate so flipping to the
@@ -270,6 +278,7 @@ export function startTrials(root: HTMLElement, sessionId: string): TrialControll
 
     const viewSwitch = root.querySelector<HTMLDivElement>('#view-switch')!;
     const zoomSwitch = root.querySelector<HTMLDivElement>('#zoom-switch')!;
+    const zoomReadout = root.querySelector<HTMLOutputElement>('#zoom-readout')!;
 
     const markActive = (host: HTMLElement, attr: string, value: string) => {
       host.querySelectorAll<HTMLButtonElement>('button').forEach((b) => {
@@ -314,6 +323,7 @@ export function startTrials(root: HTMLElement, sessionId: string): TrialControll
         }
       }
       currentSrc = which;
+      viewport.dataset.view = which;
       if (which !== 'ref') choiceSrc = which;
       // Marks "you are looking at the original" — accents the hint pill, and is
       // what the e2e suite reads to tell the two states apart. Correct in both
@@ -387,7 +397,8 @@ export function startTrials(root: HTMLElement, sessionId: string): TrialControll
       zoomFactor = next;
       state.zoomUsed = true;
       state.zoomFactor = next;
-      markActive(zoomSwitch, 'zoom', String(next));
+      zoomReadout.textContent = `${next}×`;
+      zoomSwitch.dataset.zoom = String(next);
       // Every layer is resized, not just the visible one — otherwise switching
       // after a zoom would jump between two magnifications.
       for (const v of views) sizeLayer(layers[v]);
@@ -400,13 +411,14 @@ export function startTrials(root: HTMLElement, sessionId: string): TrialControll
     };
 
     zoomSwitch.querySelectorAll<HTMLButtonElement>('button').forEach((b) => {
-      b.addEventListener('click', () => applyZoom(Number(b.dataset.zoom)));
+      b.addEventListener('click', () => stepZoom(Number(b.dataset.zoomStep) as 1 | -1));
     });
-    markActive(zoomSwitch, 'zoom', String(zoom));
+    zoomReadout.textContent = `${zoom}×`;
+    zoomSwitch.dataset.zoom = String(zoom);
 
     root.querySelector<HTMLSelectElement>('#input-mode')?.addEventListener('change', (e) => {
       const v = (e.target as HTMLSelectElement).value;
-      if (v !== 'tap' && v !== 'hold') return;
+      if (!isInputMode(v)) return;
       inputMode = v;
       saveInputMode(v);
       // Re-render so the resting view and pointer bindings match the new mode.
@@ -437,7 +449,7 @@ export function startTrials(root: HTMLElement, sessionId: string): TrialControll
     // and desktop, which would interrupt the hold exactly when it is the
     // primary gesture.
     viewport.addEventListener('contextmenu', (e) => {
-      if (inputMode === 'hold') e.preventDefault();
+      if (inputMode !== 'tap') e.preventDefault();
     });
 
     viewport.addEventListener('pointerdown', (e: PointerEvent) => {
@@ -446,7 +458,10 @@ export function startTrials(root: HTMLElement, sessionId: string): TrialControll
       startX = lastX = e.clientX ?? 0;
       startY = lastY = e.clientY ?? 0;
       dragging = false;
-      if (inputMode === 'hold') {
+      if (inputMode === 'buttons') {
+        // The button picks the side: left for A, right for B.
+        showView(e.button === 2 && isPair ? 'b' : 'a');
+      } else if (inputMode === 'hold') {
         // Which half you press picks the variant — A on the left, B on the
         // right, matching the view switch and the answer buttons. Split on the
         // *viewport*, not the image: this is about where your finger is on the
@@ -495,15 +510,40 @@ export function startTrials(root: HTMLElement, sessionId: string): TrialControll
       } catch {
         /* already released */
       }
-      showView(inputMode === 'hold' ? 'ref' : choiceSrc);
+      showView(inputMode === 'tap' ? choiceSrc : 'ref');
       dragging = false;
       viewport.classList.remove('panning');
     };
     viewport.addEventListener('pointerup', endPointer);
     viewport.addEventListener('pointercancel', endPointer);
 
-    // Wheel/pinch zoom detection (we don't actually zoom — we just record).
-    viewport.addEventListener('wheel', () => { state.zoomUsed = true; }, { passive: true });
+    // The wheel magnifies, snapping onto whole factors rather than scaling
+    // continuously — a fractional factor would resample the stimulus, which is
+    // the one thing this viewer refuses to do. Deltas accumulate so a
+    // high-resolution trackpad does not fly from 1x to 8x in one flick, and a
+    // notched mouse wheel still moves one stop per notch.
+    //
+    // `passive: false` so the page cannot scroll under the gesture; the trial
+    // fills the viewport, so there is nothing to scroll anyway.
+    let wheelAccum = 0;
+    const WHEEL_STEP = 120; // one notch on a conventional mouse wheel
+    viewport.addEventListener(
+      'wheel',
+      (e: WheelEvent) => {
+        e.preventDefault();
+        state.zoomUsed = true;
+        wheelAccum += e.deltaY;
+        while (wheelAccum <= -WHEEL_STEP) {
+          wheelAccum += WHEEL_STEP;
+          stepZoom(1);
+        }
+        while (wheelAccum >= WHEEL_STEP) {
+          wheelAccum -= WHEEL_STEP;
+          stepZoom(-1);
+        }
+      },
+      { passive: false },
+    );
     viewport.addEventListener('gesturestart', () => { state.zoomUsed = true; });
 
     // ---- response panel -------------------------------------------------
@@ -635,7 +675,7 @@ export function startTrials(root: HTMLElement, sessionId: string): TrialControll
     };
 
     const onKeyUp = (e: KeyboardEvent) => {
-      if (e.key === ' ') showView(inputMode === 'hold' ? 'ref' : choiceSrc);
+      if (e.key === ' ') showView(inputMode === 'tap' ? choiceSrc : 'ref');
     };
 
     window.addEventListener('keydown', onKeyDown);
@@ -656,13 +696,13 @@ export function startTrials(root: HTMLElement, sessionId: string): TrialControll
             ['A / B / C', 'answer: A closer, B closer, can’t tell'],
             ['← →', 'cycle A → B → Original'],
             ['space (hold)', 'peek at the original'],
-            ['1 2 4 8', 'magnify 1× 2× 4× 8×'],
+            ['1 – 8', 'magnify by that whole factor'],
           ]
         : [
             ['1 – 4', 'answer: imperceptible → I hate it'],
             ['← →', 'switch compressed ↔ original'],
             ['space (hold)', 'peek at the original'],
-            ['+ / −', 'magnify in / out'],
+            ['+ / − / wheel', 'magnify in / out (whole steps)'],
           ];
       const help = document.createElement('div');
       help.className = 'key-help';

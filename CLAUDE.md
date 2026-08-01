@@ -34,6 +34,25 @@ web component from `~/work/efficient-ui/`. No framework.
   Note `p_single = 0` does NOT give a forced-choice run: the sampler falls back
   to a single when no non-trivial pair exists, and honeypots and anchors are
   themselves single-stimulus. Use the study (or `SQUINTLY_PAIRWISE_ONLY=1`).
+- **The surround, not the stimulus, carries UI signal.** The letterbox is tiled
+  with A / B / ORIG so the current variant is readable without looking away
+  from the picture. It stays dark and strictly neutral grey on purpose: it is
+  the surround of a psychovisual stimulus, so luminance changes shift local
+  adaptation and tints bias colour judgements. Nothing may be painted *over*
+  the stimulus (see the hint-pill note below).
+- **Trial input modes**: `tap` (default; segmented control + hold-to-peek),
+  `hold` (reference at rest, press the left/right half of the frame for A/B),
+  `buttons` (same, but the mouse button picks the side — `pointer: fine` only).
+  All three are recorded in `responses.input_mode` because they change what
+  `reveal_ms_total` measures.
+- **Reopening resumes into trials.** `main.ts::boot` skips onboarding when an
+  observer id and profile exist, starting a *new* session (conditions are
+  re-captured — the device or lighting may have changed). Curator is opt-in per
+  browser via `#curator`; calibration is a welcome-screen link, seeded from the
+  stored measurement, whose Skip preserves rather than clears it.
+- **`web/tsconfig.json` covers only `src`.** The e2e specs are type-checked by
+  `tsconfig.e2e.json` (`just ci` runs both). They went unchecked for their whole
+  life before that and had four real type errors sitting in them.
 - **Pair slots are counterbalanced; never assume A/B ordering.**
   `sampling::counterbalance_pair` randomises which encoding lands in slot A,
   applied once in `next_trial` after every pair-building path. Before it,

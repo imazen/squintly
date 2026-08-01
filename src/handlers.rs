@@ -732,7 +732,7 @@ fn tap_mode() -> String {
 /// rather than stored: this column tells an analyst how to read
 /// `reveal_ms_total`, so a typo silently persisted would quietly mislabel the
 /// data it exists to disambiguate.
-pub const INPUT_MODES: &[&str] = &["tap", "hold"];
+pub const INPUT_MODES: &[&str] = &["tap", "hold", "buttons"];
 
 #[derive(Debug, Deserialize)]
 pub struct ResponseReq {

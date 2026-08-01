@@ -11,6 +11,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 
 import { COEFFICIENT_PORT } from '../playwright.config';
+import { gotoFreshAsOperator } from './helpers';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const FIXTURE_PATH = resolve(HERE, 'curator-fixture.jsonl');
@@ -25,20 +26,30 @@ test.describe('curator mode', () => {
       data: { kind: 'jsonl', body: FIXTURE_BODY, blob_url_base: BLOB_BASE },
     });
     expect(r.ok()).toBeTruthy();
-    // Use a fresh curator UUID per test so streams don't leak.
+    // Use a fresh curator UUID per test so streams don't leak, and enter as an
+    // operator: the curator tab is opt-in per browser now (`#curator`), so a
+    // spec that drives it has to walk through the same door an operator does.
     await page.goto('/');
     await page.evaluate(() => localStorage.clear());
     await page.evaluate(() => {
       localStorage.setItem('squintly:curator_id', crypto.randomUUID());
+      localStorage.setItem('squintly_show_curator', '1');
     });
+    await page.reload();
   });
 
   test('welcome screen surfaces license credits and tab bar', async ({ page }) => {
-    await page.goto('/');
+    await gotoFreshAsOperator(page);
     await expect(page.getByRole('heading', { name: /Image Discrimination Study/i })).toBeVisible();
-    await expect(page.locator('.squintly-tabs button[data-tab="curator"]')).toBeVisible();
     await expect(page.locator('.squintly-tabs button[data-tab="rate"]')).toBeVisible();
-    await expect(page.locator('.squintly-tabs button[data-tab="calibrate"]')).toBeVisible();
+    await expect(page.locator('.squintly-tabs button[data-tab="suggest"]')).toBeVisible();
+    // Present because `gotoFreshAsOperator` opted this browser in via
+    // `#curator`; a participant does not get it (next test).
+    await expect(page.locator('.squintly-tabs button[data-tab="curator"]')).toBeVisible();
+    // Calibrate is no longer a tab — it is a one-off measurement the app
+    // remembers, reached from a link when it needs changing.
+    await expect(page.locator('.squintly-tabs button[data-tab="calibrate"]')).toHaveCount(0);
+    await expect(page.locator('#calibrate-link')).toBeVisible();
     // License credits panel is collapsed but present.
     await expect(page.locator('.credits summary')).toContainText(/Image sources/i);
     await page.locator('.credits summary').click();
@@ -47,6 +58,18 @@ test.describe('curator mode', () => {
     await expect(page.locator('a[data-license-id="unsplash"]')).toBeVisible();
     await expect(page.locator('a[data-license-id="wikimedia-mixed"]')).toBeVisible();
     await expect(page.locator('a[data-license-id="mixed-research"]')).toBeVisible();
+  });
+
+  // The curator is an operator tool on an anonymous-participant origin, so it
+  // must not be advertised to participants at all.
+  test('a plain participant is not offered the curator', async ({ page }) => {
+    // Explicitly undo the beforeEach's operator opt-in.
+    await page.context().clearCookies();
+    await page.goto('/');
+    await page.evaluate(() => localStorage.clear());
+    await page.reload();
+    await expect(page.locator('.squintly-tabs button[data-tab="rate"]')).toBeVisible();
+    await expect(page.locator('.squintly-tabs button[data-tab="curator"]')).toHaveCount(0);
   });
 
   test('stream renders first candidate with license badge and corpus label', async ({ page }) => {

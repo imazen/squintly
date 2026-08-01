@@ -10,6 +10,18 @@ export async function gotoFresh(page: Page) {
   await page.reload();
 }
 
+/// Enter as an operator, with the curator tab available.
+///
+/// Curator is no longer shipped to every participant — it is an operator tool
+/// on an anonymous-participant origin, so it is opt-in per browser via the
+/// `#curator` hash. This is that opt-in, and it is deliberately the same door
+/// an operator walks through rather than a test-only backdoor.
+export async function gotoFreshAsOperator(page: Page) {
+  await gotoFresh(page);
+  await page.goto('/#curator');
+  await page.reload();
+}
+
 export async function clickBegin(page: Page) {
   await expect(page.getByRole('heading', { name: /Image Discrimination Study/i })).toBeVisible();
   await page.getByRole('button', { name: /^Begin$/ }).click();

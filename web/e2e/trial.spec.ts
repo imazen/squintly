@@ -5,8 +5,6 @@ import {
   clickBegin,
   completeProfileAndStart,
   gotoFresh,
-  ratePair,
-  rateSingle,
   submitOneTrial,
 } from './helpers';
 
@@ -267,9 +265,15 @@ test.describe('trial loop', () => {
         };
       });
 
-    for (const z of [1, 2, 4, 8]) {
-      await page.locator(`.zoom-switch button[data-zoom="${z}"]`).click();
-      await page.waitForTimeout(150);
+    // Every whole factor, not just powers of two — the ladder is 1..8 and the
+    // stepper walks it one stop at a time.
+    for (const z of [1, 2, 3, 4, 5, 6, 7, 8]) {
+      while (
+        (await page.locator('#zoom-readout').textContent())?.trim() !== `${z}\u00d7`
+      ) {
+        await page.locator('.zoom-switch button[data-zoom-step="1"]').click();
+      }
+      await page.waitForTimeout(120);
       const m = await measure();
       expect(
         Math.abs(m.devicePxPerImagePx - z),

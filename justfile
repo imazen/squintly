@@ -23,7 +23,10 @@ ci:
     cargo fmt -- --check
     cargo clippy --all-targets -- -D warnings
     cargo test --all-targets
-    cd web && npx tsc --noEmit
+    # Both projects: tsconfig.json covers only `src`, so the e2e specs and
+    # scripts went unchecked for their whole life. Four real type errors were
+    # sitting in them the first time this ran.
+    cd web && npx tsc --noEmit && npx tsc --noEmit -p tsconfig.e2e.json
 
 # Build the Docker image locally. Passes the git commit through as a build arg
 # so the image's export manifests carry real provenance (build.rs also derives

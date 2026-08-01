@@ -3,6 +3,66 @@
 ## [Unreleased]
 
 ### Fixed
+- **The blind-spot distance test used the wrong eye, so it could never work.**
+  It said "close your right eye" while sweeping the target to the *right* of
+  the fixation ×. Each eye's blind spot sits ~12–15° into its **temporal**
+  (outer) field — the left eye's to the left, the right eye's to the right — so
+  a target on the right viewed with the *left* eye lands in the nasal field,
+  where there is no blind spot. The dot could not disappear, the sweep always
+  ran to its timeout, and the step silently returned no distance while looking
+  like a working feature. Now: close the **left** eye. The dead
+  `// wait — dot is positioned via right` calculation left mid-thought beside it
+  is gone too.
+- **Calibration was not sticky, and Skip destroyed it.** The card screen always
+  opened at a fixed slider value, ignoring the stored measurement, and its Skip
+  returned nulls that the caller wrote straight over a good calibration — so
+  re-entering merely to check could erase it. It now seeds from the stored value
+  and Skip preserves it.
+- **The e2e specs were never type-checked.** `web/tsconfig.json` includes only
+  `src`, so `tsc --noEmit` skipped `e2e/` and `scripts/` entirely. Added
+  `tsconfig.e2e.json`, wired into `just ci`; it found four real errors on its
+  first run.
+
+### Changed
+- **Reopening the app resumes into trials.** A returning observer with a stored
+  observer id and profile goes straight back to rating instead of being walked
+  through welcome → Begin → calibration → profile again. A new session row is
+  started rather than the old one resumed, because conditions are re-captured
+  and the screen, lighting or device may have changed — filing new responses
+  under stale viewing conditions would be worse than the extra row. The
+  interstitial keeps a "start from the beginning instead" link up for as long
+  as the session request is in flight.
+- **Curator and Calibrate are no longer participant tabs.** Curator is an
+  operator tool on an anonymous-participant origin (see CLAUDE.md Known Bugs)
+  and is now opt-in per browser via the `#curator` hash. Calibrate is a one-off
+  measurement the app remembers, reached from a welcome-screen link that says
+  whether it is already done.
+- **Magnification is every whole factor 1–8, not 1/2/4/8**, driven by a
+  `− N× +` stepper. Integer factors remain non-negotiable — a fractional one
+  sizes some source pixels 2 device px and others 3, fabricating structure in a
+  study about which structure is real — but there was no reason to skip 3, 5, 6
+  and 7.
+- **The scroll wheel magnifies, snapping onto whole factors.** Deltas
+  accumulate so a high-resolution trackpad does not fly 1× → 8× in one flick
+  while a notched wheel still moves one stop per notch.
+
+### Added
+- **`buttons` input mode**: left mouse button shows A, right shows B, release
+  shows the original — the button decides, not where the pointer is. Desktop
+  only (`pointer: fine`); `hold` covers the same idea with a thumb. Recorded as
+  `input_mode='buttons'`.
+- **The surround is tiled with the variant on screen** (A / B / ORIG). The
+  letterbox carried no information while the only persistent cue was a button
+  below the frame — in a task entirely about telling two pictures apart,
+  knowing which one you are looking at should not need a glance away from it,
+  least of all under `hold`/`buttons` where it changes as fast as you can press.
+  Deliberately dark and strictly neutral grey: this is the surround of a
+  psychovisual stimulus, so raising its luminance would shift local adaptation
+  and tinting it would bias colour judgements. The glyph carries the meaning,
+  not the colour. It cannot occlude anything — it paints the viewport
+  background, beneath the opaque stimulus layer.
+
+### Fixed
 - **The better image was always B on pair trials** (this change). `try_pair`
   takes two adjacent rungs from a quality-ascending list as
   `(sorted[i], sorted[i+1])`, so slot B held the higher-quality — and larger —

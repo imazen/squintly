@@ -1148,14 +1148,43 @@ export interface CuratorTabHandlers {
   onSuggest: () => void;
 }
 
+/// The participant-facing tabs.
+///
+/// Curator and Calibrate used to sit here. Curator is an operator tool on an
+/// anonymous-participant origin (see the Known Bugs note in CLAUDE.md) and
+/// belongs behind admin, not on the home screen. Calibrate is a one-off
+/// measurement that the app already persists — offering it as a permanent
+/// destination invites re-measuring something that is already known, and the
+/// Skip button on that screen used to overwrite the good value with nulls.
+/// It now lives in Settings, reached from the welcome screen.
+///
+/// `SQUINTLY_SHOW_CURATOR_TAB` is not a thing: an operator opens `#curator`
+/// directly (`showCuratorTab()` below) rather than shipping the tab to
+/// everyone.
 export function renderTabBar(active: 'rate' | 'curator' | 'calibrate' | 'suggest', _h: CuratorTabHandlers): string {
   const cls = (k: string) => (k === active ? 'on' : '');
+  const curatorTab = showCuratorTab()
+    ? `<button class="${cls('curator')}" data-tab="curator">Curator</button>`
+    : '';
   return `<nav class="squintly-tabs" aria-label="Mode">
     <button class="${cls('rate')}" data-tab="rate">Rate</button>
-    <button class="${cls('curator')}" data-tab="curator">Curator</button>
+    ${curatorTab}
     <button class="${cls('suggest')}" data-tab="suggest">Suggest</button>
-    <button class="${cls('calibrate')}" data-tab="calibrate">Calibrate</button>
   </nav>`;
+}
+
+/// Curator is opt-in per browser: visit `#curator` once and it stays available
+/// on this device. Keeps the operator tool reachable without putting it in
+/// front of every participant.
+export function showCuratorTab(): boolean {
+  try {
+    if (location.hash === '#curator') {
+      localStorage.setItem('squintly_show_curator', '1');
+    }
+    return localStorage.getItem('squintly_show_curator') === '1';
+  } catch {
+    return false;
+  }
 }
 
 export function bindTabBar(root: HTMLElement, h: CuratorTabHandlers): void {

@@ -150,9 +150,12 @@ test.describe('trial input', () => {
 
     // Digits are free on pair trials (no 1-4 rating), so they drive the ladder.
     await page.keyboard.press('4');
-    await expect(page.locator('.zoom-switch button[data-zoom="4"]')).toHaveClass(/\bon\b/);
+    await expect(page.locator('#zoom-readout')).toHaveText('4×');
+    // 3 and 5 exist now; the ladder is every whole factor, not powers of two.
+    await page.keyboard.press('3');
+    await expect(page.locator('#zoom-readout')).toHaveText('3×');
     await page.keyboard.press('0');
-    await expect(page.locator('.zoom-switch button[data-zoom="1"]')).toHaveClass(/\bon\b/);
+    await expect(page.locator('#zoom-readout')).toHaveText('1×');
 
     const before = await page.locator('.trial').getAttribute('data-trial-id');
     await page.keyboard.press('c'); // "can't tell"
@@ -269,5 +272,142 @@ test.describe('hold-to-compare mode', () => {
       await page.mouse.up();
       expect(await shown()).toBe('ref');
     }
+  });
+});
+
+test.describe('mouse-button mode', () => {
+  test('is offered only where a mouse exists', async ({ page }, testInfo) => {
+    await toTrial(page);
+    const desktop = testInfo.project.name === 'chromium-desktop';
+    await expect(page.locator('#input-mode option[value="buttons"]')).toHaveCount(
+      desktop ? 1 : 0,
+    );
+    // `hold` covers the same idea with a thumb, so it is offered everywhere.
+    await expect(page.locator('#input-mode option[value="hold"]')).toHaveCount(1);
+  });
+
+  test('left button shows A, right shows B, release shows the original', async ({
+    page,
+  }, testInfo) => {
+    test.skip(testInfo.project.name !== 'chromium-desktop', 'needs a mouse');
+    await toTrial(page);
+    expect(await toKind(page, 'pair'), 'needed a pair trial').toBe(true);
+    await page.locator('#input-mode').selectOption('buttons');
+    await page.waitForSelector('.trial[data-input-mode="buttons"]');
+    await page.waitForSelector('.viewport:not(.is-loading)');
+
+    const shown = () =>
+      page.evaluate(
+        () => document.querySelector<HTMLImageElement>('.viewport img.shown')!.dataset.layer,
+      );
+    expect(await shown(), 'the original is the resting view').toBe('ref');
+
+    const box = (await page.locator('#viewport').boundingBox())!;
+    // Deliberately press on the RIGHT half with the LEFT button: in this mode
+    // the button decides, not the position, and the two must not be confused.
+    await page.mouse.move(box.x + box.width * 0.8, box.y + box.height / 2);
+    await page.mouse.down({ button: 'left' });
+    expect(await shown(), 'left button shows A wherever the pointer is').toBe('a');
+    await page.mouse.up({ button: 'left' });
+    expect(await shown()).toBe('ref');
+
+    await page.mouse.move(box.x + box.width * 0.2, box.y + box.height / 2);
+    await page.mouse.down({ button: 'right' });
+    expect(await shown(), 'right button shows B wherever the pointer is').toBe('b');
+    await page.mouse.up({ button: 'right' });
+    expect(await shown()).toBe('ref');
+  });
+});
+
+test.describe('wheel magnification', () => {
+  test('the wheel steps through whole factors and never lands between them', async ({
+    page,
+  }, testInfo) => {
+    // A phone has no scroll wheel, and the mobile-emulated projects do not
+    // deliver wheel events at all. Scoped by project, which is a property of the
+    // device being emulated, not a runtime bail-out.
+    test.skip(testInfo.project.name !== 'chromium-desktop', 'needs a scroll wheel');
+    await toTrial(page);
+    const box = (await page.locator('#viewport').boundingBox())!;
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+
+    const factor = async () =>
+      page.evaluate(() => {
+        const i = document.querySelector<HTMLImageElement>('#stimulus')!;
+        return (i.getBoundingClientRect().width * window.devicePixelRatio) / i.naturalWidth;
+      });
+
+    expect(await factor()).toBeCloseTo(1, 1);
+    for (const want of [2, 3, 4]) {
+      await page.mouse.wheel(0, -120); // one notch in
+      await page.waitForTimeout(120);
+      await expect(page.locator('#zoom-readout')).toHaveText(`${want}×`);
+      const f = await factor();
+      // The whole point of snapping: a fractional factor would resample the
+      // stimulus, which is what the 1:1 rule exists to prevent.
+      expect(Math.abs(f - Math.round(f)), `factor ${f} must be a whole number`).toBeLessThan(
+        0.02,
+      );
+    }
+    for (const want of [3, 2, 1]) {
+      await page.mouse.wheel(0, 120); // one notch out
+      await page.waitForTimeout(120);
+      await expect(page.locator('#zoom-readout')).toHaveText(`${want}×`);
+    }
+    // Never below 1:1, however hard you scroll out.
+    for (let i = 0; i < 5; i++) await page.mouse.wheel(0, 120);
+    await page.waitForTimeout(120);
+    await expect(page.locator('#zoom-readout')).toHaveText('1×');
+    expect(await factor()).toBeGreaterThanOrEqual(0.98);
+  });
+});
+
+test.describe('surround indicator', () => {
+  // The letterbox around the stimulus carried no information, while the only
+  // persistent cue for which variant was on screen was a button below the
+  // frame. Under hold/buttons the variant changes as fast as you can press, so
+  // the answer has to be visible without looking away from the picture.
+  test('the surround is tiled with the variant currently shown', async ({ page }) => {
+    await toTrial(page);
+    expect(await toKind(page, 'pair'), 'needed a pair trial').toBe(true);
+
+    const surround = () =>
+      page.evaluate(() => {
+        const vp = document.querySelector<HTMLElement>('#viewport')!;
+        return {
+          view: vp.dataset.view,
+          image: getComputedStyle(vp).backgroundImage,
+        };
+      });
+
+    const seen: Record<string, string> = {};
+    for (const v of ['a', 'b', 'ref'] as const) {
+      await page.locator(`.view-switch button[data-view="${v}"]`).click();
+      const s = await surround();
+      expect(s.view, 'the viewport must advertise the current variant').toBe(v);
+      expect(s.image, `no surround pattern for ${v}`).not.toBe('none');
+      seen[v] = s.image;
+    }
+    // Three distinct patterns — a shared one would label nothing.
+    expect(new Set(Object.values(seen)).size).toBe(3);
+  });
+
+  // The surround is behind a psychovisual stimulus. A bright or tinted pattern
+  // would change local adaptation and bias colour judgements, so the glyph
+  // carries the meaning and the ink stays dark and neutral.
+  test('the pattern is dark and neutral, never coloured', async ({ page }) => {
+    await toTrial(page);
+    const ink = await page.evaluate(() => {
+      const vp = document.querySelector<HTMLElement>('#viewport')!;
+      const img = getComputedStyle(vp).backgroundImage;
+      const m = decodeURIComponent(img).match(/fill="#([0-9a-fA-F]{6})"/);
+      return m ? m[1] : null;
+    });
+    expect(ink, 'expected an inline SVG tile with an explicit fill').not.toBeNull();
+    const r = parseInt(ink!.slice(0, 2), 16);
+    const g = parseInt(ink!.slice(2, 4), 16);
+    const b = parseInt(ink!.slice(4, 6), 16);
+    expect(Math.max(r, g, b) - Math.min(r, g, b), 'must be neutral grey').toBe(0);
+    expect(r, 'must stay dark so it cannot shift adaptation').toBeLessThan(0x60);
   });
 });

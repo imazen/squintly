@@ -62,6 +62,13 @@ async function welcome(): Promise<void> {
       <p class="muted" style="margin-top:8px;">
         <a id="signin-link" href="#" style="color:inherit;text-decoration:underline;">Already have an email-linked account? Sign in.</a>
       </p>
+      <p class="muted" style="margin-top:0;">
+        <a id="calibrate-link" href="#" style="color:inherit;text-decoration:underline;">${
+          loadCalibration().css_px_per_mm
+            ? 'Screen size calibrated \u2713 \u2014 re-measure'
+            : 'Calibrate screen size (optional)'
+        }</a>
+      </p>
       <p class="muted">Best on phones, but any browser works.</p>
       <details class="credits" id="credits">
         <summary>Image sources &amp; licensing</summary>
@@ -73,12 +80,11 @@ async function welcome(): Promise<void> {
     onRate: () => { /* already on rate */ },
     onCurator: () => startCurator(root, () => welcome()),
     onSuggest: () => startSuggest(root, () => welcome()),
-    onCalibrate: () => {
-      renderCalibration(root, (result) => {
-        saveCalibration(result);
-        void welcome();
-      });
-    },
+    onCalibrate: () => openCalibration(),
+  });
+  root.querySelector<HTMLAnchorElement>('#calibrate-link')!.addEventListener('click', (e) => {
+    e.preventDefault();
+    openCalibration();
   });
   bindStudyPicker(root, studies);
   void renderCreditsBody();
@@ -106,6 +112,64 @@ async function welcome(): Promise<void> {
  * retired must not be sent — the server rejects unknown ids rather than
  * silently substituting, which is right, but the UI shouldn't provoke it.
  */
+/// Calibration is a one-off measurement the app remembers, so it is reached
+/// deliberately rather than sitting in the tab bar. `renderCalibration` seeds
+/// itself from the stored value and its Skip preserves it, so re-entering here
+/// can only improve the number, never blank it.
+function openCalibration(): void {
+  renderCalibration(root, (result) => {
+    saveCalibration(result);
+    void /// Is this a returning observer who has already been through onboarding?
+///
+/// Reopening the app used to drop everyone back on the welcome screen and walk
+/// them through Begin -> calibration -> profile again, even though the observer
+/// id, profile and calibration were all already in localStorage. For someone
+/// coming back for a second batch of trials that is three screens of friction
+/// in front of the thing they returned to do.
+///
+/// "Already onboarded" means we have an observer id and a saved profile — the
+/// two things the profile step exists to produce. Calibration is deliberately
+/// not required: it is optional and skippable, so demanding it would make the
+/// resume path stricter than the path that created the state.
+function hasOnboarded(): boolean {
+  const p = loadProfile();
+  return (
+    !!getObserverId() &&
+    (p.ambient_light !== null || p.vision_corrected !== null || p.age_bracket !== null)
+  );
+}
+
+async function boot(): Promise<void> {
+  if (!hasOnboarded()) {
+    await welcome();
+    return;
+  }
+  // Straight back into trials. A new session row is correct rather than
+  // resuming the old one: conditions are re-captured, and the screen, lighting
+  // or device may well have changed since last time — pretending otherwise
+  // would file new responses under stale viewing conditions.
+  root.innerHTML = `
+    <div class="screen center" data-screen="resuming">
+      <div class="spinner" role="status" aria-label="Resuming"></div>
+      <p class="muted">Welcome back — picking up where you left off…</p>
+      <p class="muted"><a id="not-now" href="#" style="color:inherit;text-decoration:underline;">Start from the beginning instead</a></p>
+    </div>
+  `;
+  let cancelled = false;
+  root.querySelector<HTMLAnchorElement>('#not-now')!.addEventListener('click', (e) => {
+    e.preventDefault();
+    cancelled = true;
+    void welcome();
+  });
+  const support = await detectCodecs();
+  if (cancelled) return;
+  await beginSession(loadProfile(), support, { keepScreen: true });
+}
+
+void boot();
+  });
+}
+
 function pickStudy(studies: Study[], stored: string | null): Study | null {
   if (!studies.length) return null;
   return studies.find((s) => s.id === stored) ?? studies[0];
@@ -224,7 +288,54 @@ function profileForm(support: { supported: Set<string>; cached: boolean }): void
     });
   }
   root.querySelector<HTMLButtonElement>('#back')!.addEventListener('click', () => {
+    void /// Is this a returning observer who has already been through onboarding?
+///
+/// Reopening the app used to drop everyone back on the welcome screen and walk
+/// them through Begin -> calibration -> profile again, even though the observer
+/// id, profile and calibration were all already in localStorage. For someone
+/// coming back for a second batch of trials that is three screens of friction
+/// in front of the thing they returned to do.
+///
+/// "Already onboarded" means we have an observer id and a saved profile — the
+/// two things the profile step exists to produce. Calibration is deliberately
+/// not required: it is optional and skippable, so demanding it would make the
+/// resume path stricter than the path that created the state.
+function hasOnboarded(): boolean {
+  const p = loadProfile();
+  return (
+    !!getObserverId() &&
+    (p.ambient_light !== null || p.vision_corrected !== null || p.age_bracket !== null)
+  );
+}
+
+async function boot(): Promise<void> {
+  if (!hasOnboarded()) {
+    await welcome();
+    return;
+  }
+  // Straight back into trials. A new session row is correct rather than
+  // resuming the old one: conditions are re-captured, and the screen, lighting
+  // or device may well have changed since last time — pretending otherwise
+  // would file new responses under stale viewing conditions.
+  root.innerHTML = `
+    <div class="screen center" data-screen="resuming">
+      <div class="spinner" role="status" aria-label="Resuming"></div>
+      <p class="muted">Welcome back — picking up where you left off…</p>
+      <p class="muted"><a id="not-now" href="#" style="color:inherit;text-decoration:underline;">Start from the beginning instead</a></p>
+    </div>
+  `;
+  let cancelled = false;
+  root.querySelector<HTMLAnchorElement>('#not-now')!.addEventListener('click', (e) => {
+    e.preventDefault();
+    cancelled = true;
     void welcome();
+  });
+  const support = await detectCodecs();
+  if (cancelled) return;
+  await beginSession(loadProfile(), support, { keepScreen: true });
+}
+
+void boot();
   });
   root.querySelector<HTMLButtonElement>('#start')!.addEventListener('click', async () => {
     saveProfile(profile);
@@ -235,11 +346,18 @@ function profileForm(support: { supported: Set<string>; cached: boolean }): void
 async function beginSession(
   profile: Profile,
   support: { supported: Set<string>; cached: boolean },
+  opts: { keepScreen?: boolean } = {},
 ): Promise<void> {
   const sessionConds = captureSession();
   const calib = loadCalibration();
   const observer = getObserverId();
-  root.innerHTML = `<div class="screen center"><p>Starting session...</p></div>`;
+  // On resume the caller already has a screen up that carries the only way out
+  // ("start from the beginning instead"). Replacing it with a placeholder would
+  // remove that escape while the request is in flight — which is exactly when
+  // someone who opened the app by accident wants it.
+  if (!opts.keepScreen) {
+    root.innerHTML = `<div class="screen center"><p>Starting session...</p></div>`;
+  }
   try {
     const resp = await createSession({
       observer_id: observer,
@@ -281,4 +399,51 @@ async function beginSession(
   }
 }
 
-welcome();
+/// Is this a returning observer who has already been through onboarding?
+///
+/// Reopening the app used to drop everyone back on the welcome screen and walk
+/// them through Begin -> calibration -> profile again, even though the observer
+/// id, profile and calibration were all already in localStorage. For someone
+/// coming back for a second batch of trials that is three screens of friction
+/// in front of the thing they returned to do.
+///
+/// "Already onboarded" means we have an observer id and a saved profile — the
+/// two things the profile step exists to produce. Calibration is deliberately
+/// not required: it is optional and skippable, so demanding it would make the
+/// resume path stricter than the path that created the state.
+function hasOnboarded(): boolean {
+  const p = loadProfile();
+  return (
+    !!getObserverId() &&
+    (p.ambient_light !== null || p.vision_corrected !== null || p.age_bracket !== null)
+  );
+}
+
+async function boot(): Promise<void> {
+  if (!hasOnboarded()) {
+    await welcome();
+    return;
+  }
+  // Straight back into trials. A new session row is correct rather than
+  // resuming the old one: conditions are re-captured, and the screen, lighting
+  // or device may well have changed since last time — pretending otherwise
+  // would file new responses under stale viewing conditions.
+  root.innerHTML = `
+    <div class="screen center" data-screen="resuming">
+      <div class="spinner" role="status" aria-label="Resuming"></div>
+      <p class="muted">Welcome back — picking up where you left off…</p>
+      <p class="muted"><a id="not-now" href="#" style="color:inherit;text-decoration:underline;">Start from the beginning instead</a></p>
+    </div>
+  `;
+  let cancelled = false;
+  root.querySelector<HTMLAnchorElement>('#not-now')!.addEventListener('click', (e) => {
+    e.preventDefault();
+    cancelled = true;
+    void welcome();
+  });
+  const support = await detectCodecs();
+  if (cancelled) return;
+  await beginSession(loadProfile(), support, { keepScreen: true });
+}
+
+void boot();

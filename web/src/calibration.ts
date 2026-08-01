@@ -1,3 +1,5 @@
+import { loadCalibration } from './conditions';
+
 // Li 2020 virtual chinrest, simplified. Two stages:
 //   1) Card resize → CSS px per mm.
 //   2) Blind-spot sweep → viewing distance.
@@ -6,20 +8,38 @@
 // hard for crowdsourced subjects).
 
 const CARD_MM_W = 85.6;
+/// Eccentricity of the blind spot from fixation, degrees. Reported range is
+/// 12-15°; this is the midpoint.
+const BLIND_SPOT_DEG = 13.5;
 const CARD_MM_H = 53.98;
 
 export function renderCalibration(
   root: HTMLElement,
   onDone: (result: { css_px_per_mm: number | null; viewing_distance_cm: number | null }) => void,
 ): void {
-  // Stage 1: card resize
-  let pxPerMm: number | null = null;
+  // Stage 1: card resize.
+  //
+  // Seeded from whatever was measured last time. This used to open at a fixed
+  // slider value every time, so a returning observer re-did a measurement the
+  // app had already stored — and `Skip` returned nulls that the caller saved
+  // straight over the good value, silently discarding it.
+  const prior = loadCalibration();
+  let pxPerMm: number | null = prior.css_px_per_mm;
   root.innerHTML = `
     <div class="screen center">
       <h1>Calibration: hold a card to your screen</h1>
       <p class="muted">Find any card the size of a debit/credit/transit card. Drag the slider until the on-screen rectangle matches its size.</p>
+      ${
+        prior.css_px_per_mm
+          ? `<p class="muted">Already calibrated on this device${
+              prior.viewing_distance_cm ? ` at ~${prior.viewing_distance_cm} cm` : ''
+            } — adjust only if something changed.</p>`
+          : ''
+      }
       <div id="card" class="card-mock">credit-card sized</div>
-      <input id="slider" type="range" min="80" max="600" step="1" value="200" />
+      <input id="slider" type="range" min="80" max="600" step="1" value="${Math.round(
+        (prior.css_px_per_mm ?? 200 / CARD_MM_W) * CARD_MM_W,
+      )}" />
       <div class="choice-row" style="max-width: 360px; width: 100%;">
         <button id="skip">Skip</button>
         <button id="next" class="primary">Looks right</button>
@@ -36,7 +56,12 @@ export function renderCalibration(
   };
   slider.addEventListener('input', updateCard);
   updateCard();
-  root.querySelector<HTMLButtonElement>('#skip')!.addEventListener('click', () => onDone({ css_px_per_mm: null, viewing_distance_cm: null }));
+  // Skip keeps whatever was already measured. Returning nulls here meant the
+  // caller wrote nulls over a good calibration — skipping is "leave it alone",
+  // not "throw it away".
+  root
+    .querySelector<HTMLButtonElement>('#skip')!
+    .addEventListener('click', () => onDone(prior));
   root.querySelector<HTMLButtonElement>('#next')!.addEventListener('click', () => stage2(root, pxPerMm, onDone));
 }
 
@@ -45,9 +70,22 @@ function stage2(
   pxPerMm: number | null,
   onDone: (r: { css_px_per_mm: number | null; viewing_distance_cm: number | null }) => void,
 ): void {
-  // Stage 2: blind-spot sweep. The blind spot is ~13.5° from the fovea on the
-  // horizontal meridian. We fixate a left dot, sweep a right dot inward, user taps
-  // when it disappears. Distance = horizontal_distance_mm / tan(13.5°).
+  // Stage 2: blind-spot sweep. Fixate the × on the LEFT, sweep a dot inward from
+  // the right, tap when it vanishes. Distance = horizontal_mm / tan(eccentricity).
+  //
+  // WHICH EYE IS NOT ARBITRARY. The optic disc sits on the *nasal* retina, and
+  // the optics invert, so each eye's blind spot lies in its *temporal* (outer)
+  // visual field ~12-15° from fixation: the left eye's is to the LEFT, the right
+  // eye's to the RIGHT. Here the target is always to the RIGHT of fixation, so
+  // the only eye that can lose it is the RIGHT one — the left eye must be the
+  // one that is closed.
+  //
+  // This said "close your right eye", i.e. view with the left, which put the
+  // target in that eye's nasal field where there is no blind spot. The dot could
+  // never disappear, so the sweep always ran to its timeout and returned no
+  // distance. It looked like a working feature that simply never produced a
+  // measurement. If the layout is ever mirrored, this instruction has to mirror
+  // with it.
   if (!pxPerMm) {
     // Without mm calibration we can't compute a distance from the sweep; ask the
     // user to pick a preset bucket instead.
@@ -81,7 +119,7 @@ function stage2(
   root.innerHTML = `
     <div class="screen center">
       <h1>Blind-spot test</h1>
-      <p class="muted">Close your right eye. Stare at the left × . When the red dot disappears, tap the screen.</p>
+      <p class="muted">Close your <strong>left</strong> eye. Stare at the × with your right eye and hold still. Tap the moment the red dot vanishes.</p>
       <div id="stage" style="position: relative; width: 100%; height: 320px; background: #000; border-radius: 12px; overflow: hidden;">
         <div style="position: absolute; left: 24px; top: 50%; transform: translateY(-50%); color: white; font-size: 32px; line-height: 1;">×</div>
         <div id="dot" style="position: absolute; width: 18px; height: 18px; border-radius: 50%; background: red; top: 50%; transform: translate(-50%, -50%); right: 32px;"></div>
@@ -119,16 +157,15 @@ function stage2(
   stage.addEventListener('click', () => {
     if (!started || dist !== null) return;
     cancelAnimationFrame(raf);
-    const stageRect = stage.getBoundingClientRect();
-    const xMarker = 24 + 16; // marker left + half width
-    const horizCss = (stageRect.width - dotX) - xMarker; // wait — dot is positioned via right
-    // Recompute properly: the dot's CSS-x position is `dotX` from the LEFT edge.
-    const horizCssCorrect = dotX - xMarker;
-    const horizMm = horizCssCorrect / pxPerMm!;
-    const distMm = horizMm / Math.tan((13.5 * Math.PI) / 180);
+    // `dotX` is the dot's x from the stage's LEFT edge; the × marker sits at
+    // 24px with a glyph roughly 18px wide, so its centre is ~33px.
+    const xMarker = 24 + 9;
+    const horizMm = (dotX - xMarker) / pxPerMm!;
+    // 12-15° is the reported range; 13.5° is the midpoint. The estimate is only
+    // as good as that assumption, which is why it is a coarse bucket downstream.
+    const distMm = horizMm / Math.tan((BLIND_SPOT_DEG * Math.PI) / 180);
     dist = Math.round(distMm / 10);
     result.textContent = `Estimated distance: ${dist} cm. Tap once more to confirm.`;
     setTimeout(() => finish(dist), 1500);
-    void horizCss; // silence unused
   });
 }

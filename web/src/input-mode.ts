@@ -5,6 +5,11 @@
 //
 //  * `tap`  — the encoding is on screen; tap A / B / Original, or press and
 //    hold the image to peek at the reference.
+//  * `buttons` — same resting state as `hold`, but the *button* picks the side:
+//    left for A, right for B. Wanted by mouse users who would rather not move
+//    the pointer across the picture to switch. Desktop only, and it needs the
+//    context menu suppressed; `hold` exists because that combination cannot
+//    work on a phone.
 //  * `hold` — the *reference* is what you see at rest; press and hold the
 //    **left half** of the picture to flick to A, the **right half** for B, and
 //    release to snap back. Much faster for spotting a difference, because the
@@ -22,14 +27,30 @@
 // what `reveal_ms_total` measures — under `hold` the reference is the resting
 // state, so that column is naturally large. See migration 0017.
 
-export type InputMode = 'tap' | 'hold';
+export type InputMode = 'tap' | 'hold' | 'buttons';
 
-export const INPUT_MODES: InputMode[] = ['tap', 'hold'];
+export const ALL_INPUT_MODES: InputMode[] = ['tap', 'hold', 'buttons'];
+
+/// Modes this device can actually drive.
+export function availableInputModes(): InputMode[] {
+  return ALL_INPUT_MODES.filter((m) => m !== 'buttons' || supportsButtonsMode());
+}
 
 const KEY = 'squintly_input_mode';
 
 export function isInputMode(v: string | null): v is InputMode {
-  return v === 'tap' || v === 'hold';
+  return v === 'tap' || v === 'hold' || v === 'buttons';
+}
+
+/// `buttons` needs distinct left/right mouse buttons, which a touchscreen has
+/// no equivalent for. `hold` covers the same idea with a thumb, so this is an
+/// alternative for mouse users rather than the only way in.
+export function supportsButtonsMode(): boolean {
+  return (
+    typeof window !== 'undefined' &&
+    typeof window.matchMedia === 'function' &&
+    window.matchMedia('(pointer: fine)').matches
+  );
 }
 
 /**
@@ -44,7 +65,9 @@ export function supportsHoldMode(): boolean {
 export function loadInputMode(): InputMode {
   try {
     const v = localStorage.getItem(KEY);
-    if (isInputMode(v)) return v;
+    // A stored mode this device cannot drive would strand the observer with an
+    // inoperable UI — fall back rather than honour it.
+    if (isInputMode(v) && (v !== 'buttons' || supportsButtonsMode())) return v;
   } catch {
     /* private mode / storage disabled */
   }
@@ -61,12 +84,14 @@ export function saveInputMode(mode: InputMode): void {
 
 export const INPUT_MODE_LABELS: Record<InputMode, string> = {
   tap: 'Tap to switch',
-  hold: 'Hold to compare',
+  hold: 'Hold a half',
+  buttons: 'Mouse buttons',
 };
 
 export const INPUT_MODE_LABELS_LONG: Record<InputMode, string> = {
   tap: 'Tap to switch between A, B and the original',
   hold: 'Hold one half of the picture; release for the original',
+  buttons: 'Left button for A, right for B; release for the original',
 };
 
 /**
@@ -74,6 +99,11 @@ export const INPUT_MODE_LABELS_LONG: Record<InputMode, string> = {
  * a single-stimulus trial, where there is no B to put on the right.
  */
 export function inputModeHint(mode: InputMode, isPair: boolean): string {
+  if (mode === 'buttons') {
+    return isPair
+      ? 'hold the left mouse button for A, the right for B · release for the original'
+      : 'hold any mouse button to see the compressed version · release for the original';
+  }
   if (mode === 'hold') {
     return isPair
       ? 'hold the left half for A, the right half for B · release for the original'

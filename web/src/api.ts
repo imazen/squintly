@@ -110,7 +110,7 @@ export interface ResponseReq {
   /// How the observer drove the UI. Changes what `reveal_ms_total` measures
   /// (see migration 0017), so it travels with every response rather than being
   /// inferred later.
-  input_mode: 'tap' | 'hold';
+  input_mode: 'tap' | 'hold' | 'buttons';
   keyboard_used: boolean;
   /// Render → judged-image-painted, kept out of `dwell_ms`'s interpretation.
   ui_ready_ms: number | null;

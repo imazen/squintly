@@ -14,7 +14,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 
 import { COEFFICIENT_PORT } from '../playwright.config';
-import { clickBegin, completeProfileAndStart, gotoFresh } from './helpers';
+import { clickBegin, completeProfileAndStart, gotoFreshAsOperator } from './helpers';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const FIXTURE_BODY = readFileSync(resolve(HERE, 'curator-fixture.jsonl'), 'utf-8');
@@ -65,7 +65,7 @@ async function expectNoViewportExpansion(page: Page, screen: string) {
 
 test.describe('no horizontal overflow on any screen', () => {
   test('welcome, credits, profile, trial', async ({ page }) => {
-    await gotoFresh(page);
+    await gotoFreshAsOperator(page);
     await expectNoViewportExpansion(page, 'welcome');
 
     await page.locator('.credits summary').click();
@@ -160,7 +160,10 @@ test.describe('no horizontal overflow on any screen', () => {
     await page.evaluate(() => {
       localStorage.clear();
       localStorage.setItem('squintly:curator_id', crypto.randomUUID());
+      // Curator is opt-in per browser now — the same flag `#curator` sets.
+      localStorage.setItem('squintly_show_curator', '1');
     });
+    await page.reload();
     await page.locator('.squintly-tabs button[data-tab="curator"]').click();
     await expect(page.locator('[data-screen="stream"]')).toBeVisible();
     await expect(page.locator('.curator-meta-row')).toBeVisible();

@@ -24,7 +24,11 @@ test.describe('curator on Z Fold 7', () => {
     await page.evaluate(() => localStorage.clear());
     await page.evaluate(() => {
       localStorage.setItem('squintly:curator_id', crypto.randomUUID());
+      // The curator tab is opt-in per browser now (`#curator` sets this), so a
+      // spec that drives it enters the same way an operator does.
+      localStorage.setItem('squintly_show_curator', '1');
     });
+    await page.reload();
   });
 
   test('cover-display layout: stream and curate stack vertically', async ({ page }, testInfo) => {

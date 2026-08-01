@@ -5,7 +5,7 @@
 // State lives in ~/tmp/squintly-e2e/squintly.db; we wipe it on each run to keep
 // tests deterministic.
 
-import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import { spawn, type ChildProcess } from 'node:child_process';
 import { mkdirSync, rmSync, existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { setTimeout as sleep } from 'node:timers/promises';
@@ -16,8 +16,8 @@ import { COEFFICIENT_PORT, SQUINTLY_PORT } from '../playwright.config';
 const STATE_DIR = `${homedir()}/tmp/squintly-e2e`;
 const DB_PATH = `${STATE_DIR}/squintly.db`;
 
-let mock: ChildProcessWithoutNullStreams | null = null;
-let server: ChildProcessWithoutNullStreams | null = null;
+let mock: ChildProcess | null = null;
+let server: ChildProcess | null = null;
 
 async function waitForOk(url: string, attempts = 60): Promise<void> {
   for (let i = 0; i < attempts; i++) {

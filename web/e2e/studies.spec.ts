@@ -15,9 +15,20 @@ test.describe('study selection', () => {
     const r = await request.get('/api/studies');
     expect(r.ok()).toBeTruthy();
     const studies = (await r.json()) as Array<{ id: string; label: string; unlisted: boolean }>;
-    expect(studies.length).toBeGreaterThan(1);
-    expect(studies.map((s) => s.id)).toContain('main');
+    // Only listed studies are offered. `main` is unlisted while
+    // imazen/squintly#4 collects, so the endpoint returns the non-photo study
+    // alone — it stays selectable by id, which the tests below rely on.
+    expect(studies.map((s) => s.id)).toContain('ssim2-nonphoto');
+    expect(studies.map((s) => s.id), 'unlisted studies must not be offered').not.toContain('main');
     expect(studies.every((s) => !s.unlisted), 'listed endpoint must omit unlisted studies').toBe(true);
+  });
+
+  // A single listed study means there is nothing to choose, so the picker hides
+  // itself rather than showing a one-option control.
+  test('the picker is hidden when only one study is offered', async ({ page }) => {
+    await gotoFresh(page);
+    await expect(page.getByRole('heading', { name: /Image Discrimination Study/i })).toBeVisible();
+    await expect(page.locator('#study-picker')).toHaveCount(0);
   });
 
   test('an unknown study_id is rejected, not silently substituted', async ({ request }) => {
@@ -179,13 +190,13 @@ test.describe('study selection', () => {
     expect(frac).toBeLessThan(0.8);
   });
 
-  test('picking a study on the welcome screen tags the session', async ({ page }) => {
+  // With one study listed there is no picker to click, so drive the same
+  // property the picker existed to guarantee: a stored study id is what the
+  // session is actually created under.
+  test('a stored study id tags the session it creates', async ({ page }) => {
     await gotoFresh(page);
-    const picker = page.locator('#study-picker');
-    await expect(picker).toBeVisible();
-
-    await page.locator('.study-option[data-study="ssim2-nonphoto"]').click();
-    await expect(page.locator('.study-option[data-study="ssim2-nonphoto"]')).toHaveClass(/on/);
+    await page.evaluate(() => localStorage.setItem('squintly:study_id', 'ssim2-nonphoto'));
+    await page.reload();
 
     await clickBegin(page);
     await page.getByRole('button', { name: /^Skip$/ }).click();

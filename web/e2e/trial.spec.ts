@@ -200,8 +200,12 @@ test.describe('trial loop', () => {
   /// comparison into a preference test.
   test('pair trials can show the reference, and A/B/Original are distinct', async ({ page }) => {
     await gotoFresh(page);
-    // The forced-choice study guarantees a pair trial.
-    await page.locator('.study-option[data-study="ssim2-nonphoto"]').click();
+    // The forced-choice study guarantees a pair trial. Selected by stored id
+    // rather than by clicking the picker: with `main` unlisted while
+    // imazen/squintly#4 collects there is only one listed study, so the picker
+    // hides itself and there is nothing to click.
+    await page.evaluate(() => localStorage.setItem('squintly:study_id', 'ssim2-nonphoto'));
+    await page.reload();
     await clickBegin(page);
     await page.getByRole('button', { name: /^Skip$/ }).click();
     await completeProfileAndStart(page);

@@ -70,6 +70,17 @@ export default async function globalSetup() {
         RUST_LOG: 'warn,squintly=info',
         // The e2e DB is wiped per run — never mirror it to the Tower NAS.
         SQUINTLY_DISABLE_TOWER_MIRROR: '1',
+        // The suite drives the mixed study, not the deployment default.
+        //
+        // Production defaults to `ssim2-nonphoto` while imazen/squintly#4
+        // collects — pairwise-only, and with `main` unlisted there is no picker
+        // to reach a rating trial through the UI. Most specs here exercise the
+        // single-stimulus path (rating panel, hold-to-reveal, staircases), so
+        // the harness pins the study that emits both trial types. Specs that
+        // care about the non-photo study name it explicitly, and
+        // `studies::the_resolved_default_study_is_listed` covers the real
+        // default.
+        SQUINTLY_DEFAULT_STUDY: 'main',
         // The mock coefficient serves blobs from 127.0.0.1, which the SSRF
         // guard blocks by default. Opt in here only; never on a public deploy.
         SQUINTLY_ALLOW_PRIVATE_BLOB_HOSTS: '1',

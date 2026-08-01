@@ -142,7 +142,11 @@ async fn smoke_full_loop() -> Result<()> {
             "ambient_light": "room",
             "css_px_per_mm": 4.7,
             "local_date": "2026-04-30",
-            "theme_slug": "nature"
+            "theme_slug": "nature",
+            // Pinned: the smoke test exercises the general loop, including
+            // single-stimulus ratings, so it wants the unrestricted study
+            // rather than whichever one is currently the deployment default.
+            "study_id": "main"
         }))
         .send()
         .await?

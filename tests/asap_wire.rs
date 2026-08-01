@@ -38,7 +38,7 @@ async fn fake_coefficient() -> Result<SocketAddr> {
 async fn manifest() -> Json<serde_json::Value> {
     Json(json!({
         "sources": [
-            {"hash": "asapsource0000001", "width": 256, "height": 256, "size_bytes": 12345, "corpus": "test", "filename": "a.png"}
+            {"hash": "asapsource0000001", "width": 256, "height": 256, "size_bytes": 12345, "corpus": "imazen26-7000-lilith-plots", "filename": "a.png"}
         ],
         "encodings": [
             {"id": "q20", "source_hash": "asapsource0000001", "codec_name": "mozjpeg", "quality": 20.0, "encoded_size": 4000},
@@ -191,7 +191,12 @@ async fn asap_wire_targets_least_decided_pair() -> Result<()> {
             "ambient_light": "room",
             "css_px_per_mm": 4.7,
             "local_date": "2026-04-30",
-            "theme_slug": "nature"
+            "theme_slug": "nature",
+            // Pinned: this test is about ASAP pair selection, not about which
+            // study is currently the default. It broke when the default moved
+            // to the content-restricted study and this fixture's corpus
+            // ("test") classified as Unknown, so every draw was refused.
+            "study_id": "ssim2-nonphoto"
         }))
         .send()
         .await?

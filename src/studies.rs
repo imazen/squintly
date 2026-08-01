@@ -53,7 +53,14 @@ pub struct Study {
 
 /// The default when a client doesn't name one. Overridable with
 /// `SQUINTLY_DEFAULT_STUDY`.
-pub const DEFAULT_STUDY_ID: &str = "main";
+///
+/// `ssim2-nonphoto` while imazen/squintly#4 collects: validating SSIMULACRA2 as
+/// the non-photo oracle is the live priority, and a judgment spent on a
+/// photograph is one not spent on it. In code rather than an env var so the
+/// intent travels with the repo and is covered by
+/// `the_resolved_default_study_is_listed` — a default nobody can reach from the
+/// picker is a configuration that only fails in front of a participant.
+pub const DEFAULT_STUDY_ID: &str = "ssim2-nonphoto";
 
 pub const STUDIES: &[Study] = &[
     Study {
@@ -62,7 +69,18 @@ pub const STUDIES: &[Study] = &[
         summary: "Which compression artefacts do people actually notice on real phones? \
                   Trains zensim, an open-source perceptual quality metric.",
         trial_style: "A mix of single-image ratings and A/B comparisons.",
-        unlisted: false,
+        // TEMPORARILY UNLISTED while imazen/squintly#4 collects.
+        //
+        // Validating SSIMULACRA2 as the non-photo oracle is the live priority,
+        // and every judgment spent on a photograph is one not spent on that.
+        // With only this study unlisted, `listed()` returns a single entry, the
+        // picker hides itself, and every visitor lands on `ssim2-nonphoto`.
+        //
+        // Not deleted and not gutted: it stays selectable by id, sessions
+        // already on it keep working, and its 65/35 mix still matches the
+        // pre-registered docs/STUDY.md §4.2. Flip this back to `false` when #4
+        // has its data.
+        unlisted: true,
         // Anonymous, un-gated crowd. ch3-5 §4.4 calls correlation-to-peer-mean
         // "your first sieve" precisely for this regime; §4.3.2 notes the
         // screens barely move a *pre-screened* pipeline, which this is not.
@@ -150,10 +168,32 @@ pub fn default_study() -> &'static Study {
 mod tests {
     use super::*;
 
+    /// Whatever a deployment defaults to must be offerable, or a visitor who
+    /// opens the picker cannot get back to it.
     #[test]
-    fn default_study_exists_and_is_listed() {
-        let d = by_id(DEFAULT_STUDY_ID).expect("default study must exist");
-        assert!(!d.unlisted, "the default study must be offerable");
+    fn the_resolved_default_study_is_listed() {
+        assert!(
+            !default_study().unlisted,
+            "the resolved default study ({}) is hidden from the picker",
+            default_study().id
+        );
+    }
+
+    /// The live priority is imazen/squintly#4, so a visitor who names no study
+    /// lands on the non-photo validation rather than on general photo work.
+    /// If this is deliberately reverted, delete the test with it — do not
+    /// "fix" it by editing the expected id while `main` stays unlisted.
+    #[test]
+    fn the_compiled_default_is_the_non_photo_study() {
+        assert_eq!(DEFAULT_STUDY_ID, "ssim2-nonphoto");
+        let d = by_id(DEFAULT_STUDY_ID).expect("default must exist");
+        assert_eq!(d.sampler.content, ContentFilter::NonPhotoOnly);
+    }
+
+    /// At least one study has to be reachable by a drive-by visitor.
+    #[test]
+    fn something_is_always_offered() {
+        assert!(!listed().is_empty(), "every study is unlisted");
     }
 
     #[test]

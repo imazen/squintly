@@ -2,6 +2,24 @@
 
 ## [Unreleased]
 
+### Changed
+- **The deployment now serves non-photo content only.** `ssim2-nonphoto` is the
+  compiled default and `main` is unlisted, so a visitor who names no study lands
+  on the non-photo forced-choice validation and the picker hides itself (one
+  listed study means nothing to choose). Validating SSIMULACRA2 as the non-photo
+  oracle (imazen/squintly#4) is the live priority, and a judgment spent on a
+  photograph is one not spent on it.
+  - `main` is unlisted, not deleted: still selectable by id, sessions already on
+    it keep working, and its 65/35 mix still matches the pre-registered
+    `docs/STUDY.md` §4.2. Flip `unlisted` back when #4 has its data.
+  - In code rather than an env var so the intent travels with the repo and is
+    covered by tests. `the_resolved_default_study_is_listed` caught the broken
+    intermediate state where the default was a study nobody could reach.
+  - The e2e harness pins `SQUINTLY_DEFAULT_STUDY=main`, because most specs
+    exercise the single-stimulus path and a pairwise-only default with no picker
+    cannot reach a rating trial. Two integration tests (`smoke`, `asap_wire`)
+    now name their study explicitly rather than inheriting whichever is default.
+
 ### Fixed
 - **An oversized stimulus could not be panned to its right edge.**
   `inset: 0; margin: auto` only centres a box *smaller* than its container. Once

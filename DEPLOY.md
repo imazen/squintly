@@ -52,7 +52,7 @@ Required:
 # NOTE: this takes precedence over SQUINTLY_COEFFICIENT_PATH — a stale value
 # here is why the site served zero trials for months.
 railway variables --set \
-  "SQUINTLY_COEFFICIENT_HTTP=https://codec-corpus.r2.imazen.org/squintly/demo-corpus/imazen26-v1"
+  "SQUINTLY_COEFFICIENT_HTTP=https://codec-corpus.r2.imazen.org/squintly/demo-corpus/imazen26-v3"
 ```
 
 Optional:

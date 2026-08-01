@@ -165,6 +165,30 @@ R2_STRATA: dict[str, tuple[str, bool]] = {
     "9226-lilith-ai-products": ("imazen26-owned", False),
 }
 
+# Strata that get MORE origins than the global --per-stratum.
+#
+# Category-level inference needs n > 1. With one origin per stratum, "ssim2
+# fails on screenshots" cannot be told apart from "ssim2 fails on THIS
+# screenshot" — and catching a collapsed or inverted *category* is the whole
+# point of imazen/squintly#4. Text-heavy content gets the extra origins because
+# that is where a windowed SSIM-family metric is most likely to diverge from a
+# human: glyph-edge ringing is highly salient and easily pooled away.
+#
+# Photographic strata stay at the global count. They are excluded from the
+# non-photo study by `content_class` anyway, and quadrupling them would just
+# multiply encode time and R2 storage for content the live study never serves.
+TEXT_HEAVY_ORIGINS = 4
+TEXT_HEAVY = {
+    "5000-national-park-service-brochures",
+    "5200-epa-climate-impact-2021-report",
+    "5300-noaa-hurricane-documents",
+    "6000-lilith-scans-public-patents",
+    "6800-ia-scans-manuscript-text",
+    "7000-lilith-plots",
+    "8000-lilith-mobile-screenshots",
+    "8100-lilith-web-screenshots",
+}
+
 DIMS_RE = re.compile(r"_(\d{2,5})x(\d{2,5})\.")
 
 
@@ -216,9 +240,23 @@ def r2_pick(remote: str, per_stratum: int, cache: Path) -> list[tuple[str, Path,
     cache.mkdir(parents=True, exist_ok=True)
     for stratum in sorted(by_stratum):
         license_id, is_photo = R2_STRATA[stratum]
-        # Sort by pixels desc, then key for determinism, and spread the picks.
+        want = TEXT_HEAVY_ORIGINS if stratum in TEXT_HEAVY else max(1, per_stratum)
+        # Sort by pixels desc, then key for determinism.
         ranked = sorted(by_stratum[stratum], key=lambda t: (-t[0], t[1]))
-        chosen = ranked[: max(1, per_stratum)]
+        # The comment here used to say "spread the picks" while the code took
+        # the top N — fine at N=1, but at N=4 the four largest files in a
+        # stratum are often near-duplicates (consecutive pages of one document,
+        # frames of one capture), which would buy breadth in name only.
+        #
+        # Spread evenly across the largest quarter instead: every pick is still
+        # big enough that the XL rung is a true downsample rather than an
+        # upscale, and the content actually varies.
+        pool = ranked[: max(want, len(ranked) // 4)]
+        if want >= len(pool):
+            chosen = pool[:want]
+        else:
+            step = len(pool) / want
+            chosen = [pool[int(i * step)] for i in range(want)]
         for _, key in chosen:
             local = cache / key
             if not local.exists():

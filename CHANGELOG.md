@@ -2,6 +2,29 @@
 
 ## [Unreleased]
 
+### Changed
+- **Text-heavy strata now contribute 4 origins each instead of 1** (corpus
+  `imazen26-v3`, live). The non-photo pool went from **12 distinct images to
+  36** (48 → 144 sources). With one origin per stratum, "ssim2 fails on
+  screenshots" could not be told apart from "ssim2 fails on *this* screenshot",
+  and catching a collapsed or inverted *category* is imazen/squintly#4's primary
+  deliverable — no amount of extra comparisons on a single image fixes that.
+  Text-heavy got the depth because that is where a windowed SSIM-family metric
+  is most likely to diverge from a human: glyph-edge ringing is highly salient
+  and easily pooled away.
+  - `build_demo_corpus.py` gains `TEXT_HEAVY` / `TEXT_HEAVY_ORIGINS`; the
+    photographic strata stay at 1, since `content_class` excludes them from the
+    live study anyway and quadrupling them would multiply encode time and R2
+    storage for content nobody is served.
+  - Selection now spreads across the largest quarter of a stratum rather than
+    taking the top N. The comment already claimed it "spread the picks" while
+    the code took the top N — harmless at N=1, but at N=4 the four largest files
+    in a stratum are often near-duplicates (consecutive pages of one document),
+    which would have bought breadth in name only. Verified by eye: the eight
+    selected screenshots are eight different sites and apps.
+  - Published as a new prefix, so the running study was never reading a corpus
+    mid-swap.
+
 ### Fixed
 - **AI product shots were classified as non-photo, so the non-photo study was
   serving photographs.** `9226-lilith-ai-products` is photorealistic by design —

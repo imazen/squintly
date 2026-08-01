@@ -182,7 +182,10 @@ test.describe('multi-touch', () => {
         factor: (ir.width * window.devicePixelRatio) / i.naturalWidth,
         fitsW: ir.width <= vr.width + 1,
         fitsH: ir.height <= vr.height + 1,
-        transform: i.style.transform,
+        // Centred means symmetric overhang, not a particular transform string —
+        // the transform now carries a -50% centring term as well as the pan.
+        leftGap: ir.left - vr.left,
+        rightGap: vr.right - ir.right,
       };
     });
     expect(m.factor, 'never below 1:1').toBeGreaterThanOrEqual(0.98);
@@ -192,6 +195,111 @@ test.describe('multi-touch', () => {
     if (m.factor > 1) {
       expect(m.fitsW && m.fitsH, 'at >1x the whole image must fit').toBe(true);
     }
-    expect(m.transform, 'fitting re-centres').toBe('translate(0px, 0px)');
+    expect(
+      Math.abs(m.leftGap - m.rightGap),
+      `fitting re-centres (left ${m.leftGap}, right ${m.rightGap})`,
+    ).toBeLessThan(2);
+  });
+});
+
+test.describe('panning reaches the edges', () => {
+  // `inset: 0; margin: auto` only centres a box SMALLER than its container.
+  // Once the image overflowed, CSS resolved the over-constraint by honouring
+  // `left` and dumping the excess into `margin-right`, so the image sat flush
+  // left while the pan limits still assumed a centred crop (+/- half the
+  // overflow). Horizontal panning therefore reached only halfway to the right
+  // edge — worst on square and landscape sources, where the overflow is
+  // horizontal. The vertical axis was unaffected, because that over-constraint
+  // IS split evenly, which is why the bug looked orientation-dependent.
+  test('an oversized stimulus is centred on both axes', async ({ page }) => {
+    await toTrial(page);
+
+    // Find an oversized trial.
+    let found = false;
+    for (let i = 0; i < 60 && !found; i++) {
+      await page.waitForSelector('.viewport.all-ready', { timeout: 15_000 }).catch(() => {});
+      found = await page.evaluate(() => {
+        const im = document.querySelector<HTMLImageElement>('#stimulus');
+        const vp = document.querySelector<HTMLElement>('#viewport');
+        if (!im || !vp) return false;
+        const r = im.getBoundingClientRect();
+        const v = vp.getBoundingClientRect();
+        return r.width > v.width + 20 && r.height > v.height + 20;
+      });
+      if (!found) await advance(page);
+    }
+    expect(found, 'no stimulus overflowed on both axes').toBe(true);
+
+    const gaps = await page.evaluate(() => {
+      const r = document.querySelector<HTMLImageElement>('#stimulus')!.getBoundingClientRect();
+      const v = document.querySelector<HTMLElement>('#viewport')!.getBoundingClientRect();
+      return {
+        left: r.left - v.left,
+        right: v.right - r.right,
+        top: r.top - v.top,
+        bottom: v.bottom - r.bottom,
+      };
+    });
+    // Symmetric overhang on each axis == centred. Asymmetry is the bug.
+    expect(Math.abs(gaps.left - gaps.right), `left ${gaps.left} vs right ${gaps.right}`).toBeLessThan(2);
+    expect(Math.abs(gaps.top - gaps.bottom), `top ${gaps.top} vs bottom ${gaps.bottom}`).toBeLessThan(2);
+  });
+
+  test('dragging can reach every edge of an oversized stimulus', async ({ page }) => {
+    await toTrial(page);
+
+    let found = false;
+    for (let i = 0; i < 60 && !found; i++) {
+      await page.waitForSelector('.viewport.all-ready', { timeout: 15_000 }).catch(() => {});
+      found = await page.evaluate(() => {
+        const im = document.querySelector<HTMLImageElement>('#stimulus');
+        const vp = document.querySelector<HTMLElement>('#viewport');
+        if (!im || !vp) return false;
+        const r = im.getBoundingClientRect();
+        const v = vp.getBoundingClientRect();
+        return r.width > v.width + 20 && r.height > v.height + 20;
+      });
+      if (!found) await advance(page);
+    }
+    expect(found, 'no stimulus overflowed on both axes').toBe(true);
+
+    const box = (await page.locator('#viewport').boundingBox())!;
+    const cx = box.x + box.width / 2;
+    const cy = box.y + box.height / 2;
+
+    /// Drag far enough to hit the clamp in the given direction, then report
+    /// which frame edge the image edge has been brought to.
+    const dragTo = async (dx: number, dy: number) => {
+      await touch(page, 'pointerdown', 1, cx, cy);
+      // Well beyond any plausible limit, in steps so the drag registers.
+      for (let s = 1; s <= 10; s++) {
+        await touch(page, 'pointermove', 1, cx + (dx * s) / 10, cy + (dy * s) / 10);
+      }
+      await touch(page, 'pointerup', 1, cx + dx, cy + dy);
+      return page.evaluate(() => {
+        const r = document.querySelector<HTMLImageElement>('#stimulus')!.getBoundingClientRect();
+        const v = document.querySelector<HTMLElement>('#viewport')!.getBoundingClientRect();
+        return {
+          left: r.left - v.left,
+          right: v.right - r.right,
+          top: r.top - v.top,
+          bottom: v.bottom - r.bottom,
+        };
+      });
+    };
+
+    // Drag right → the image's LEFT edge comes into the frame (gap → 0).
+    const atLeft = await dragTo(4000, 0);
+    expect(Math.abs(atLeft.left), `left edge unreachable, gap ${atLeft.left}`).toBeLessThan(2);
+
+    // Drag left → the RIGHT edge. This is the one that was unreachable.
+    const atRight = await dragTo(-8000, 0);
+    expect(Math.abs(atRight.right), `right edge unreachable, gap ${atRight.right}`).toBeLessThan(2);
+
+    // And both vertical edges.
+    const atTop = await dragTo(0, 4000);
+    expect(Math.abs(atTop.top), `top edge unreachable, gap ${atTop.top}`).toBeLessThan(2);
+    const atBottom = await dragTo(0, -8000);
+    expect(Math.abs(atBottom.bottom), `bottom edge unreachable, gap ${atBottom.bottom}`).toBeLessThan(2);
   });
 });

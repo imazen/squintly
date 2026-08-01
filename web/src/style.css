@@ -165,8 +165,24 @@ p, label { line-height: 1.4; color: var(--fg); }
    `transform` free to carry the pan offset alone. */
 .viewport img.layer {
   position: absolute;
-  inset: 0;
-  margin: auto;
+  /* Centred on a point, NOT by `inset: 0; margin: auto`.
+     
+     That idiom only centres a box SMALLER than its containing block. Once the
+     image overflows, the position is over-constrained, and CSS resolves it by
+     honouring `left` and dumping the excess into `margin-right` — so the image
+     sat flush against the left edge instead of centred. Measured on a 3000x2200
+     source in a 396x487 frame: left gap 0, right gap -747, while the vertical
+     axis (where over-constraint IS split evenly) centred correctly at -176/-176.
+     
+     The pan limits assume a centred crop and allow +/- half the overflow, so on
+     the horizontal axis that reached only halfway to the right edge and let you
+     drag past the left one. Anything wider than the frame — square and
+     landscape sources especially — could not be panned to its right edge at all.
+     
+     `left/top: 50%` plus a -50% translate centres exactly at any size, on both
+     axes; `applyPan` composes the pan offset after it. */
+  left: 50%;
+  top: 50%;
   /* Hidden by OPACITY, not `visibility`.
      
      `visibility: hidden` keeps the box but skips painting entirely, so the

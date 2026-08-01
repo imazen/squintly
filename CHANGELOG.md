@@ -3,6 +3,20 @@
 ## [Unreleased]
 
 ### Fixed
+- **An oversized stimulus could not be panned to its right edge.**
+  `inset: 0; margin: auto` only centres a box *smaller* than its container. Once
+  the image overflowed, CSS resolved the over-constraint by honouring `left` and
+  dumping the excess into `margin-right`, so the image sat flush left while the
+  pan limits still assumed a centred crop (± half the overflow). Horizontal
+  panning therefore reached only halfway to the right edge, and could drag past
+  the left one. Measured on a 3000×2200 source in a 396×487 frame: left gap 0,
+  right gap −747, against a correctly centred vertical axis at −176/−176 — which
+  is why it looked orientation-dependent, and why square and landscape sources
+  (where the overflow is horizontal) were the visible cases. Layers now centre
+  on a point (`left/top: 50%` plus a −50% translate), which holds at any size on
+  both axes.
+
+### Fixed
 - **Switching A/B could show a blank frame or flash.** Two causes, both closed:
   - The response panel unlocked as soon as the *judged* layer arrived, not when
     all of them had. On a pair trial you could press B — or the view switch —

@@ -228,8 +228,13 @@ export function startTrials(root: HTMLElement, sessionId: string): TrialControll
     };
     /// Pan applies to every layer, so a switch lands on the same region — you
     /// are comparing the same part of the picture, not two different parts.
+    ///
+    /// The leading -50% is the centring: layers are anchored at the frame's
+    /// centre point (`left/top: 50%`) because `margin: auto` silently stops
+    /// centring once the box overflows its container. See the note in
+    /// `style.css`.
     const applyPan = () => {
-      const t = `translate(${pan.x}px, ${pan.y}px)`;
+      const t = `translate(-50%, -50%) translate(${pan.x}px, ${pan.y}px)`;
       for (const v of views) layers[v].style.transform = t;
     };
 
@@ -262,7 +267,7 @@ export function startTrials(root: HTMLElement, sessionId: string): TrialControll
       // variant, which is exactly what carrying the pan across views exists to
       // prevent. Keep the existing limits; `markReady` recomputes for real.
       if (!(w > 0) || !(h > 0)) return;
-      // Centred by `margin:auto`, so it can travel half the overflow each way.
+      // Centred on the frame's midpoint, so it travels half the overflow each way.
       panLimit.x = Math.max(0, (w - rect.width) / 2);
       panLimit.y = Math.max(0, (h - rect.height) / 2);
       clampPan();

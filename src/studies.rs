@@ -23,7 +23,7 @@
 use serde::Serialize;
 
 use crate::content_class::ContentFilter;
-use crate::sampling::SamplerConfig;
+use crate::sampling::{PairingRule, SamplerConfig};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct Study {
@@ -69,18 +69,14 @@ pub const STUDIES: &[Study] = &[
         summary: "Which compression artefacts do people actually notice on real phones? \
                   Trains zensim, an open-source perceptual quality metric.",
         trial_style: "A mix of single-image ratings and A/B comparisons.",
-        // TEMPORARILY UNLISTED while imazen/squintly#4 collects.
+        // Listed, but not the default.
         //
-        // Validating SSIMULACRA2 as the non-photo oracle is the live priority,
-        // and every judgment spent on a photograph is one not spent on that.
-        // With only this study unlisted, `listed()` returns a single entry, the
-        // picker hides itself, and every visitor lands on `ssim2-nonphoto`.
-        //
-        // Not deleted and not gutted: it stays selectable by id, sessions
-        // already on it keep working, and its 65/35 mix still matches the
-        // pre-registered docs/STUDY.md §4.2. Flip this back to `false` when #4
-        // has its data.
-        unlisted: true,
+        // Unlisting it entirely (to force the non-photo focus) removed the
+        // picker, and with it any way to move between projects at all. The
+        // focus is carried by DEFAULT_STUDY_ID plus the content filter — a
+        // default nobody chose away from is enough, and an operator who needs
+        // photographic work should not have to edit an env var to get it.
+        unlisted: false,
         // Anonymous, un-gated crowd. ch3-5 §4.4 calls correlation-to-peer-mean
         // "your first sieve" precisely for this regime; §4.3.2 notes the
         // screens barely move a *pre-screened* pipeline, which this is not.
@@ -92,6 +88,7 @@ pub const STUDIES: &[Study] = &[
             // The crowd study wants the whole corpus; content coverage across
             // photo and non-photo is part of what it measures.
             content: ContentFilter::Any,
+            pairing: PairingRule::AdjacentQuality,
             pairwise_only: false,
         },
     },
@@ -121,6 +118,48 @@ pub const STUDIES: &[Study] = &[
             // its trials were photos — valid judgements filed under a label
             // that says they are about non-photo content.
             content: ContentFilter::NonPhotoOnly,
+            pairing: PairingRule::AdjacentQuality,
+            pairwise_only: true,
+        },
+    },
+    Study {
+        id: "zensr-dejpeg",
+        label: "JPEG artifact removal (zensr)",
+        summary: "Does removing JPEG artifacts actually get closer to the original, \
+                  or only score better? Each pair is one JPEG against zensr's restored \
+                  version of that exact file.",
+        trial_style: "A/B comparisons only. No star ratings.",
+        // Few, careful observers rather than an un-gated crowd, same as the
+        // other forced-choice study: with few peers per stimulus the reference
+        // distribution the screens need is noise (zenpapers ch3-5 §4.6).
+        exclusion_default: false,
+        // UNLISTED UNTIL THE CORPUS HAS RESTORATIONS.
+        //
+        // `RestorationVsBaseline` needs encodings whose codec starts with
+        // `zensr-`, produced by running `zensr-zenjpeg::restore_jpeg` over the
+        // corpus's JPEG rungs. None exist yet — the dejpeg weights are not in
+        // the zensr tree, on /mnt/v, or in any R2 bucket (checked 2026-08-01).
+        // Listing it now would put visitors on a study that can only 409.
+        unlisted: true,
+        sampler: SamplerConfig {
+            p_single: 0.0,
+            p_honeypot: 0.0,
+            p_anchor: 0.0,
+            // Artifact removal matters on photographs and on graphics alike,
+            // and zensr routes them differently (`dejpeg9_gfxycc` exists for
+            // graphics), so both belong in the pool. Narrow to
+            // `NonPhotoOnly` if the graphics route is what needs answering.
+            content: ContentFilter::Any,
+            // The whole point: a restoration judged against its own input at
+            // the same quality, not against a different compression level.
+            pairing: PairingRule::RestorationVsBaseline {
+                restored_prefix: "zensr",
+            },
+            // Forced choice. "Closer to the original" is the question that
+            // matters and it is not the same as "looks better": artifact
+            // removal can invent plausible detail that was never there, which
+            // reads as an improvement on a preference test and as a fidelity
+            // failure on a reference one.
             pairwise_only: true,
         },
     },
@@ -188,6 +227,35 @@ mod tests {
         assert_eq!(DEFAULT_STUDY_ID, "ssim2-nonphoto");
         let d = by_id(DEFAULT_STUDY_ID).expect("default must exist");
         assert_eq!(d.sampler.content, ContentFilter::NonPhotoOnly);
+    }
+
+    /// A study that cannot serve a trial must not be offered. `zensr-dejpeg`
+    /// needs restored encodings that do not exist yet, so listing it would put
+    /// visitors on a study that can only 409.
+    #[test]
+    fn a_study_needing_a_corpus_it_lacks_is_not_listed() {
+        let z = by_id("zensr-dejpeg").expect("study must exist");
+        assert!(
+            z.unlisted,
+            "zensr-dejpeg has no restored encodings in the corpus yet; keep it unlisted \
+             until it can actually serve a trial"
+        );
+        assert!(matches!(
+            z.sampler.pairing,
+            crate::sampling::PairingRule::RestorationVsBaseline { .. }
+        ));
+    }
+
+    /// Switching between projects has to be possible. Unlisting everything but
+    /// one study hid the picker entirely, which removed the only way to move
+    /// between them.
+    #[test]
+    fn more_than_one_study_is_offered_so_the_picker_exists() {
+        assert!(
+            listed().len() >= 2,
+            "only {} study listed — the picker hides itself and nothing can be switched to",
+            listed().len()
+        );
     }
 
     /// At least one study has to be reachable by a drive-by visitor.

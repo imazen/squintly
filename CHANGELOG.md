@@ -2,6 +2,39 @@
 
 ## [Unreleased]
 
+### Fixed
+- **Switching between projects was impossible.** Unlisting `main` to force the
+  non-photo focus left one listed study, so the picker hid itself and there was
+  no way to move between projects at all. `main` is listed again; the focus is
+  carried by `DEFAULT_STUDY_ID` plus the content filter, which is enough — a
+  default nobody chose away from does the job, and an operator who needs
+  photographic work should not have to edit an env var to get it. Guarded by
+  `more_than_one_study_is_offered_so_the_picker_exists`.
+
+### Added
+- **`zensr-dejpeg` project — JPEG artifact removal.** Each pair is one JPEG
+  against zensr's restored version of *that exact file*, asking which is closer
+  to the original. That question matters because zensr's entire quality story is
+  **ssim2 gain**, including a dedicated graphics route (`dejpeg9_gfxycc`) — the
+  same oracle imazen/squintly#4 exists to validate. It is also the right
+  question rather than "which looks better": artifact removal can invent
+  plausible detail that was never there, which reads as an improvement on a
+  preference test and as a fidelity failure on a reference one.
+- **`PairingRule` on `SamplerConfig`.** Adjacent-quality pairing cannot express
+  a restoration comparison — it picks two rungs *within one codec*, so it would
+  never put `mozjpeg q30` beside its own restored output.
+  `RestorationVsBaseline` matches a restored encode to its input at the **same
+  quality**, and refuses rather than falling back to an adjacent-quality pair,
+  which would silently answer a different question under the same label.
+
+### Known gaps
+- `zensr-dejpeg` is **unlisted until the corpus has restorations**, so nobody
+  lands on a study that can only 409. Producing them needs
+  `zensr-zenjpeg::restore_jpeg` run over the corpus's JPEG rungs, and the
+  dejpeg weights are not in the zensr tree, on `/mnt/v`, or in any R2 bucket
+  (checked 2026-08-01). The study, its pairing rule and its tests are done; only
+  the encodings are missing.
+
 ### Changed
 - **Text-heavy strata now contribute 4 origins each instead of 1** (corpus
   `imazen26-v3`, live). The non-photo pool went from **12 distinct images to

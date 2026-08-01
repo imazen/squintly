@@ -167,6 +167,26 @@ pub enum TrialPlan {
     },
 }
 
+/// How a pair trial's two arms are chosen.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PairingRule {
+    /// Two adjacent quality rungs of one codec. The codec-comparison shape:
+    /// "which of these two encodes is closer to the original".
+    AdjacentQuality,
+    /// A restored encode against the baseline it was restored *from*, at the
+    /// same quality — the artifact-removal shape.
+    ///
+    /// Adjacent-quality pairing cannot express this. It picks two rungs within
+    /// one codec, so it would never put `mozjpeg q30` beside
+    /// `zensr-dejpeg7 q30`, which is the only comparison that answers "did the
+    /// restoration help". Matching on quality is the point: a restoration is
+    /// judged against its own input, not against a different compression level.
+    RestorationVsBaseline {
+        /// Codec-name prefix identifying the restored arm.
+        restored_prefix: &'static str,
+    },
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct SamplerConfig {
     /// Probability of sampling a Single (threshold) trial. Default 0.65.
@@ -190,6 +210,8 @@ pub struct SamplerConfig {
     /// photographic strata — under a label that says it is about non-photo
     /// content. See `content_class`.
     pub content: ContentFilter,
+    /// How a pair's two arms are chosen. See [`PairingRule`].
+    pub pairing: PairingRule,
     /// Serve **only** pairwise (2AFC) trials, never single-stimulus ratings.
     ///
     /// For a rank-agreement study — e.g. validating SSIMULACRA2 as the
@@ -213,6 +235,7 @@ impl Default for SamplerConfig {
             p_honeypot: 0.083,
             p_anchor: 0.30,
             content: ContentFilter::Any,
+            pairing: PairingRule::AdjacentQuality,
             pairwise_only: false,
         }
     }
@@ -254,6 +277,7 @@ impl SamplerConfig {
             p_honeypot: prob("SQUINTLY_P_HONEYPOT", d.p_honeypot),
             p_anchor: prob("SQUINTLY_P_ANCHOR", d.p_anchor),
             content: d.content,
+            pairing: d.pairing,
             pairwise_only,
         }
     }
@@ -413,6 +437,43 @@ pub fn pick_trial(
                 held_out: held_out_src,
             })
         };
+        // Pair a restored encode against the baseline it was restored from,
+        // at the same quality. Returns `None` when this source has no such
+        // pair — the caller moves on to the next source rather than falling
+        // back to an adjacent-quality pair, which would silently answer a
+        // different question.
+        let try_restoration = |restored_prefix: &str| -> Option<TrialPlan> {
+            let all: Vec<&EncodingMeta> = by_codec.values().flatten().copied().collect();
+            let mut cands: Vec<(&EncodingMeta, &EncodingMeta)> = Vec::new();
+            for r in all.iter().filter(|e| e.codec.starts_with(restored_prefix)) {
+                for b in all.iter().filter(|e| !e.codec.starts_with(restored_prefix)) {
+                    // Same quality is what makes this a restoration comparison
+                    // rather than a compression-level comparison.
+                    let (Some(rq), Some(bq)) = (r.quality, b.quality) else {
+                        continue;
+                    };
+                    if (rq - bq).abs() < f32::EPSILON {
+                        cands.push((b, r));
+                    }
+                }
+            }
+            if cands.is_empty() {
+                return None;
+            }
+            let mut r2 = rng();
+            let (base, restored) = cands[r2.random_range(0..cands.len())];
+            Some(TrialPlan::Pair {
+                source: (*src).clone(),
+                // Slot order here is arbitrary and does not survive anyway:
+                // `counterbalance_pair` randomises it at the choke point.
+                a: base.clone(),
+                b: restored.clone(),
+                is_golden: false,
+                expected_choice: None,
+                held_out: held_out_src,
+            })
+        };
+
         let try_pair = || -> Option<TrialPlan> {
             // CID22 §Selection of stimuli — drop trivial pairs whose answer
             // is foregone. Adjacent quality steps within a codec are always
@@ -453,12 +514,18 @@ pub fn pick_trial(
         // with no non-trivial adjacent pair silently yields a single. Under
         // pairwise_only there is no fallback — we move on to the next source,
         // and if none can produce a pair the caller gets a clean 409.
+        let pair_fn = || match cfg.pairing {
+            PairingRule::AdjacentQuality => try_pair(),
+            PairingRule::RestorationVsBaseline { restored_prefix } => {
+                try_restoration(restored_prefix)
+            }
+        };
         let plan = if cfg.pairwise_only {
-            try_pair()
+            pair_fn()
         } else if prefer_single {
-            try_single().or_else(try_pair)
+            try_single().or_else(pair_fn)
         } else {
-            try_pair().or_else(try_single)
+            pair_fn().or_else(try_single)
         };
         if plan.is_some() {
             return plan;
@@ -986,6 +1053,7 @@ mod tests {
             p_honeypot: 0.0,
             p_anchor: 0.0,
             content: ContentFilter::NonPhotoOnly,
+            pairing: PairingRule::AdjacentQuality,
             pairwise_only: true,
         };
 
@@ -1059,6 +1127,144 @@ mod tests {
     /// 60/60 measured live. In a "which is closer to the original" task that
     /// makes the answer constant, and no downstream fit can separate a quality
     /// judgement from a side preference after the fact.
+    /// Artifact removal asks a different question from codec comparison, and
+    /// adjacent-quality pairing cannot express it: it picks two rungs within
+    /// one codec, so it would never put `mozjpeg q30` beside its own restored
+    /// output. Matching on quality is what makes the pair a restoration
+    /// comparison rather than a compression-level one.
+    #[test]
+    fn restoration_pairing_matches_a_restored_encode_to_its_own_input() {
+        let src = SourceMeta {
+            hash: "s1".into(),
+            width: 512,
+            height: 512,
+            size_bytes: 1000,
+            corpus: Some("imazen26-7000-lilith-plots".into()),
+            filename: None,
+        };
+        let enc = |id: &str, codec: &str, q: f32| EncodingMeta {
+            id: id.into(),
+            source_hash: "s1".into(),
+            codec: codec.into(),
+            quality: Some(q),
+            effort: None,
+            bytes: (q as u64) * 100,
+        };
+        let manifest = Manifest {
+            sources: vec![src],
+            encodings: vec![
+                enc("m30", "mozjpeg", 30.0),
+                enc("m60", "mozjpeg", 60.0),
+                enc("z30", "zensr-dejpeg7", 30.0),
+                enc("z60", "zensr-dejpeg7", 60.0),
+            ],
+        };
+        let cfg = SamplerConfig {
+            p_single: 0.0,
+            p_honeypot: 0.0,
+            p_anchor: 0.0,
+            content: ContentFilter::Any,
+            pairing: PairingRule::RestorationVsBaseline {
+                restored_prefix: "zensr",
+            },
+            pairwise_only: true,
+        };
+
+        let mut seen = std::collections::HashSet::new();
+        for _ in 0..300 {
+            let plan = pick_trial(&manifest, &cfg, None, None, None).expect("a pair exists");
+            let TrialPlan::Pair { a, b, .. } = plan else {
+                panic!("restoration study must never emit a single");
+            };
+            let restored: Vec<&EncodingMeta> = [&a, &b]
+                .into_iter()
+                .filter(|e| e.codec.starts_with("zensr"))
+                .collect();
+            assert_eq!(
+                restored.len(),
+                1,
+                "exactly one arm must be the restoration, got {} and {}",
+                a.codec,
+                b.codec
+            );
+            assert_eq!(
+                a.quality, b.quality,
+                "a restoration is judged against its own input, so the qualities must match: \
+                 {a:?} vs {b:?}"
+            );
+            let mut ids = [a.id.clone(), b.id.clone()];
+            ids.sort();
+            seen.insert(ids.join("+"));
+        }
+        // Both matched pairs should appear; neither cross-quality pair should.
+        assert!(
+            seen.contains("m30+z30"),
+            "expected the q30 pair, saw {seen:?}"
+        );
+        assert!(
+            seen.contains("m60+z60"),
+            "expected the q60 pair, saw {seen:?}"
+        );
+        assert_eq!(
+            seen.len(),
+            2,
+            "only quality-matched pairs are valid: {seen:?}"
+        );
+    }
+
+    /// A corpus with no restorations must yield nothing rather than quietly
+    /// falling back to an adjacent-quality pair — that would answer a
+    /// different question under the artifact-removal label.
+    #[test]
+    fn restoration_pairing_refuses_rather_than_falling_back() {
+        let src = SourceMeta {
+            hash: "s1".into(),
+            width: 512,
+            height: 512,
+            size_bytes: 1000,
+            corpus: Some("imazen26-7000-lilith-plots".into()),
+            filename: None,
+        };
+        let enc = |id: &str, q: f32| EncodingMeta {
+            id: id.into(),
+            source_hash: "s1".into(),
+            codec: "mozjpeg".into(),
+            quality: Some(q),
+            effort: None,
+            bytes: 1000,
+        };
+        let manifest = Manifest {
+            sources: vec![src],
+            encodings: vec![
+                enc("a", 20.0),
+                enc("b", 40.0),
+                enc("c", 60.0),
+                enc("d", 80.0),
+            ],
+        };
+        let cfg = SamplerConfig {
+            p_single: 0.0,
+            p_honeypot: 0.0,
+            p_anchor: 0.0,
+            content: ContentFilter::Any,
+            pairing: PairingRule::RestorationVsBaseline {
+                restored_prefix: "zensr",
+            },
+            pairwise_only: true,
+        };
+        assert!(
+            pick_trial(&manifest, &cfg, None, None, None).is_none(),
+            "no restorations in the corpus must mean no trial, not a codec pair"
+        );
+        // The same manifest still serves the ordinary adjacent-quality study.
+        let normal = SamplerConfig {
+            pairwise_only: true,
+            p_single: 0.0,
+            ..SamplerConfig::default()
+        };
+        assert!(pick_trial(&manifest, &normal, None, None, None).is_some());
+    }
+
     #[test]
     fn pair_slots_are_counterbalanced() {
         let src = SourceMeta {
@@ -1258,6 +1464,7 @@ mod tests {
             p_honeypot: 1.0,
             p_anchor: 1.0,
             content: ContentFilter::Any,
+            pairing: PairingRule::AdjacentQuality,
             pairwise_only: true,
         };
         let mut allowed = HashSet::new();

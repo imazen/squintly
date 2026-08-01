@@ -339,8 +339,11 @@ test.describe('wheel magnification', () => {
         return (i.getBoundingClientRect().width * window.devicePixelRatio) / i.naturalWidth;
       });
 
-    expect(await factor()).toBeCloseTo(1, 1);
-    for (const want of [2, 3, 4]) {
+    // Do not assume 1x: a stimulus smaller than the frame is magnified to
+    // cover it on load, so the starting factor depends on the source drawn.
+    const start = Number((await page.locator('#zoom-readout').textContent())!.replace('×', ''));
+    expect(start).toBeGreaterThanOrEqual(1);
+    for (const want of [start + 1, start + 2, start + 3].filter((z) => z <= 8)) {
       await page.mouse.wheel(0, -120); // one notch in
       await page.waitForTimeout(120);
       await expect(page.locator('#zoom-readout')).toHaveText(`${want}×`);
@@ -351,7 +354,8 @@ test.describe('wheel magnification', () => {
         0.02,
       );
     }
-    for (const want of [3, 2, 1]) {
+    const top = Number((await page.locator('#zoom-readout').textContent())!.replace('×', ''));
+    for (const want of [top - 1, top - 2].filter((z) => z >= 1)) {
       await page.mouse.wheel(0, 120); // one notch out
       await page.waitForTimeout(120);
       await expect(page.locator('#zoom-readout')).toHaveText(`${want}×`);
@@ -499,5 +503,37 @@ test.describe('no flash on switch', () => {
     // Exactly 0 — a faintly visible second variant would composite over the
     // stimulus under test, which is worse than any flash.
     expect(styles.filter((s) => !s.shown).every((s) => s.opacity === '0')).toBe(true);
+  });
+});
+
+test.describe('default input mode', () => {
+  // On a phone the segmented control is three small targets below the picture,
+  // and every switch is a look away from the thing being compared. Holding one
+  // half keeps the eye on the stimulus and changes the picture under it.
+  test('touch devices start in hold mode, mouse devices in tap', async ({ page }, testInfo) => {
+    await toTrial(page);
+    const mode = await page.evaluate(
+      () => document.querySelector<HTMLElement>('.trial')!.dataset.inputMode,
+    );
+    const coarse = testInfo.project.name !== 'chromium-desktop';
+    expect(mode, coarse ? 'touch should default to hold' : 'mouse should default to tap').toBe(
+      coarse ? 'hold' : 'tap',
+    );
+  });
+
+  // An explicit choice is what makes the setting stick — it must outrank the
+  // device default on every later visit.
+  test('an explicit choice outlives a reload', async ({ page }, testInfo) => {
+    await toTrial(page);
+    const other = testInfo.project.name === 'chromium-desktop' ? 'hold' : 'tap';
+    await page.locator('#input-mode').selectOption(other);
+    await page.waitForSelector(`.trial[data-input-mode="${other}"]`);
+
+    await page.reload();
+    await page.waitForSelector('.trial[data-trial-id]', { timeout: 30_000 });
+    const after = await page.evaluate(
+      () => document.querySelector<HTMLElement>('.trial')!.dataset.inputMode,
+    );
+    expect(after, 'the chosen mode must survive a reload').toBe(other);
   });
 });

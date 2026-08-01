@@ -87,7 +87,7 @@ test.describe('trial loop', () => {
   /// the encode instead of the encode — the artefacts under test get averaged
   /// away, worst exactly where the study cares most (high-DPR phones, large
   /// sources). Anything larger than the viewport is panned, not shrunk.
-  test('stimulus renders at exactly 1:1 device pixels and pans when oversized', async ({ page }) => {
+  test('stimulus never renders below 1:1, and only at whole factors', async ({ page }) => {
     await gotoFresh(page);
     await clickBegin(page);
     await page.getByRole('button', { name: /^Skip$/ }).click();
@@ -106,16 +106,25 @@ test.describe('trial loop', () => {
         const r = im.getBoundingClientRect();
         const v = vp.getBoundingClientRect();
         return {
-          ratio: im.naturalWidth / (r.width * window.devicePixelRatio),
+          // Device pixels per image pixel. 1 = native; >1 = magnified. Below 1
+          // would mean the browser resampled the encode, which is the thing
+          // the display rule forbids.
+          factor: (r.width * window.devicePixelRatio) / im.naturalWidth,
           overflowsX: r.width > v.width + 1,
           // Panning must be possible whenever the stimulus overflows.
           hint: document.querySelector('#hint')!.textContent ?? '',
         };
       });
 
+      // Undersized stimuli are magnified to cover the frame, so the factor is
+      // not always 1 — but it must never be below it, and never fractional.
       expect(
-        Math.abs(m.ratio - 1),
-        'stimulus is not at 1:1 device pixels — a downscale invalidates the rating',
+        m.factor,
+        'stimulus rendered below 1:1 — a downscale invalidates the rating',
+      ).toBeGreaterThanOrEqual(0.98);
+      expect(
+        Math.abs(m.factor - Math.round(m.factor)),
+        `magnification ${m.factor} is fractional — some source pixels would cover 2 device px and others 3`,
       ).toBeLessThan(0.02);
       if (m.overflowsX) {
         expect(m.hint, 'an oversized stimulus must advertise panning').toContain('drag');
@@ -139,6 +148,13 @@ test.describe('trial loop', () => {
   /// comparing two different parts of the picture.
   test('pan offset is preserved when swapping to the reference', async ({ page }) => {
     await gotoFresh(page);
+    // Pin `tap`: this test drives press-and-hold-reveals-the-reference, which is
+    // tap-mode semantics. Touch devices default to `hold`, where the reference
+    // is the resting view and pressing shows A — the same gesture, inverted.
+    // The property under test (pan survives a view swap) is mode-independent;
+    // the gesture used to trigger it is not.
+    await page.evaluate(() => localStorage.setItem('squintly_input_mode', 'tap'));
+    await page.reload();
     await clickBegin(page);
     await page.getByRole('button', { name: /^Skip$/ }).click();
     await completeProfileAndStart(page);
@@ -201,9 +217,8 @@ test.describe('trial loop', () => {
   test('pair trials can show the reference, and A/B/Original are distinct', async ({ page }) => {
     await gotoFresh(page);
     // The forced-choice study guarantees a pair trial. Selected by stored id
-    // rather than by clicking the picker: with `main` unlisted while
-    // imazen/squintly#4 collects there is only one listed study, so the picker
-    // hides itself and there is nothing to click.
+    // rather than by clicking the picker, so the test does not depend on the
+    // picker's layout.
     await page.evaluate(() => localStorage.setItem('squintly:study_id', 'ssim2-nonphoto'));
     await page.reload();
     await clickBegin(page);
@@ -226,6 +241,10 @@ test.describe('trial loop', () => {
     };
 
     await expect(page.locator('.view-switch button[data-view="ref"]')).toBeVisible();
+    // Ask for A explicitly. Which view is *resting* depends on the input mode,
+    // and touch devices now default to `hold`, where the reference is what you
+    // see at rest — so assuming A was on screen made `a` the reference.
+    await page.locator('.view-switch button[data-view="a"]').click();
     const a = await srcNow();
     await page.locator('.view-switch button[data-view="b"]').click();
     const b = await srcNow();
@@ -267,6 +286,13 @@ test.describe('trial loop', () => {
           rendering: getComputedStyle(i).imageRendering,
         };
       });
+
+    // Reset to 1x first. An undersized stimulus is magnified to cover the frame
+    // on load, and the loop below only steps *up* — so starting above 1x made
+    // the first iteration unreachable. `0` is an explicit choice, and explicit
+    // choices outrank the cover default.
+    await page.keyboard.press('0');
+    await expect(page.locator('#zoom-readout')).toHaveText('1×');
 
     // Every whole factor, not just powers of two — the ladder is 1..8 and the
     // stepper walks it one stop at a time.

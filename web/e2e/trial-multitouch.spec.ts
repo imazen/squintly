@@ -106,7 +106,10 @@ test.describe('multi-touch', () => {
     const cy = box.y + box.height / 2;
     const cx = box.x + box.width / 2;
 
-    await expect(page.locator('#zoom-readout')).toHaveText('1×');
+    // Not necessarily 1x: an undersized stimulus is magnified to cover the
+    // frame on load, so read the starting factor rather than assume it.
+    const start = Number((await page.locator('#zoom-readout').textContent())!.replace('×', ''));
+    expect(start).toBeGreaterThanOrEqual(1);
 
     // Two fingers 60px apart, spread to 240px — a 4x span.
     await touch(page, 'pointerdown', 1, cx - 30, cy);
@@ -116,7 +119,7 @@ test.describe('multi-touch', () => {
       await touch(page, 'pointermove', 2, cx + half, cy);
     }
     const zoomed = Number((await page.locator('#zoom-readout').textContent())!.replace('×', ''));
-    expect(zoomed, 'spreading the fingers must magnify').toBeGreaterThan(1);
+    expect(zoomed, 'spreading the fingers must magnify').toBeGreaterThan(start);
     expect(Number.isInteger(zoomed), `zoom ${zoomed} must be a whole factor`).toBe(true);
 
     // And the rendered factor really is that whole number, not a CSS scale.
@@ -301,5 +304,64 @@ test.describe('panning reaches the edges', () => {
     expect(Math.abs(atTop.top), `top edge unreachable, gap ${atTop.top}`).toBeLessThan(2);
     const atBottom = await dragTo(0, -8000);
     expect(Math.abs(atBottom.bottom), `bottom edge unreachable, gap ${atBottom.bottom}`).toBeLessThan(2);
+  });
+});
+
+test.describe('undersized stimuli', () => {
+  // An S-bucket source is 240px, which at 1:1 on a DPR-3 phone is ~80 CSS px —
+  // a postage stamp with acres of black around it and no way to see the
+  // artefacts being rated. Magnifying to cover is the only fix available: below
+  // 1:1 resamples the encode, above it at integer nearest-neighbour invents
+  // nothing.
+  test('a stimulus smaller than the frame is magnified to cover it', async ({ page }) => {
+    await toTrial(page);
+
+    let checked = 0;
+    for (let i = 0; i < 40 && checked < 3; i++) {
+      await page.waitForSelector('.viewport.all-ready', { timeout: 15_000 }).catch(() => {});
+      const m = await page.evaluate(() => {
+        const im = document.querySelector<HTMLImageElement>('#stimulus');
+        const vp = document.querySelector<HTMLElement>('#viewport');
+        if (!im || !vp || !im.naturalWidth) return null;
+        const r = im.getBoundingClientRect();
+        const v = vp.getBoundingClientRect();
+        // Could this source cover the frame at some whole factor <= 8?
+        const maxW = (im.naturalWidth * 8) / devicePixelRatio;
+        const maxH = (im.naturalHeight * 8) / devicePixelRatio;
+        return {
+          coverable: maxW >= v.width && maxH >= v.height,
+          coversW: r.width >= v.width - 1,
+          coversH: r.height >= v.height - 1,
+          factor: (r.width * devicePixelRatio) / im.naturalWidth,
+        };
+      });
+      if (m?.coverable) {
+        checked += 1;
+        expect(
+          m.coversW && m.coversH,
+          `stimulus does not cover the frame (factor ${m.factor})`,
+        ).toBe(true);
+        // Still a whole factor, still never a downscale.
+        expect(Math.abs(m.factor - Math.round(m.factor))).toBeLessThan(0.02);
+        expect(m.factor).toBeGreaterThanOrEqual(0.98);
+      }
+      await advance(page);
+    }
+    expect(checked, 'expected some coverable stimuli to check').toBeGreaterThan(0);
+  });
+
+  // Magnification persists across trials on purpose, so covering must only ever
+  // raise it — a deliberate 8x must survive a small source.
+  test('covering never reduces a magnification the observer chose', async ({ page }) => {
+    await toTrial(page);
+    await page.keyboard.press('0');
+    for (let i = 0; i < 7; i++) await page.keyboard.press('ArrowUp'); // to 8x
+    await expect(page.locator('#zoom-readout')).toHaveText('8×');
+
+    for (let i = 0; i < 4; i++) {
+      await advance(page);
+      const z = Number((await page.locator('#zoom-readout').textContent())!.replace('×', ''));
+      expect(z, 'covering must not lower a chosen magnification').toBeGreaterThanOrEqual(8);
+    }
   });
 });

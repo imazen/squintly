@@ -189,17 +189,24 @@ two specs in `curator.spec.ts` guard it. Fixing the bucket's CORS config would
 be a fine *additional* step but must not be the only defence — the proxy works
 regardless of who owns the bucket.
 
-### Small stimuli are small on purpose
+### Small stimuli are magnified to cover the frame (updated 2026-08-01)
 
 `trial.ts` renders the stimulus at a hard minimum of **1:1 device pixels** and
-never downscales — anything larger than the screen is panned. So an S-bucket
-source (240px) really is ~80 CSS px on a DPR-3 phone, and an XL source really
-does need dragging to see. Both are correct, and neither may be "fixed" by
-scaling to fit: a display downscale means the observer is rating the browser's
-resample rather than the encode. `trial.spec.ts` asserts the 1:1 ratio on every
-trial; `responses.intrinsic_to_device_ratio` records it per response.
+never downscales — anything larger than the screen is panned, so an XL source
+really does need dragging to see. That part is unchanged and may not be "fixed"
+by scaling to fit: a display downscale means the observer is rating the
+browser's resample rather than the encode.
+
+**What changed:** an undersized stimulus is now magnified to *cover* the frame
+(`trial.ts::ensureCovers`), at whole factors only. An S-bucket source at 1:1 on
+a DPR-3 phone is ~80 CSS px — unjudgeable — and magnifying is the one remedy the
+display rule permits, because integer nearest-neighbour invents nothing: one
+source pixel becomes an exact N×N block. It only ever *raises* the factor, so a
+magnification the observer chose survives a small source.
 
 Zooming in beyond 1:1 is acceptable. Going below it is not.
+`responses.zoom_factor` records the factor per response, so an analyst can
+condition on visual angle rather than assume 1:1.
 
 ### Unknown `/api/*` paths return HTML with the extension's content-type
 

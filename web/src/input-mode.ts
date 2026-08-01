@@ -62,16 +62,41 @@ export function supportsHoldMode(): boolean {
   return true;
 }
 
+/// Touch-primary devices default to `hold`.
+///
+/// On a phone the segmented control is three small targets below the picture,
+/// and every switch is a look away from the thing being compared. Holding one
+/// half of the image keeps the eye on the stimulus and changes the picture
+/// under it, which is the comparison you actually want to make — and a thumb
+/// is already on the glass. On a mouse, `tap` stays the default: the pointer
+/// costs nothing to move and a click is not a sustained gesture.
+///
+/// `pointer: coarse` rather than a touch-capability check: a laptop with a
+/// touchscreen is still mouse-primary, and its owner should get the mouse
+/// default.
+function defaultInputMode(): InputMode {
+  if (
+    typeof window !== 'undefined' &&
+    typeof window.matchMedia === 'function' &&
+    window.matchMedia('(pointer: coarse)').matches
+  ) {
+    return 'hold';
+  }
+  return 'tap';
+}
+
 export function loadInputMode(): InputMode {
   try {
     const v = localStorage.getItem(KEY);
-    // A stored mode this device cannot drive would strand the observer with an
-    // inoperable UI — fall back rather than honour it.
+    // An explicit choice always wins over the device default — that is what
+    // makes the setting stick. A stored mode this device cannot drive would
+    // strand the observer with an inoperable UI, so fall back rather than
+    // honour that one.
     if (isInputMode(v) && (v !== 'buttons' || supportsButtonsMode())) return v;
   } catch {
     /* private mode / storage disabled */
   }
-  return 'tap';
+  return defaultInputMode();
 }
 
 export function saveInputMode(mode: InputMode): void {

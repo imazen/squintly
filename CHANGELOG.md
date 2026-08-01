@@ -2,6 +2,21 @@
 
 ## [Unreleased]
 
+### Changed
+- **Touch devices default to `hold` mode.** On a phone the segmented control is
+  three small targets below the picture, and every switch is a look away from
+  the thing being compared; holding one half keeps the eye on the stimulus and
+  changes the picture under it. Mouse devices keep `tap`, since a pointer costs
+  nothing to move and a click is not a sustained gesture. Gated on
+  `pointer: coarse`, so a touchscreen laptop still gets the mouse default. An
+  explicit choice always outranks the device default and survives reloads.
+- **An undersized stimulus is magnified to cover the frame.** An S-bucket source
+  at 1:1 on a DPR-3 phone is ~80 CSS px — a postage stamp with acres of black
+  around it, and no way to see the artefacts being rated. Magnifying is the only
+  remedy the display rule permits: below 1:1 resamples the encode, above it at
+  integer nearest-neighbour invents nothing. It only ever *raises* the factor,
+  so magnification carried across trials survives a small source.
+
 ### Fixed
 - **Switching between projects was impossible.** Unlisting `main` to force the
   non-photo focus left one listed study, so the picker hid itself and there was

@@ -383,6 +383,9 @@ export function startTrials(root: HTMLElement, sessionId: string): TrialControll
       viewport.classList.remove('is-loading');
       status.hidden = true;
       setPanelEnabled(true);
+      // Before the panel is usable, not after: the observer should never be
+      // offered a judgement on a stimulus too small to judge.
+      ensureCovers();
       recomputePanLimits();
       if (state.shownAt === 0) {
         state.shownAt = performance.now();
@@ -554,6 +557,43 @@ export function startTrials(root: HTMLElement, sessionId: string): TrialControll
         if (w <= r.width && h <= r.height) best = z;
       }
       return best;
+    };
+
+    /// Smallest whole factor at which the image covers the frame in BOTH
+    /// dimensions.
+    ///
+    /// An S-bucket source is 240px, which at 1:1 on a DPR-3 phone is about 80
+    /// CSS px — a postage stamp with acres of black around it, and no way to
+    /// see the artefacts being rated. Magnifying to cover is the correct fix
+    /// and the *only* one available: the display rule forbids going below 1:1
+    /// because that resamples the encode, but going above it at integer
+    /// nearest-neighbour invents nothing — one source pixel becomes an exact
+    /// N x N block.
+    ///
+    /// Capped by the ladder, so a very small source may still not fill the
+    /// frame; that is better than a fractional factor.
+    const coverFactor = (): number => {
+      const el = layers[currentSrc];
+      if (!el.naturalWidth || !el.naturalHeight) return 1;
+      const r = viewport.getBoundingClientRect();
+      if (r.width <= 0 || r.height <= 0) return 1;
+      for (const z of ZOOM_LADDER) {
+        if ((el.naturalWidth * z) / dpr >= r.width && (el.naturalHeight * z) / dpr >= r.height) {
+          return z;
+        }
+      }
+      return ZOOM_LADDER[ZOOM_LADDER.length - 1];
+    };
+
+    /// Raise magnification if the stimulus does not fill the frame.
+    ///
+    /// Only ever raises. Magnification persists across trials on purpose, so a
+    /// deliberate 4x must survive a small source — this tops it up when the
+    /// carried-over factor leaves the picture undersized, and leaves it alone
+    /// otherwise.
+    const ensureCovers = () => {
+      const want = coverFactor();
+      if (want > zoom) applyZoom(want);
     };
 
     const resetToFit = () => {

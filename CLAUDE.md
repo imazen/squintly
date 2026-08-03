@@ -150,7 +150,51 @@ just test
 
 ## Investigation Notes
 
-(none yet)
+### Desaturated reds in encodings are chroma subsampling, not a colour bug (2026-08-03)
+
+Reported from the live study: "so many a and b variants have super desaturated
+reds". Real, measured, and **not** a pipeline defect — but it does have a
+recording gap worth knowing about.
+
+**Not colour management.** Nothing in the corpus carries an ICC profile —
+neither the source PNGs nor any encoding (measured: `icc_profile` is absent on
+all of them), so a browser treats every arm as sRGB and the reference and the
+encodes are handled identically. `build_demo_corpus.py` contains no ICC,
+colorspace or profile handling at all.
+
+**It is chroma.** Red lives almost entirely in Cr, so it takes the brunt of both
+half-resolution chroma and the harsher chroma quantization at low q. Measured on
+`imazen26-6600-ia-scans-manuscript-illustrations` (red-heavy botanical plate),
+saturation of red pixels vs the source:
+
+| codec | subsampling | q15 | q92 |
+|---|---|---|---|
+| jpegli | 4:4:4 | −9.6% | **−2.1%** |
+| libjpeg-turbo | 4:2:0 | −10.8% | −5.2% |
+| libwebp | 4:2:0 | −9.7% | −4.7% |
+| libavif | 4:2:0 | −8.1% | −4.5% |
+
+Overall saturation moves ±1%; the loss is specifically red. The tell that it is
+subsampling and not quantization is that it **persists at q92**, and that jpegli
+— the only 4:4:4 encoder here — is less than half as bad there.
+
+**The subsampling is inherited, not chosen.** The builder passes no subsampling
+argument to any encoder, so each takes its default: Pillow's JPEG is 4:2:0 below
+quality 95 (so q92 is 4:2:0), lossy WebP is 4:2:0 by format, Pillow's AVIF
+defaults to 4:2:0, and `cjpegli` defaults to 4:4:4. That is realistic web
+behaviour, which is the right thing for the study to measure — but it means the
+corpus mixes 4:4:4 and 4:2:0 **by accident of defaults**.
+
+**The gap: nothing records it.** `EncodingMeta` carries codec and quality but
+not subsampling, so an analyst comparing jpegli against libjpeg-turbo would
+attribute a subsampling difference to the codec. Within-codec pair trials are
+unaffected (subsampling is constant inside a pair), so this bites cross-codec
+aggregation, not the pairwise data.
+
+**Why it matters more now:** the live study is non-photo only, and 4:2:0 on
+saturated hard-edged graphics is a known pathology — zensr's own routing treats
+`4:2:0 ∨ q≲50` as a special case. So the content class under test is exactly the
+one this hits hardest.
 
 ## Known Bugs
 

@@ -104,3 +104,91 @@ test.describe('calibration stickiness', () => {
     await expect(page.locator('#calibrate-link')).toContainText(/calibrate screen size/i);
   });
 });
+
+test.describe('the pause menu', () => {
+  async function openMenu(page: Page) {
+    await onboard(page);
+    await page.locator('#menu').click();
+    await expect(page.getByRole('heading', { name: /^Pause$/ })).toBeVisible();
+    // The study list is fetched, so the select starts with a valueless
+    // "loading…" placeholder. Reading it before the fetch lands finds no real
+    // options at all — which passes in isolation and fails under suite load.
+    await expect
+      .poll(async () => page.locator('#menu-study option[value]').count(), { timeout: 15_000 })
+      .toBeGreaterThan(1);
+  }
+
+  // It used to offer only continue/end, so changing anything mid-session meant
+  // abandoning it and hunting the welcome screen.
+  test('offers study, comparison mode, calibration and shortcuts', async ({ page }) => {
+    await openMenu(page);
+    await expect(page.locator('#menu-study')).toBeVisible();
+    await expect(page.locator('#menu-mode')).toBeVisible();
+    await expect(page.locator('#menu-calibrate')).toBeVisible();
+    await expect(page.locator('#menu-keys')).toBeVisible();
+    // Every listed study is reachable from here.
+    expect(await page.locator('#menu-study option[value]').count()).toBeGreaterThan(1);
+  });
+
+  // A session belongs to exactly one study, so switching cannot be applied in
+  // place — its trials would end up filed under a study the observer left.
+  test('switching study starts a fresh session on that study', async ({ page }) => {
+    await openMenu(page);
+    const before = await page.evaluate(() => localStorage.getItem('squintly:study_id'));
+    const options = await page.locator('#menu-study option[value]').all();
+    let target: string | null = null;
+    for (const o of options) {
+      const v = await o.getAttribute('value');
+      if (v && v !== before) {
+        target = v;
+        break;
+      }
+    }
+    expect(target, 'needed a second study to switch to').toBeTruthy();
+
+    await page.locator('#menu-study').selectOption(target!);
+    // Back in trials, on the new study, without visiting the welcome screen.
+    await page.waitForSelector('.trial[data-trial-id]', { timeout: 30_000 });
+    await expect(page.getByRole('heading', { name: /Image Discrimination Study/i })).toHaveCount(0);
+    expect(await page.evaluate(() => localStorage.getItem('squintly:study_id'))).toBe(target);
+  });
+
+  test('changing comparison mode applies without leaving the trial', async ({ page }) => {
+    await openMenu(page);
+    const current = await page.evaluate(
+      () => document.querySelector<HTMLElement>('.trial')!.dataset.inputMode,
+    );
+    const options = (await page.locator('#menu-mode option').all()).length;
+    test.skip(options < 2, 'this device offers only one mode');
+    let other: string | null = null;
+    for (const o of await page.locator('#menu-mode option').all()) {
+      const v = await o.getAttribute('value');
+      if (v && v !== current) {
+        other = v;
+        break;
+      }
+    }
+    await page.locator('#menu-mode').selectOption(other!);
+    await page.waitForSelector(`.trial[data-input-mode="${other}"]`, { timeout: 15_000 });
+    // And it sticks.
+    expect(await page.evaluate(() => localStorage.getItem('squintly_input_mode'))).toBe(other);
+  });
+
+  test('re-measuring the screen returns to trials, not to the welcome screen', async ({ page }) => {
+    await openMenu(page);
+    await page.locator('#menu-calibrate').click();
+    await expect(page.locator('#slider')).toBeVisible();
+    await page.getByRole('button', { name: /Looks right/i }).click();
+    await page.getByRole('button', { name: /^Skip$/ }).click();
+    await page.waitForSelector('.trial[data-trial-id]', { timeout: 30_000 });
+    await expect(page.getByRole('heading', { name: /Image Discrimination Study/i })).toHaveCount(0);
+  });
+
+  test('keep going dismisses without disturbing the trial', async ({ page }) => {
+    await openMenu(page);
+    const id = await page.locator('.trial').getAttribute('data-trial-id');
+    await page.locator('#continue').click();
+    await expect(page.locator('.scrim')).toHaveCount(0);
+    expect(await page.locator('.trial').getAttribute('data-trial-id')).toBe(id);
+  });
+});

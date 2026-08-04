@@ -413,3 +413,36 @@ test.describe('study controls', () => {
     }
   });
 });
+
+test.describe('reviewer leaderboard', () => {
+  test('shows work and quality per reviewer, and identifies nobody', async ({ request }) => {
+    const r = await request.get('/api/leaderboard');
+    expect(r.ok(), await r.text()).toBeTruthy();
+    const rows = (await r.json()) as Array<Record<string, unknown>>;
+    expect(Array.isArray(rows)).toBe(true);
+    if (rows.length === 0) return; // nothing rated on this run
+
+    for (const row of rows) {
+      // The handle is a salted derivation, so it must not carry an identity.
+      const h = String(row.handle);
+      expect(h, `handle ${h} looks like an address`).not.toContain('@');
+      expect(h).toMatch(/^[a-z]+-[a-z]+-\d{2}$/);
+      // Nothing identifying may appear anywhere in the payload.
+      for (const k of Object.keys(row)) {
+        expect(k, 'the board must not carry raw identity').not.toMatch(
+          /email|observer_id|ip|address/i,
+        );
+      }
+      // Both halves of the question the board answers.
+      for (const k of ['trials', 'sessions', 'active_days']) {
+        expect(typeof row[k], `${k} should be numeric`).toBe('number');
+      }
+      expect('golden_pass_rate' in row).toBe(true);
+      expect('self_agreement' in row).toBe(true);
+      expect('repeat_pairs' in row).toBe(true);
+    }
+    // Sorted by volume, but quality is present so a high count can be judged.
+    const counts = rows.map((r2) => Number(r2.trials));
+    expect([...counts].sort((a, b) => b - a)).toEqual(counts);
+  });
+});

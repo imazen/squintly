@@ -389,7 +389,25 @@ async function beginSession(
     await new Promise<void>((res) => {
       runCalibration(root, { session_id: resp.session_id, observer_id: resp.observer_id }, () => res());
     });
-    const ctrl = startTrials(root, resp.session_id);
+    const ctrl = startTrials(root, resp.session_id, {
+      // A session belongs to one study, so switching means ending this one and
+      // starting a fresh session under the new choice — not mutating this one,
+      // which would leave its trials filed under a study the observer left.
+      onSwitchStudy: () => {
+        navigator.sendBeacon(`/api/session/${encodeURIComponent(resp.session_id)}/end`);
+        void beginSession(profile, support);
+      },
+      onRecalibrate: () => {
+        navigator.sendBeacon(`/api/session/${encodeURIComponent(resp.session_id)}/end`);
+        renderCalibration(root, (result) => {
+          saveCalibration(result);
+          // Straight back into trials: the observer came from a trial and did
+          // not ask to go to the welcome screen. Conditions are re-captured by
+          // the new session, which is what makes the new measurement count.
+          void beginSession(profile, support);
+        });
+      },
+    });
     await ctrl.start();
     window.addEventListener('beforeunload', () => {
       navigator.sendBeacon(`/api/session/${encodeURIComponent(resp.session_id)}/end`);

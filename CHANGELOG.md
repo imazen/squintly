@@ -3,6 +3,43 @@
 ## [Unreleased]
 
 ### Added
+- **`ssim2-photo-control` — the arm that makes the non-photo result mean
+  something.** "Is ssim2 good at non-photo content?" has no answer alone; a
+  correlation of 0.7 is only interpretable against something. Comparing against
+  a *published* photographic number (CID22, KADID) is invalid — different
+  observers, UI, pair selection and protocol, so any gap could be the
+  instrument. This arm is byte-for-byte the same `SamplerConfig` as
+  `ssim2-nonphoto` apart from `ContentFilter::PhotoOnly`, so the two differ in
+  content and nothing else (guarded by `the_photo_arm_differs_only_in_content`).
+  - **Compare efficiencies, not raw correlations.** Humans may simply be noisier
+    on one class: if self-agreement is 0.95 on photographs and 0.75 on
+    non-photo, a lower ssim2 correlation there could be entirely human noise.
+    `p_repeat` measures that ceiling per class, so the statistic is
+    `ρ / ceiling` — how much of the achievable agreement the metric captured.
+- **Reviewer leaderboard** (`GET /api/leaderboard`) with salted, unreversible
+  handles (`src/handle.rs`, `SQUINTLY_HANDLE_SALT`). Derived from the email when
+  there is one — so the handle follows a reviewer across devices, which is what
+  email sign-in is for — and from the observer id otherwise. Salted because a
+  public board plus an unsalted digest of a low-entropy input is an
+  email-membership oracle, not anonymisation.
+  - Carries both halves of "should I trust this reviewer": work (trials,
+    sessions, active days) and quality (golden pass rate, **self-agreement on
+    re-served pairs**, median seconds, median switches). Self-agreement is the
+    one that matters — a reviewer with high volume and low self-agreement is
+    contributing noise, and it is the ceiling any metric could reach against
+    them.
+  - Self-agreement compares the **encoding chosen**, never the slot letter,
+    since repeats are counterbalanced independently — otherwise it would measure
+    whether they remembered the layout.
+
+### Changed
+- **The pause menu does more than continue/end.** Switch study, change
+  comparison mode, re-measure screen size, open the shortcut list. Changing any
+  of these used to mean abandoning the session and hunting the welcome screen.
+  Switching study starts a fresh session on the new study rather than mutating
+  the current one, whose trials are all filed under the study it began on.
+
+### Added
 - **Per-view dwell and switch count** (migration 0019; `responses.tsv`
   schema_version 5 → 6): `switch_count`, `ms_on_a`, `ms_on_b`, `ms_on_ref`.
   `reveal_count`/`reveal_ms_total` only ever measured time on the *reference*,

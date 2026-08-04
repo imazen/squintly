@@ -16,6 +16,33 @@
 //! without `study_id` on the row, two studies' responses are indistinguishable
 //! after the fact.
 //!
+//! # Measuring a metric's efficacy on one content class *relative to* another
+//!
+//! "Is SSIMULACRA2 good at non-photo content?" has no answer on its own — a
+//! correlation of 0.7 is only interpretable against something. Two comparisons
+//! are available and only one of them is valid:
+//!
+//! * **Against a published photographic number** (CID22, KADID, TID). Invalid.
+//!   Different observers, different UI, different pair selection, different
+//!   protocol. Any gap could be the instrument rather than the content.
+//! * **Against a photographic arm of *this* instrument.** Valid. Same
+//!   observers, same screen, same forced-choice protocol, same sampler, same
+//!   counterbalancing — differing only in the content class drawn.
+//!
+//! `ssim2-photo-control` is that arm: byte-for-byte the same `SamplerConfig` as
+//! `ssim2-nonphoto` apart from `ContentFilter::PhotoOnly`. Keeping them
+//! identical is not tidiness, it is the entire experimental control; a
+//! difference in any other field would confound the comparison it exists to
+//! make (guarded by `the_photo_arm_differs_only_in_content`).
+//!
+//! **And the comparison is of efficiencies, not raw correlations.** Humans may
+//! simply be noisier on one class: if self-agreement on repeated pairs is 0.95
+//! on photographs and 0.75 on non-photo, a lower ssim2 correlation on non-photo
+//! could be entirely human noise and say nothing about the metric. `p_repeat`
+//! measures that ceiling per class, so the statistic to compare is
+//! `ρ / ceiling` — how much of the achievable agreement the metric captured —
+//! not `ρ` itself.
+//!
 //! Studies are compiled in rather than configured, for the same reason the
 //! license registry is: they are part of the pre-registration, and a typo in an
 //! env var should not be able to invent one.
@@ -142,6 +169,28 @@ pub const STUDIES: &[Study] = &[
             // study cannot use. Without it nothing here distinguishes a careful
             // observer from a careless one — the honeypot and anchor rates are
             // both zero, because both build single-stimulus trials.
+            p_golden_pair: 0.083,
+            pairwise_only: true,
+        },
+    },
+    Study {
+        id: "ssim2-photo-control",
+        label: "Photo control arm (A/B only)",
+        summary: "The same forced-choice comparison on photographs. Run alongside the \
+                  non-photo study so its result has something to be measured against.",
+        trial_style: "A/B comparisons only. No star ratings.",
+        p_repeat: 0.08,
+        exclusion_default: false,
+        // Listed: it is only useful if observers actually run both arms.
+        unlisted: false,
+        sampler: SamplerConfig {
+            // IDENTICAL to `ssim2-nonphoto` in every respect except the content
+            // filter. That is the whole design — see the note below.
+            p_single: 0.0,
+            p_honeypot: 0.0,
+            p_anchor: 0.0,
+            content: ContentFilter::PhotoOnly,
+            pairing: PairingRule::AdjacentQuality,
             p_golden_pair: 0.083,
             pairwise_only: true,
         },
@@ -286,6 +335,31 @@ mod tests {
         );
     }
 
+    /// The photo arm is a control, so it must differ from the study it controls
+    /// for in EXACTLY one respect. A difference in any other field would
+    /// confound the comparison it exists to make.
+    #[test]
+    fn the_photo_arm_differs_only_in_content() {
+        let np = by_id("ssim2-nonphoto").expect("study");
+        let ph = by_id("ssim2-photo-control").expect("study");
+        assert_eq!(ph.sampler.content, ContentFilter::PhotoOnly);
+        assert_eq!(np.sampler.content, ContentFilter::NonPhotoOnly);
+        // Everything else identical.
+        assert_eq!(ph.sampler.p_single, np.sampler.p_single);
+        assert_eq!(ph.sampler.p_honeypot, np.sampler.p_honeypot);
+        assert_eq!(ph.sampler.p_anchor, np.sampler.p_anchor);
+        assert_eq!(ph.sampler.p_golden_pair, np.sampler.p_golden_pair);
+        assert_eq!(ph.sampler.pairwise_only, np.sampler.pairwise_only);
+        assert_eq!(ph.sampler.pairing, np.sampler.pairing);
+        // The ceiling has to be measurable on both arms, or the efficiencies
+        // cannot be compared at all.
+        assert_eq!(ph.p_repeat, np.p_repeat);
+        assert!(
+            ph.p_repeat > 0.0,
+            "no repeats means no ceiling means no comparison"
+        );
+    }
+
     /// At least one study has to be reachable by a drive-by visitor.
     #[test]
     fn something_is_always_offered() {
@@ -323,15 +397,25 @@ mod tests {
     /// filter. Catches the next one added by copy-paste.
     #[test]
     fn studies_claiming_a_content_type_restrict_it() {
+        // Checked against the id and the LABEL, not the summary. The summary is
+        // prose and may legitimately mention another study — the photo control
+        // arm's summary says "run alongside the non-photo study", which a naive
+        // substring match read as a claim to *be* one.
         for st in STUDIES {
-            let claims_nonphoto = st.id.contains("nonphoto")
-                || st.label.to_lowercase().contains("non-photo")
-                || st.summary.to_lowercase().contains("non-photo");
+            let name = format!("{} {}", st.id, st.label).to_lowercase();
+            let claims_nonphoto = name.contains("nonphoto") || name.contains("non-photo");
             if claims_nonphoto {
                 assert_eq!(
                     st.sampler.content,
                     ContentFilter::NonPhotoOnly,
                     "study {} claims non-photo content but does not filter for it",
+                    st.id
+                );
+            } else if name.contains("photo") {
+                assert_eq!(
+                    st.sampler.content,
+                    ContentFilter::PhotoOnly,
+                    "study {} claims photographic content but does not filter for it",
                     st.id
                 );
             }

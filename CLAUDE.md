@@ -86,6 +86,13 @@ web component from `~/work/efficient-ui/`. No framework.
   study, never admitted; keep the table in sync with
   `scripts/build_demo_corpus.py::R2_STRATA` (guarded by
   `strata_agree_with_the_corpus_builder`).
+- **Metric efficacy on one content class is only measurable against another
+  arm of the SAME instrument.** `ssim2-photo-control` is identical to
+  `ssim2-nonphoto` except for `ContentFilter::PhotoOnly` — that sameness IS the
+  control, so do not "tidy" a field into differing. Comparing our non-photo
+  number against a published photographic one (CID22/KADID) is invalid:
+  different observers, UI, pair selection and protocol. And compare
+  `ρ / ceiling`, not `ρ` — humans may just be noisier on one class.
 - **A rank-agreement number is meaningless without a noise ceiling.**
   `Study::p_repeat` re-serves pairs the observer already answered; their
   agreement with themselves is the ceiling any metric could reach. "ssim2

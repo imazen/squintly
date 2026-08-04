@@ -1211,6 +1211,150 @@ pub async fn export_unified_manifest(
     Ok(Json(build_export_manifest(ExportKind::Unified, &body)))
 }
 
+/// One reviewer's public row.
+///
+/// Every field answers "should I trust this reviewer's judgements, and how much
+/// have they done" — the two things the board exists to convey. Nothing here
+/// identifies a person: the handle is a salted, unreversible derivation (see
+/// `handle.rs`), and no email, observer id or client address appears.
+#[derive(Debug, Serialize)]
+pub struct LeaderboardRow {
+    pub handle: String,
+    // --- work ---
+    pub trials: i64,
+    pub sessions: i64,
+    pub active_days: i64,
+    // --- quality ---
+    /// Share of attention-check pairs answered correctly. `None` when none have
+    /// been served yet — distinct from 0.0, which would be a failing reviewer.
+    pub golden_pass_rate: Option<f32>,
+    /// Agreement with THEMSELVES on re-served pairs. The reliability number
+    /// that matters: it is the ceiling any metric could reach against this
+    /// reviewer, so a reviewer with high volume and low self-agreement is
+    /// contributing noise, not data.
+    pub self_agreement: Option<f32>,
+    pub repeat_pairs: i64,
+    /// Median seconds per judgement. Read WITH `median_switches`: fast and
+    /// decisive differs from fast and careless only by whether they looked.
+    pub median_seconds: Option<f64>,
+    /// Median view swaps per trial — how much comparing they actually did.
+    pub median_switches: Option<f64>,
+}
+
+/// GET /api/leaderboard
+///
+/// Deliberately not ranked by volume alone. Sorting purely by trial count
+/// rewards clicking through, which is the behaviour the honeypots exist to
+/// catch; the client can sort by any column, and the payload carries the
+/// quality fields needed to judge a high count.
+pub async fn leaderboard(
+    State(state): State<SharedState>,
+) -> Result<Json<Vec<LeaderboardRow>>, AppError> {
+    let salt = crate::handle::salt();
+    let rows = sqlx::query(
+        "SELECT s.observer_id AS oid, \
+                COALESCE(o.email, s.observer_id) AS identity, \
+                COUNT(*) AS trials, \
+                COUNT(DISTINCT s.id) AS sessions, \
+                COUNT(DISTINCT DATE(r.responded_at / 1000, 'unixepoch')) AS days \
+         FROM responses r \
+         JOIN trials t ON t.id = r.trial_id \
+         JOIN sessions s ON s.id = t.session_id \
+         JOIN observers o ON o.id = s.observer_id \
+         GROUP BY s.observer_id HAVING trials > 0",
+    )
+    .fetch_all(&state.pool)
+    .await?;
+
+    let mut out = Vec::with_capacity(rows.len());
+    for row in &rows {
+        let oid: String = row.get("oid");
+        let identity: String = row.get("identity");
+
+        // Attention checks.
+        let golden: Option<(i64, i64)> = sqlx::query_as(
+            "SELECT COUNT(*), SUM(CASE WHEN r.choice = t.expected_choice THEN 1 ELSE 0 END) \
+             FROM responses r JOIN trials t ON t.id = r.trial_id \
+             JOIN sessions s ON s.id = t.session_id \
+             WHERE s.observer_id = ? AND t.is_golden = 1 AND t.expected_choice IS NOT NULL",
+        )
+        .bind(&oid)
+        .fetch_optional(&state.pool)
+        .await?;
+
+        // Test-retest: did they answer the repeat the same way as the original?
+        // Slots are counterbalanced independently, so compare the ENCODING
+        // chosen, never the slot letter — otherwise this would measure whether
+        // they remembered the layout.
+        let repeats: Vec<(String, String, String, String, String, String)> = sqlx::query_as(
+            "SELECT rep.choice, t2.a_encoding_id, t2.b_encoding_id, \
+                    orig.choice, t1.a_encoding_id, t1.b_encoding_id \
+             FROM trials t2 \
+             JOIN responses rep ON rep.trial_id = t2.id \
+             JOIN trials t1 ON t1.id = t2.repeat_of_trial_id \
+             JOIN responses orig ON orig.trial_id = t1.id \
+             JOIN sessions s ON s.id = t2.session_id \
+             WHERE s.observer_id = ? AND t2.repeat_of_trial_id IS NOT NULL",
+        )
+        .bind(&oid)
+        .fetch_all(&state.pool)
+        .await?;
+        let chosen = |c: &str, a: &str, b: &str| -> Option<String> {
+            match c {
+                "a" => Some(a.to_string()),
+                "b" => Some(b.to_string()),
+                "tie" => Some("tie".to_string()),
+                _ => None,
+            }
+        };
+        let mut agree = 0i64;
+        let mut comparable = 0i64;
+        for (c2, a2, b2, c1, a1, b1) in &repeats {
+            if let (Some(x), Some(y)) = (chosen(c2, a2, b2), chosen(c1, a1, b1)) {
+                comparable += 1;
+                if x == y {
+                    agree += 1;
+                }
+            }
+        }
+
+        let timing: Vec<(i64, i64)> = sqlx::query_as(
+            "SELECT r.dwell_ms, r.switch_count FROM responses r \
+             JOIN trials t ON t.id = r.trial_id \
+             JOIN sessions s ON s.id = t.session_id \
+             WHERE s.observer_id = ?",
+        )
+        .bind(&oid)
+        .fetch_all(&state.pool)
+        .await?;
+        let median = |mut v: Vec<f64>| -> Option<f64> {
+            if v.is_empty() {
+                return None;
+            }
+            v.sort_by(|a, b| a.partial_cmp(b).unwrap());
+            Some(v[v.len() / 2])
+        };
+
+        out.push(LeaderboardRow {
+            handle: crate::handle::handle_for(&identity, &salt),
+            trials: row.get("trials"),
+            sessions: row.get("sessions"),
+            active_days: row.get("days"),
+            golden_pass_rate: match golden {
+                Some((n, ok)) if n > 0 => Some(ok as f32 / n as f32),
+                _ => None,
+            },
+            self_agreement: (comparable > 0).then(|| agree as f32 / comparable as f32),
+            repeat_pairs: comparable,
+            median_seconds: median(timing.iter().map(|(d, _)| *d as f64 / 1000.0).collect())
+                .map(|v| (v * 10.0).round() / 10.0),
+            median_switches: median(timing.iter().map(|(_, s)| *s as f64).collect()),
+        });
+    }
+    out.sort_by_key(|r| std::cmp::Reverse(r.trials));
+    Ok(Json(out))
+}
+
 // ---------- optional email magic-link auth ----------
 
 #[derive(Debug, Deserialize)]

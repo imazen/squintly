@@ -1196,3 +1196,37 @@ input[type="range"] {
 @media (prefers-reduced-motion: no-preference) {
   .viewport { transition: background-image 0s; }
 }
+
+
+/* Pause menu. More than continue/end: an observer mid-session may want to
+   switch study, change how they compare, or re-measure their screen — none of
+   which should require ending the session and hunting the welcome screen. */
+.menu-card {
+  max-width: min(94vw, 26rem);
+  text-align: left;
+}
+.menu-section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0.9rem 0;
+}
+.menu-section > label {
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+.menu-section select,
+.menu-section button {
+  font: inherit;
+  /* 44px: this is a phone-first study and these are thumb targets. */
+  min-height: 44px;
+  padding: 0.4rem 0.6rem;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--card);
+  color: inherit;
+}
+.menu-hint {
+  font-size: 0.8rem;
+  margin: 0;
+}

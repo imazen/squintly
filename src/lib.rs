@@ -20,6 +20,7 @@ pub mod db_health;
 pub mod exclusion;
 pub mod export;
 pub mod grading;
+pub mod handle;
 pub mod handlers;
 pub mod jpeg_q;
 pub mod licensing;

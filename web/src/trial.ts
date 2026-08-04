@@ -2,8 +2,8 @@
 // "A closer / tie / B closer". The reference is always reachable — by button,
 // by press-and-hold, by keyboard, or (in `hold` mode) as the resting state.
 
-import { nextTrial, recordResponse, type TrialPayload } from './api';
-import { captureTrial, loadCalibration } from './conditions';
+import { listStudies, nextTrial, recordResponse, type TrialPayload } from './api';
+import { captureTrial, loadCalibration, loadStudyId, saveStudyId } from './conditions';
 import {
   HoldStack,
   buttonForKey,
@@ -13,6 +13,7 @@ import {
 } from './hold-stack';
 import {
   INPUT_MODE_LABELS,
+  INPUT_MODE_LABELS_LONG,
   availableInputModes,
   type InputMode,
   isInputMode,
@@ -67,7 +68,26 @@ export interface TrialController {
   end(): void;
 }
 
-export function startTrials(root: HTMLElement, sessionId: string): TrialController {
+export interface TrialHooks {
+  /// The observer chose a different study. A session belongs to exactly one
+  /// study, so this cannot be applied in place — the caller ends this session
+  /// and starts a fresh one under the new choice.
+  onSwitchStudy: () => void;
+  /// Re-run screen-size calibration, then resume.
+  onRecalibrate: () => void;
+}
+
+export function startTrials(
+  root: HTMLElement,
+  sessionId: string,
+  hooks: TrialHooks,
+): TrialController {
+  const { onSwitchStudy, onRecalibrate } = hooks;
+  /// The trial currently on screen, so the menu can re-render it after a
+  /// settings change without re-fetching.
+  let currentTrial: TrialPayload | null = null;
+  /// Opens the keyboard cheatsheet for the trial on screen.
+  let showKeyHelp: (() => void) | null = null;
   let aborted = false;
   let trialCount = 0;
   /// Magnification persists across trials in a session — see the note where it
@@ -110,6 +130,7 @@ export function startTrials(root: HTMLElement, sessionId: string): TrialControll
   };
 
   const renderTrial = (trial: TrialPayload) => {
+    currentTrial = trial;
     detachKeys?.();
     detachKeys = null;
 
@@ -1013,6 +1034,7 @@ export function startTrials(root: HTMLElement, sessionId: string): TrialControll
       root.querySelector('.trial')!.appendChild(help);
     };
     root.querySelector<HTMLButtonElement>('#keys-btn')!.addEventListener('click', toggleKeyHelp);
+    showKeyHelp = toggleKeyHelp;
   };
 
   const submit = async (
@@ -1084,10 +1106,35 @@ export function startTrials(root: HTMLElement, sessionId: string): TrialControll
   const openMenu = () => {
     const scrim = document.createElement('div');
     scrim.className = 'scrim';
+    const modes = availableInputModes();
     scrim.innerHTML = `
-      <div class="card">
+      <div class="card menu-card">
         <h2>Pause</h2>
-        <p class="muted">You've contributed ${trialCount} ratings so far. Thanks!</p>
+        <p class="muted">You've contributed ${trialCount} ratings this session. Thanks!</p>
+
+        <div class="menu-section">
+          <label for="menu-study">Study</label>
+          <select id="menu-study"><option>loading…</option></select>
+          <p class="muted menu-hint">Switching starts a new session on that study.</p>
+        </div>
+
+        <div class="menu-section">
+          <label for="menu-mode">How you compare</label>
+          <select id="menu-mode">
+            ${modes
+              .map(
+                (m) =>
+                  `<option value="${m}"${m === inputMode ? ' selected' : ''}>${INPUT_MODE_LABELS_LONG[m]}</option>`,
+              )
+              .join('')}
+          </select>
+        </div>
+
+        <div class="menu-section">
+          <button id="menu-calibrate">Re-measure screen size</button>
+          <button id="menu-keys">Keyboard shortcuts</button>
+        </div>
+
         <div class="choice-row">
           <button id="continue" class="primary">Keep going</button>
           <button id="end" class="danger">End session</button>
@@ -1095,9 +1142,67 @@ export function startTrials(root: HTMLElement, sessionId: string): TrialControll
       </div>
     `;
     document.body.appendChild(scrim);
-    scrim.querySelector<HTMLButtonElement>('#continue')!.addEventListener('click', () => scrim.remove());
+    const close = () => scrim.remove();
+    // Clicking the backdrop dismisses; clicking the card must not.
+    scrim.addEventListener('click', (e) => {
+      if (e.target === scrim) close();
+    });
+
+    const studySel = scrim.querySelector<HTMLSelectElement>('#menu-study')!;
+    void listStudies()
+      .then((studies) => {
+        const current = loadStudyId();
+        studySel.innerHTML = studies
+          .map(
+            (st) =>
+              `<option value="${st.id}"${st.id === current ? ' selected' : ''}>${escapeHtml(st.label)}</option>`,
+          )
+          .join('');
+        studySel.addEventListener('change', () => {
+          // A session belongs to one study — its trials and responses are all
+          // filed under it — so switching cannot mutate the current one. Record
+          // the choice, end this session cleanly, and let the caller start a
+          // fresh one.
+          saveStudyId(studySel.value);
+          close();
+          aborted = true;
+          detachKeys?.();
+          detachKeys = null;
+          onSwitchStudy();
+        });
+      })
+      .catch(() => {
+        studySel.innerHTML = '<option>unavailable</option>';
+        studySel.disabled = true;
+      });
+
+    const modeSel = scrim.querySelector<HTMLSelectElement>('#menu-mode')!;
+    modeSel.addEventListener('change', () => {
+      const v = modeSel.value;
+      if (!isInputMode(v)) return;
+      inputMode = v;
+      saveInputMode(v);
+      close();
+      // Re-render so the resting view and bindings match the new mode. Cheap:
+      // every variant is already decoded.
+      if (currentTrial) renderTrial(currentTrial);
+    });
+
+    scrim.querySelector<HTMLButtonElement>('#menu-calibrate')!.addEventListener('click', () => {
+      close();
+      aborted = true;
+      detachKeys?.();
+      detachKeys = null;
+      onRecalibrate();
+    });
+    scrim.querySelector<HTMLButtonElement>('#menu-keys')!.addEventListener('click', () => {
+      close();
+      showKeyHelp?.();
+    });
+
+    scrim.querySelector<HTMLButtonElement>('#continue')!.addEventListener('click', close);
     scrim.querySelector<HTMLButtonElement>('#end')!.addEventListener('click', () => {
-      scrim.remove();
+      close();
       aborted = true;
       detachKeys?.();
       detachKeys = null;

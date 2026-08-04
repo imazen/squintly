@@ -136,7 +136,7 @@ pub const STUDIES: &[Study] = &[
     },
     Study {
         id: "ssim2-nonphoto",
-        label: "Non-photo oracle check (A/B only)",
+        label: "Non-photo oracle check (A/B, with photo control)",
         summary: "Does SSIMULACRA2 rank non-photo content — screenshots, documents, \
                   line-art, charts — the way a human does? Every trial is a forced choice, \
                   and every image is non-photographic.",
@@ -163,7 +163,14 @@ pub const STUDIES: &[Study] = &[
             // from all 21 canonical strata, 8 of them photographic, so ~38% of
             // its trials were photos — valid judgements filed under a label
             // that says they are about non-photo content.
-            content: ContentFilter::NonPhotoOnly,
+            // Mostly non-photo, with ~1 trial in 4 photographic as a
+            // WITHIN-SESSION control. A separate photo study confounds content
+            // with session — fatigue, lighting, screen and adaptation all
+            // differ between sessions — so the comparison the control exists
+            // to license would not be clean. See `ContentFilter::Mixed`.
+            content: ContentFilter::Mixed {
+                photo_fraction: 0.25,
+            },
             pairing: PairingRule::AdjacentQuality,
             // ~1 trial in 12, matching the single-stimulus honeypot rate this
             // study cannot use. Without it nothing here distinguishes a careful
@@ -181,8 +188,18 @@ pub const STUDIES: &[Study] = &[
         trial_style: "A/B comparisons only. No star ratings.",
         p_repeat: 0.08,
         exclusion_default: false,
-        // Listed: it is only useful if observers actually run both arms.
-        unlisted: false,
+        // UNLISTED: superseded by interleaving.
+        //
+        // Run as a separate study, this arm's data comes from different
+        // sessions than the non-photo data it is meant to control for, so
+        // content is confounded with session. `ssim2-nonphoto` now interleaves
+        // a photographic minority instead, which is within-session and
+        // within-observer by construction.
+        //
+        // Kept selectable by id: a dedicated photographic run is still a
+        // legitimate thing to want, and retiring the id would break sessions
+        // that reference it.
+        unlisted: true,
         sampler: SamplerConfig {
             // IDENTICAL to `ssim2-nonphoto` in every respect except the content
             // filter. That is the whole design — see the note below.
@@ -303,7 +320,11 @@ mod tests {
     fn the_compiled_default_is_the_non_photo_study() {
         assert_eq!(DEFAULT_STUDY_ID, "ssim2-nonphoto");
         let d = by_id(DEFAULT_STUDY_ID).expect("default must exist");
-        assert_eq!(d.sampler.content, ContentFilter::NonPhotoOnly);
+        // Majority non-photo, with a declared photographic control minority.
+        match d.sampler.content {
+            ContentFilter::Mixed { photo_fraction } => assert!(photo_fraction < 0.5),
+            other => panic!("expected a mixed draw, got {other:?}"),
+        }
     }
 
     /// A study that cannot serve a trial must not be offered. `zensr-dejpeg`
@@ -343,7 +364,7 @@ mod tests {
         let np = by_id("ssim2-nonphoto").expect("study");
         let ph = by_id("ssim2-photo-control").expect("study");
         assert_eq!(ph.sampler.content, ContentFilter::PhotoOnly);
-        assert_eq!(np.sampler.content, ContentFilter::NonPhotoOnly);
+        assert!(matches!(np.sampler.content, ContentFilter::Mixed { .. }));
         // Everything else identical.
         assert_eq!(ph.sampler.p_single, np.sampler.p_single);
         assert_eq!(ph.sampler.p_honeypot, np.sampler.p_honeypot);
@@ -386,11 +407,17 @@ mod tests {
     #[test]
     fn the_non_photo_study_actually_restricts_content() {
         let s = by_id("ssim2-nonphoto").expect("study must exist");
-        assert_eq!(
-            s.sampler.content,
-            ContentFilter::NonPhotoOnly,
-            "a study named nonphoto must filter content, not just the trial mix"
-        );
+        // It must restrict content — the original bug was that it constrained
+        // only the trial mix and drew from the whole corpus. A declared
+        // minority of photographs as a within-session control is not that:
+        // those trials are tagged `content_class` and are the control arm.
+        match s.sampler.content {
+            ContentFilter::Mixed { photo_fraction } => assert!(
+                photo_fraction < 0.5,
+                "a study named nonphoto must be majority non-photo, got {photo_fraction}"
+            ),
+            other => panic!("expected a mixed draw with a photo control, got {other:?}"),
+        }
     }
 
     /// Any study whose id or label claims a content type must back it with a
@@ -405,12 +432,31 @@ mod tests {
             let name = format!("{} {}", st.id, st.label).to_lowercase();
             let claims_nonphoto = name.contains("nonphoto") || name.contains("non-photo");
             if claims_nonphoto {
-                assert_eq!(
+                // `Mixed` counts: it is majority non-photo, with a declared
+                // photographic minority as a within-session control, and the
+                // label says so.
+                let ok = matches!(
                     st.sampler.content,
-                    ContentFilter::NonPhotoOnly,
-                    "study {} claims non-photo content but does not filter for it",
-                    st.id
+                    ContentFilter::NonPhotoOnly | ContentFilter::Mixed { .. }
                 );
+                assert!(
+                    ok,
+                    "study {} claims non-photo content but does not filter for it ({:?})",
+                    st.id, st.sampler.content
+                );
+                if let ContentFilter::Mixed { photo_fraction } = st.sampler.content {
+                    assert!(
+                        photo_fraction < 0.5,
+                        "study {} is named non-photo but draws {:.0}% photographs",
+                        st.id,
+                        photo_fraction * 100.0
+                    );
+                    assert!(
+                        st.label.to_lowercase().contains("photo control"),
+                        "study {} mixes in photographs; the label must say so",
+                        st.id
+                    );
+                }
             } else if name.contains("photo") {
                 assert_eq!(
                     st.sampler.content,

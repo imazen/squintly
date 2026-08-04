@@ -194,6 +194,9 @@ function blobByPathSegments(p: string): { buf: Buffer; mime: string } | null {
   };
 }
 
+/// Everything the Postmark stub has been asked to send.
+const outbox: Array<Record<string, unknown>> = [];
+
 const server = createServer((req: IncomingMessage, res: ServerResponse) => {
   const url = new URL(req.url ?? '/', `http://127.0.0.1:${PORT}`);
   if (url.pathname === '/api/manifest') {
@@ -237,6 +240,31 @@ const server = createServer((req: IncomingMessage, res: ServerResponse) => {
     send(res, 200, blob.buf, blob.mime);
     return;
   }
+  // --- Postmark stub -----------------------------------------------------
+  //
+  // Curator writes are admin-only, and the only way to become an admin is the
+  // real magic-link flow. Rather than adding a test-only auth backdoor — which
+  // would be a live hole in production, not just in tests — the harness stands
+  // up a mail sink and the specs sign in for real: request a link, read it out
+  // of the outbox, follow it.
+  if (url.pathname === '/email' && req.method === 'POST') {
+    let body = '';
+    req.on('data', (c) => (body += c));
+    req.on('end', () => {
+      try {
+        outbox.push(JSON.parse(body));
+      } catch {
+        /* a malformed send is a test bug; surface it as an empty outbox */
+      }
+      send(res, 200, JSON.stringify({ MessageID: 'stub', ErrorCode: 0 }), 'application/json');
+    });
+    return;
+  }
+  if (url.pathname === '/outbox') {
+    send(res, 200, JSON.stringify(outbox), 'application/json');
+    return;
+  }
+
   if (url.pathname === '/health') {
     send(res, 200, 'ok', 'text/plain');
     return;

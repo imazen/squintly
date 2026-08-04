@@ -612,6 +612,10 @@ pub async fn stream_next(
 
 #[derive(Debug, Deserialize)]
 pub struct DecisionReq {
+    /// Optional: a signed-in admin (`SQUINTLY_ADMIN_EMAILS`) needs no token.
+    /// Required only for scripts and `curl`, which have no cookie jar.
+    #[serde(default)]
+    pub admin_token: Option<String>,
     pub source_sha256: String,
     pub curator_id: String,
     pub decision: String, // 'take' | 'reject' | 'flag'
@@ -659,6 +663,10 @@ pub struct DecisionResp {
 /// PNG and WebP work.
 #[derive(Debug, Deserialize)]
 pub struct GenerateVariantReq {
+    /// Optional: a signed-in admin (`SQUINTLY_ADMIN_EMAILS`) needs no token.
+    /// Required only for scripts and `curl`, which have no cookie jar.
+    #[serde(default)]
+    pub admin_token: Option<String>,
     pub decision_id: i64,
     pub target_max_dim: u32,
     /// Output format: "png" (default, lossless RGBA8 — spec-correct for
@@ -687,8 +695,13 @@ pub struct GenerateVariantResp {
 
 pub async fn generate_variant(
     State(state): State<SharedState>,
+    headers: axum::http::HeaderMap,
     Json(req): Json<GenerateVariantReq>,
 ) -> Result<Json<GenerateVariantResp>, AppError> {
+    // Curator writes mutate the corpus every participant is then shown, so
+    // they are admin-only. See the Known Bugs note in CLAUDE.md: this is an
+    // operator tool living on an anonymous-participant origin.
+    require_admin(&state.pool, &headers, &req.admin_token).await?;
     if !(16..=4096).contains(&req.target_max_dim) {
         return Err(AppError::BadRequest(
             "target_max_dim must be in [16, 4096]".into(),
@@ -819,6 +832,10 @@ pub async fn generate_variant(
 /// guessing.
 #[derive(Debug, Deserialize)]
 pub struct UndoReq {
+    /// Optional: a signed-in admin (`SQUINTLY_ADMIN_EMAILS`) needs no token.
+    /// Required only for scripts and `curl`, which have no cookie jar.
+    #[serde(default)]
+    pub admin_token: Option<String>,
     pub curator_id: String,
     /// Optional: when omitted, undo the most-recently-decided source for
     /// this curator (from `decided_at`). Provide explicitly when the client
@@ -835,8 +852,13 @@ pub struct UndoResp {
 
 pub async fn undo_decision(
     State(state): State<SharedState>,
+    headers: axum::http::HeaderMap,
     Json(req): Json<UndoReq>,
 ) -> Result<Json<UndoResp>, AppError> {
+    // Curator writes mutate the corpus every participant is then shown, so
+    // they are admin-only. See the Known Bugs note in CLAUDE.md: this is an
+    // operator tool living on an anonymous-participant origin.
+    require_admin(&state.pool, &headers, &req.admin_token).await?;
     if req.curator_id.is_empty() {
         return Err(AppError::BadRequest("curator_id required".into()));
     }
@@ -891,8 +913,13 @@ pub async fn undo_decision(
 
 pub async fn decision(
     State(state): State<SharedState>,
+    headers: axum::http::HeaderMap,
     Json(req): Json<DecisionReq>,
 ) -> Result<Json<DecisionResp>, AppError> {
+    // Curator writes mutate the corpus every participant is then shown, so
+    // they are admin-only. See the Known Bugs note in CLAUDE.md: this is an
+    // operator tool living on an anonymous-participant origin.
+    require_admin(&state.pool, &headers, &req.admin_token).await?;
     if req.curator_id.is_empty() {
         return Err(AppError::BadRequest("curator_id required".into()));
     }
@@ -979,6 +1006,10 @@ pub async fn decision(
 
 #[derive(Debug, Deserialize)]
 pub struct ThresholdReq {
+    /// Optional: a signed-in admin (`SQUINTLY_ADMIN_EMAILS`) needs no token.
+    /// Required only for scripts and `curl`, which have no cookie jar.
+    #[serde(default)]
+    pub admin_token: Option<String>,
     pub decision_id: i64,
     pub target_max_dim: u32,
     pub q_imperceptible: f32,
@@ -989,8 +1020,13 @@ pub struct ThresholdReq {
 
 pub async fn threshold(
     State(state): State<SharedState>,
+    headers: axum::http::HeaderMap,
     Json(req): Json<ThresholdReq>,
 ) -> Result<Json<serde_json::Value>, AppError> {
+    // Curator writes mutate the corpus every participant is then shown, so
+    // they are admin-only. See the Known Bugs note in CLAUDE.md: this is an
+    // operator tool living on an anonymous-participant origin.
+    require_admin(&state.pool, &headers, &req.admin_token).await?;
     if !(0.0..=100.0).contains(&req.q_imperceptible) {
         return Err(AppError::BadRequest(
             "q_imperceptible must be in [0, 100]".into(),
@@ -1254,6 +1290,10 @@ fn format_groups(cz: i64, mz: i64, fz: i64, ce: i64, me: i64, fe: i64) -> String
 
 #[derive(Debug, Deserialize)]
 pub struct LoadManifestReq {
+    /// Optional: a signed-in admin (`SQUINTLY_ADMIN_EMAILS`) needs no token.
+    /// Required only for scripts and `curl`, which have no cookie jar.
+    #[serde(default)]
+    pub admin_token: Option<String>,
     /// Either "tsv" or "jsonl". Determines parser.
     pub kind: String,
     /// Manifest body (full text).
@@ -1289,8 +1329,13 @@ pub struct LoadManifestResp {
 /// can POST a 30 MB JSONL manifest and Squintly streams it page-by-page.
 pub async fn load_manifest(
     State(state): State<SharedState>,
+    headers: axum::http::HeaderMap,
     Json(req): Json<LoadManifestReq>,
 ) -> Result<Json<LoadManifestResp>, AppError> {
+    // Curator writes mutate the corpus every participant is then shown, so
+    // they are admin-only. See the Known Bugs note in CLAUDE.md: this is an
+    // operator tool living on an anonymous-participant origin.
+    require_admin(&state.pool, &headers, &req.admin_token).await?;
     let mut candidates = match req.kind.as_str() {
         "tsv" => parse_tsv_manifest(
             &req.body,
@@ -2080,6 +2125,32 @@ pub async fn blob_proxy(
 
 #[cfg(test)]
 mod tests {
+    /// A deployment with no shared token must REFUSE, not fall open. This is
+    /// the branch the curator integration suite can no longer reach: the whole
+    /// surface is admin-only, so that suite has to configure a token to touch
+    /// any of it, and unsetting a process-global mid-run would race the other
+    /// tests sharing the binary.
+    #[test]
+    fn an_unconfigured_deployment_refuses_admin_actions() {
+        // SAFETY: this test owns the variable; it is restored before returning.
+        let prior = std::env::var("SQUINTLY_SUGGESTION_ADMIN_TOKEN").ok();
+        unsafe { std::env::remove_var("SQUINTLY_SUGGESTION_ADMIN_TOKEN") };
+
+        let err = super::require_curator_admin(&Some("anything".into()))
+            .expect_err("must refuse when no token is configured");
+        assert!(
+            matches!(err, crate::handlers::AppError::ServiceUnavailable(_)),
+            "an unconfigured deployment is a 503, not a 400 — the operator needs \
+             to know it is unset, not that they typed it wrong: {err:?}"
+        );
+        // And it never silently succeeds with no credential at all.
+        assert!(super::require_curator_admin(&None).is_err());
+
+        if let Some(v) = prior {
+            unsafe { std::env::set_var("SQUINTLY_SUGGESTION_ADMIN_TOKEN", v) };
+        }
+    }
+
     use super::*;
 
     #[test]

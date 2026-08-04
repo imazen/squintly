@@ -14,7 +14,13 @@ import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 
 import { COEFFICIENT_PORT } from '../playwright.config';
-import { clickBegin, completeProfileAndStart, gotoFreshAsOperator } from './helpers';
+import {
+  ADMIN_TOKEN,
+  clickBegin,
+  completeProfileAndStart,
+  gotoFreshAsOperator,
+  signInAsAdmin,
+} from './helpers';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const FIXTURE_BODY = readFileSync(resolve(HERE, 'curator-fixture.jsonl'), 'utf-8');
@@ -153,12 +159,20 @@ test.describe('no horizontal overflow on any screen', () => {
 
   test('curator stream, curate, threshold', async ({ page, request }) => {
     const r = await request.post('/api/curator/manifest', {
-      data: { kind: 'jsonl', body: FIXTURE_BODY, blob_url_base: BLOB_BASE },
+      data: {
+        kind: 'jsonl',
+        body: FIXTURE_BODY,
+        blob_url_base: BLOB_BASE,
+        admin_token: ADMIN_TOKEN,
+      },
     });
     expect(r.ok()).toBeTruthy();
     await page.goto('/');
+    await page.evaluate(() => localStorage.clear());
+    // Curator writes are admin-only; the UI relies on the signed-in cookie.
+    await signInAsAdmin(page, COEFFICIENT_PORT);
+    await page.goto('/');
     await page.evaluate(() => {
-      localStorage.clear();
       localStorage.setItem('squintly:curator_id', crypto.randomUUID());
       // Curator is opt-in per browser now — the same flag `#curator` sets.
       localStorage.setItem('squintly_show_curator', '1');

@@ -8,18 +8,19 @@ test.describe('optional email sign-in', () => {
     await expect(page.getByText(/Already have an email-linked account/i)).toBeVisible();
   });
 
-  test('sign-in modal opens, validates email, and reports unconfigured Postmark', async ({ page }) => {
+  test('sign-in modal opens, validates email, and sends a link when configured', async ({ page }) => {
     await gotoFresh(page);
     await page.getByText(/Already have an email-linked account/i).click();
     await expect(page.getByRole('heading', { name: /Save your progress/i })).toBeVisible();
     // Click "Send link" with no email — should warn.
     await page.getByRole('button', { name: /^Send link$/ }).click();
     await expect(page.locator('#signin-status')).toContainText(/email/i);
-    // Provide an email; the test backend has no POSTMARK_SERVER_TOKEN, so the
-    // start endpoint returns 503 with a clear hint and the modal surfaces it.
+    // The harness now configures a Postmark stub (curator writes are
+    // admin-only, so the suite has to be able to sign in for real). A valid
+    // address therefore succeeds rather than reporting an unconfigured deploy.
     await page.locator('#signin-email').fill('observer@example.com');
     await page.getByRole('button', { name: /^Send link$/ }).click();
-    await expect(page.locator('#signin-status')).toContainText(/not configured|Anonymous/i);
+    await expect(page.locator('#signin-status')).toContainText(/sign-in link has been sent/i);
   });
 
   // The test backend has no Postmark credentials, so a real request is refused
@@ -58,9 +59,10 @@ test.describe('optional email sign-in', () => {
         origin: 'http://127.0.0.1:18030',
       },
     });
-    // 503 (no Postmark on the test backend) means it got past address checks.
-    // 403 would mean an allowlist crept back in front of sign-in.
-    expect(r.status(), await r.text()).toBe(503);
+    // 200 means it got past the address checks and reached the mailer. 403
+    // would mean an allowlist crept back in front of sign-in, which is the
+    // thing this test exists to prevent.
+    expect(r.status(), await r.text()).toBe(200);
   });
 
   test('verify endpoint returns a friendly HTML page for an invalid token', async ({ request }) => {

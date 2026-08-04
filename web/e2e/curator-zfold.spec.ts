@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 
 import { COEFFICIENT_PORT } from '../playwright.config';
+import { ADMIN_TOKEN, signInAsAdmin } from './helpers';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const FIXTURE_BODY = readFileSync(resolve(HERE, 'curator-fixture.jsonl'), 'utf-8');
@@ -17,11 +18,19 @@ test.describe('curator on Z Fold 7', () => {
   test.beforeEach(async ({ request, page }, testInfo) => {
     test.skip(!testInfo.project.name.startsWith('zfold7-'), 'Z Fold project only');
     const r = await request.post('/api/curator/manifest', {
-      data: { kind: 'jsonl', body: FIXTURE_BODY, blob_url_base: BLOB_BASE },
+      data: {
+        kind: 'jsonl',
+        body: FIXTURE_BODY,
+        blob_url_base: BLOB_BASE,
+        admin_token: ADMIN_TOKEN,
+      },
     });
     expect(r.ok()).toBeTruthy();
     await page.goto('/');
     await page.evaluate(() => localStorage.clear());
+    // Curator writes are admin-only; the UI relies on the signed-in cookie.
+    await signInAsAdmin(page, COEFFICIENT_PORT);
+    await page.goto('/');
     await page.evaluate(() => {
       localStorage.setItem('squintly:curator_id', crypto.randomUUID());
       // The curator tab is opt-in per browser now (`#curator` sets this), so a

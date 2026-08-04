@@ -103,3 +103,34 @@ export async function statsOf(api: APIRequestContext) {
   expect(r.ok()).toBeTruthy();
   return r.json();
 }
+
+/// The shared admin token, matching `global-setup`. Used for API-level calls
+/// where driving a browser sign-in would be noise.
+export const ADMIN_TOKEN = 'e2e-admin-token';
+
+/// Sign the browser in as an admin, through the real magic-link flow.
+///
+/// No backdoor: this requests a link exactly as a person would, reads it out of
+/// the mock mail sink, and follows it. So it also serves as end-to-end coverage
+/// that admin sign-in actually works.
+export async function signInAsAdmin(page: Page, coefficientPort: number) {
+  const start = await page.request.post('/api/auth/start', {
+    data: {
+      email: 'admin@e2e.test',
+      observer_id: null,
+      origin: page.url().startsWith('http') ? new URL(page.url()).origin : undefined,
+    },
+  });
+  if (!start.ok()) throw new Error(`auth/start ${start.status()}: ${await start.text()}`);
+
+  const outbox = (await (
+    await page.request.get(`http://127.0.0.1:${coefficientPort}/outbox`)
+  ).json()) as Array<{ TextBody?: string }>;
+  const last = outbox[outbox.length - 1];
+  const token = last?.TextBody?.split('token=')[1]?.split(/\s/)[0];
+  if (!token) throw new Error('no magic link in the outbox');
+
+  await page.goto(`/api/auth/verify?token=${token}`);
+  const who = await (await page.request.get('/api/auth/whoami')).json();
+  if (!who.is_admin) throw new Error(`signed in but not admin: ${JSON.stringify(who)}`);
+}

@@ -55,7 +55,10 @@ impl ContentClass {
 }
 
 /// Which sources a study will draw from.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+///
+/// Not `Eq`: `Mixed` carries a fraction, and float equality is the wrong
+/// comparison for a probability.
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum ContentFilter {
     /// No restriction — the general-purpose studies want the whole corpus.
     Any,
@@ -63,6 +66,27 @@ pub enum ContentFilter {
     NonPhotoOnly,
     /// Only sources whose stratum is registered photographic.
     PhotoOnly,
+    /// Mostly non-photo, with a minority of photographs mixed in as a
+    /// **within-session** control.
+    ///
+    /// A photographic control arm run as a SEPARATE study confounds content
+    /// with session: fatigue, lighting, screen, adaptation state and time of
+    /// day all differ between sessions, so a gap between the arms could be any
+    /// of those rather than the content. Interleaving inside one session makes
+    /// the comparison within-subject and within-session, which is the whole
+    /// point of having a control at all.
+    ///
+    /// The usual objection to mixing content — that an observer's criterion
+    /// drifts with the stimulus ensemble — is a **rating-scale** problem. This
+    /// is 2AFC: "which is closer to the original" is judged inside the pair, so
+    /// there is no absolute criterion to drift, and the BT fit is per-reference
+    /// anyway (each reference self-anchored), so no cross-reference alignment
+    /// is exposed to it.
+    ///
+    /// Asymmetric on purpose. A 50/50 split would halve non-photo throughput,
+    /// which is the thing actually being measured; a minority is enough to
+    /// estimate the photographic ceiling and correlation alongside it.
+    Mixed { photo_fraction: f32 },
 }
 
 impl ContentFilter {
@@ -71,6 +95,31 @@ impl ContentFilter {
             ContentFilter::Any => true,
             ContentFilter::NonPhotoOnly => class == ContentClass::NonPhoto,
             ContentFilter::PhotoOnly => class == ContentClass::Photo,
+            // Resolved to one of the two before it reaches here — see
+            // `resolve_for_draw`. Accepting either would silently ignore the
+            // fraction and produce whatever the corpus happens to hold.
+            ContentFilter::Mixed { .. } => {
+                debug_assert!(false, "Mixed must be resolved before accepts()");
+                class != ContentClass::Unknown
+            }
+        }
+    }
+
+    /// Collapse a mixed filter to the concrete one this draw will use.
+    ///
+    /// Decided per trial, not per session: a session that decided once would be
+    /// entirely one class, which is exactly the confound interleaving exists to
+    /// remove.
+    pub fn resolve_for_draw(&self, roll: f32) -> ContentFilter {
+        match self {
+            ContentFilter::Mixed { photo_fraction } => {
+                if roll < *photo_fraction {
+                    ContentFilter::PhotoOnly
+                } else {
+                    ContentFilter::NonPhotoOnly
+                }
+            }
+            other => *other,
         }
     }
 
@@ -82,6 +131,7 @@ impl ContentFilter {
             ContentFilter::Any => "any content",
             ContentFilter::NonPhotoOnly => "non-photographic sources only",
             ContentFilter::PhotoOnly => "photographic sources only",
+            ContentFilter::Mixed { .. } => "non-photographic, with a photo control minority",
         }
     }
 }

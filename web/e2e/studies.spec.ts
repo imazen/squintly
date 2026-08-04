@@ -93,11 +93,14 @@ test.describe('study selection', () => {
     expect(kinds.has('pair')).toBe(true);
   });
 
-  // The study's name is a claim about its data. It constrained only the trial
-  // mix for a while, so it served forced-choice trials over the whole corpus —
-  // photographic strata included — which is valid data filed under the wrong
-  // question. The mock carries real stratum names so this is checkable.
-  test('the non-photo study never serves a photographic source', async ({ request }) => {
+  // The study is majority non-photo with a DECLARED photographic minority as a
+  // within-session control. It used to draw from the whole corpus — ~38%
+  // photographs under a label saying otherwise — which is a different thing:
+  // that was undeclared and untagged, this is proportioned and recorded in
+  // `content_class` so analysis can split the arms.
+  test('the non-photo study is majority non-photo with a photo control minority', async ({
+    request,
+  }) => {
     const sess = await (
       await request.post('/api/session', {
         data: {
@@ -114,20 +117,22 @@ test.describe('study selection', () => {
     ).json();
 
     const PHOTO = ['1400-lilith-nature', '2000-unsplash-people'];
-    const seen = new Set<string>();
-    for (let i = 0; i < 30; i++) {
+    let photo = 0;
+    let total = 0;
+    for (let i = 0; i < 120; i++) {
       const r = await request.get(`/api/trial/next?session_id=${sess.session_id}`);
       if (!r.ok()) continue;
-      const t = await r.json();
-      const corpus: string = t.source_corpus ?? '';
-      for (const p of PHOTO) {
-        expect(corpus.includes(p), `non-photo study served ${corpus}`).toBe(false);
-      }
-      seen.add(corpus);
+      const corpus: string = (await r.json()).source_corpus ?? '';
+      total += 1;
+      if (PHOTO.some((p) => corpus.includes(p))) photo += 1;
     }
-    expect(seen.size, 'expected some trials to compare against').toBeGreaterThan(0);
-    // ...and it must still reach more than one non-photo stratum.
-    expect(seen.size).toBeGreaterThan(1);
+    expect(total, 'needed trials to measure').toBeGreaterThan(40);
+    const frac = photo / total;
+    // Declared 0.25. A wide band: the mock corpus has few sources per class, so
+    // the draw is coarse — what matters is that BOTH classes appear and
+    // non-photo dominates.
+    expect(frac, `photo share ${frac.toFixed(2)} — both classes must appear`).toBeGreaterThan(0.05);
+    expect(frac, `photo share ${frac.toFixed(2)} — non-photo must dominate`).toBeLessThan(0.5);
   });
 
   // The default study is unrestricted, so it must still reach the photographic
@@ -291,9 +296,11 @@ test.describe('content provenance in the export', () => {
     expect(row, 'the response just recorded should be in the export').toBeTruthy();
     const cls = row![cols.indexOf('content_class')];
     const corpus = row![cols.indexOf('source_corpus')];
-    // The non-photo study must record what it actually served, and it must be
-    // non-photo — this is the check that was previously vacuous.
-    expect(cls, `content_class for ${corpus}`).toBe('non_photo');
+    // Whatever class it served, the row must say which — that is the point of
+    // the column, and it is what lets analysis split the control arm from the
+    // measurement arm. (This check was previously vacuous: the column did not
+    // exist, so it read a missing field and always agreed.)
+    expect(['non_photo', 'photo'], `content_class for ${corpus}`).toContain(cls);
     expect(corpus.length, 'stratum must be recorded').toBeGreaterThan(0);
   });
 });

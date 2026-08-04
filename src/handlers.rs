@@ -568,13 +568,16 @@ pub async fn next_trial(
         // reports the generic message sends an operator to look at the sampler
         // or the codec list when the real answer is that the corpus has no
         // matching sources.
+        // A mixed study draws from both classes, so "eligible" is the union —
+        // counting against the unresolved filter would be meaningless (and
+        // trips the debug assert in `accepts`).
         let eligible = manifest
             .sources
             .iter()
             .filter(|s| {
-                sampler
-                    .content
-                    .accepts(crate::content_class::classify(s.corpus.as_deref()))
+                let class = crate::content_class::classify(s.corpus.as_deref());
+                sampler.content.resolve_for_draw(0.0).accepts(class)
+                    || sampler.content.resolve_for_draw(1.0).accepts(class)
             })
             .count();
         AppError::Conflict(format!(

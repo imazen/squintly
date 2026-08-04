@@ -81,6 +81,25 @@ export default async function globalSetup() {
         // `studies::the_resolved_default_study_is_listed` covers the real
         // default.
         SQUINTLY_DEFAULT_STUDY: 'main',
+        // Admin is real here: curator writes are admin-only, so the suite signs
+        // in through the actual magic-link flow against the mock's mail sink
+        // rather than through a test-only backdoor.
+        SQUINTLY_ADMIN_EMAILS: 'admin@e2e.test',
+        SQUINTLY_SUGGESTION_ADMIN_TOKEN: 'e2e-admin-token',
+        POSTMARK_SERVER_TOKEN: 'stub',
+        POSTMARK_FROM_EMAIL: 'noreply@e2e.test',
+        POSTMARK_API_BASE: `http://127.0.0.1:${COEFFICIENT_PORT}`,
+        // The verify link is opened over plain http in the harness; a Secure
+        // cookie would be dropped and sign-in would appear to succeed while
+        // granting nothing.
+        SQUINTLY_INSECURE_COOKIES: '1',
+        // Every curator spec signs in as the same admin, so the 60s per-address
+        // cooldown would block all but the first — the suite is not testing the
+        // limiter here, and `auth_rate_limit_and_admin` covers it with explicit
+        // values of its own.
+        SQUINTLY_AUTH_COOLDOWN_MS: '0',
+        SQUINTLY_AUTH_PER_EMAIL_HOURLY: '0',
+        SQUINTLY_AUTH_PER_IP_HOURLY: '0',
         // The mock coefficient serves blobs from 127.0.0.1, which the SSRF
         // guard blocks by default. Opt in here only; never on a public deploy.
         SQUINTLY_ALLOW_PRIVATE_BLOB_HOSTS: '1',

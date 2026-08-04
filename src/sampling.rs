@@ -361,6 +361,11 @@ pub fn pick_trial(
         return None;
     }
     let mut r = rng();
+    // Resolved once per trial, before any path consults it — honeypots and
+    // anchors filter on content too, so leaving them the unresolved `Mixed`
+    // would silently ignore the fraction. (Caught by the debug_assert in
+    // `ContentFilter::accepts`.)
+    let content = cfg.content.resolve_for_draw(r.random::<f32>());
 
     // Honeypots and anchors are both single-stimulus (see pick_honeypot /
     // pick_anchor), so a pairwise-only run must not inject them — they would
@@ -372,7 +377,7 @@ pub fn pick_trial(
     if let Some(pool) = anchors.filter(|_| inject_singles) {
         if !pool.honeypots.is_empty() && r.random::<f32>() < cfg.p_honeypot {
             if let Some(plan) =
-                pick_honeypot(manifest, pool, allowed_codecs, flags, cfg.content, &mut r)
+                pick_honeypot(manifest, pool, allowed_codecs, flags, content, &mut r)
             {
                 return Some(plan);
             }
@@ -382,8 +387,7 @@ pub fn pick_trial(
     // Second chance: anchor (non-golden). Same idea, lower probability.
     if let Some(pool) = anchors.filter(|_| inject_singles) {
         if !pool.anchors.is_empty() && r.random::<f32>() < cfg.p_anchor {
-            if let Some(plan) =
-                pick_anchor(manifest, pool, allowed_codecs, flags, cfg.content, &mut r)
+            if let Some(plan) = pick_anchor(manifest, pool, allowed_codecs, flags, content, &mut r)
             {
                 return Some(plan);
             }
@@ -393,11 +397,31 @@ pub fn pick_trial(
     // Content restriction applies to the *whole* draw, honeypots and anchors
     // included — an anchor from a photographic stratum is still a photo trial
     // filed under a non-photo study.
-    let mut order: Vec<&SourceMeta> = manifest
-        .sources
-        .iter()
-        .filter(|s| cfg.content.accepts(classify(s.corpus.as_deref())))
-        .collect();
+    let eligible = |f: ContentFilter| -> Vec<&SourceMeta> {
+        manifest
+            .sources
+            .iter()
+            .filter(|s| f.accepts(classify(s.corpus.as_deref())))
+            .collect()
+    };
+    let mut order: Vec<&SourceMeta> = eligible(content);
+    // A mixed study states a preferred RATIO, not a requirement that the corpus
+    // hold both classes. When the drawn class is absent, serve the other rather
+    // than refusing a quarter of the time — an intermittent 409 whose frequency
+    // tracks a probability is a genuinely baffling thing to debug.
+    //
+    // This does not weaken the "unknown strata are refused" rule: both classes
+    // here are ones the study already declares it draws from.
+    if order.is_empty() {
+        if let ContentFilter::Mixed { .. } = cfg.content {
+            let other = if content == ContentFilter::PhotoOnly {
+                ContentFilter::NonPhotoOnly
+            } else {
+                ContentFilter::PhotoOnly
+            };
+            order = eligible(other);
+        }
+    }
     if order.is_empty() {
         // No fallback to the unrestricted pool. Serving a photo here is exactly
         // the bug this filter exists to fix; a caller seeing None reports a
@@ -1440,6 +1464,102 @@ mod tests {
             assert!(
                 !is_golden,
                 "no pair here is unambiguous, so none may be a control"
+            );
+        }
+    }
+
+    /// A photographic control run as a separate study confounds content with
+    /// session — fatigue, lighting, screen and adaptation all differ between
+    /// sessions. Interleaving makes the comparison within-session by
+    /// construction, which is the only thing that licenses attributing a gap
+    /// to the content rather than the sitting.
+    #[test]
+    fn a_mixed_study_interleaves_both_classes_at_the_declared_ratio() {
+        let mk = |hash: &str, corpus: &str| SourceMeta {
+            hash: hash.into(),
+            width: 512,
+            height: 512,
+            size_bytes: 1000,
+            corpus: Some(corpus.into()),
+            filename: None,
+        };
+        let enc = |src: &str, id: &str, q: f32| EncodingMeta {
+            id: id.into(),
+            source_hash: src.into(),
+            codec: "mozjpeg".into(),
+            quality: Some(q),
+            effort: None,
+            bytes: (q as u64) * 100,
+        };
+        let mut sources = Vec::new();
+        let mut encodings = Vec::new();
+        for (h, c) in [
+            ("np1", "imazen26-7000-lilith-plots"),
+            ("np2", "imazen26-8100-lilith-web-screenshots"),
+            ("ph1", "imazen26-1400-lilith-nature"),
+            ("ph2", "imazen26-1600-lilith-food"),
+        ] {
+            sources.push(mk(h, c));
+            for (i, q) in [20.0f32, 40.0, 60.0, 80.0].iter().enumerate() {
+                encodings.push(enc(h, &format!("{h}-e{i}"), *q));
+            }
+        }
+        let manifest = Manifest { sources, encodings };
+        let cfg = SamplerConfig {
+            p_single: 0.0,
+            p_honeypot: 0.0,
+            p_anchor: 0.0,
+            content: ContentFilter::Mixed {
+                photo_fraction: 0.25,
+            },
+            pairing: PairingRule::AdjacentQuality,
+            p_golden_pair: 0.0,
+            pairwise_only: true,
+        };
+
+        let mut photo = 0usize;
+        const N: usize = 4000;
+        for _ in 0..N {
+            let plan = pick_trial(&manifest, &cfg, None, None, None).expect("a pair exists");
+            let corpus = match &plan {
+                TrialPlan::Single { source, .. } | TrialPlan::Pair { source, .. } => {
+                    source.corpus.clone().unwrap()
+                }
+            };
+            if classify(Some(&corpus)) == crate::content_class::ContentClass::Photo {
+                photo += 1;
+            }
+        }
+        let frac = photo as f64 / N as f64;
+        // Binomial(4000, 0.25): +/-0.03 is far outside sampling noise.
+        assert!(
+            (0.22..=0.28).contains(&frac),
+            "photo share {:.3}, expected ~0.25 — a session must interleave, not commit",
+            frac
+        );
+    }
+
+    /// Resolution happens per DRAW. Deciding once per session would make each
+    /// session entirely one class, which is exactly the confound interleaving
+    /// removes.
+    #[test]
+    fn a_mixed_filter_resolves_per_draw_not_once() {
+        let m = ContentFilter::Mixed {
+            photo_fraction: 0.25,
+        };
+        assert_eq!(m.resolve_for_draw(0.0), ContentFilter::PhotoOnly);
+        assert_eq!(m.resolve_for_draw(0.24), ContentFilter::PhotoOnly);
+        assert_eq!(m.resolve_for_draw(0.25), ContentFilter::NonPhotoOnly);
+        assert_eq!(m.resolve_for_draw(0.99), ContentFilter::NonPhotoOnly);
+        // A concrete filter is unaffected by the roll.
+        for roll in [0.0, 0.5, 1.0] {
+            assert_eq!(
+                ContentFilter::NonPhotoOnly.resolve_for_draw(roll),
+                ContentFilter::NonPhotoOnly
+            );
+            assert_eq!(
+                ContentFilter::Any.resolve_for_draw(roll),
+                ContentFilter::Any
             );
         }
     }

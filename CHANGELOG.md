@@ -2,6 +2,43 @@
 
 ## [Unreleased]
 
+### Changed
+- **Every curator write is admin-only.** `POST /api/curator/manifest`,
+  `/decision`, `/decision/undo`, `/threshold` and `/generate-variant` were
+  ungated — a standing Known Bug, since they mutate the corpus every
+  participant is then shown, on an anonymous-participant origin. All five now
+  go through `require_admin`, which takes a signed-in address on
+  `SQUINTLY_ADMIN_EMAILS` or the shared token for scripts. The curator UI has no
+  token; it relies on the admin cookie, which is the real operator path — and
+  the e2e suite now exercises exactly that, signing in through the actual
+  magic-link flow against a mail sink rather than through a test-only backdoor.
+- **The non-photo study interleaves a photographic control minority**
+  (`ContentFilter::Mixed { photo_fraction: 0.25 }`), and `ssim2-photo-control`
+  is unlisted as superseded. A control run as a *separate study* draws its data
+  from different sessions than the data it controls for, so content is
+  confounded with session — fatigue, lighting, screen and adaptation all differ
+  between sittings. Interleaving is within-session and within-observer by
+  construction.
+  - The usual objection to mixing content, that an observer's criterion drifts
+    with the stimulus ensemble, is a **rating-scale** problem. This is 2AFC:
+    "which is closer to the original" is judged inside the pair, so there is no
+    absolute criterion to drift, and the BT fit is per-reference anyway.
+  - Asymmetric on purpose: 50/50 would halve non-photo throughput, which is the
+    thing being measured. A minority suffices to estimate the photographic
+    ceiling and correlation beside it.
+  - When the drawn class is absent from the corpus the sampler serves the other
+    rather than refusing — a mixed filter states a preferred ratio, not a
+    requirement that the corpus hold both. An intermittent 409 whose frequency
+    tracks a probability is a baffling thing to debug.
+
+### Fixed
+- Two test races that only appeared under full-suite load, both from mutating
+  process-global env vars while sibling tests read them: `tests/curator.rs`
+  cleared `SQUINTLY_SUGGESTION_ADMIN_TOKEN` in one test's teardown (yanking the
+  credential from whichever test was mid-request, seen as an intermittent 503)
+  and re-set it per `spawn_app` call. It is now set exactly once per binary and
+  never cleared.
+
 ### Added
 - **`ssim2-photo-control` — the arm that makes the non-photo result mean
   something.** "Is ssim2 good at non-photo content?" has no answer alone; a

@@ -14,6 +14,11 @@
 //! the e2e Playwright suite consumes.
 
 use std::net::SocketAddr;
+
+/// Curator writes are admin-only now (they mutate the corpus every participant
+/// is shown), so the suite authenticates the way a script does: the shared
+/// token. The cookie path is covered in `auth_rate_limit_and_admin`.
+const ADMIN_TOKEN: &str = "curator-test-token";
 use std::sync::Arc;
 
 use anyhow::Result;
@@ -53,6 +58,19 @@ async fn boot_app() -> Result<(SocketAddr, sqlx::SqlitePool)> {
             squintly::suggestion_store::LocalDiskStore::new(dir),
         ),
     });
+    // Set EXACTLY ONCE for the whole binary.
+    //
+    // `spawn_app` runs per test and these tests run on parallel threads, so
+    // setting it on every call means concurrent writers — and a reader can then
+    // observe the variable as absent mid-write, which surfaced as an
+    // intermittent 503 ("admin actions disabled") on whichever test happened to
+    // be in flight. That is also why `std::env::set_var` is unsafe.
+    static ADMIN_ENV: std::sync::Once = std::sync::Once::new();
+    ADMIN_ENV.call_once(|| {
+        // SAFETY: the only write in this binary, before any request is served.
+        unsafe { std::env::set_var("SQUINTLY_SUGGESTION_ADMIN_TOKEN", ADMIN_TOKEN) };
+    });
+
     let api = Router::new()
         .route("/curator/stream/next", get(curator::stream_next))
         .route("/curator/decision", post(curator::decision))
@@ -98,6 +116,7 @@ async fn curator_full_loop_with_tsv_fixture() -> Result<()> {
     let load: serde_json::Value = client
         .post(format!("{base}/api/curator/manifest"))
         .json(&json!({
+            "admin_token": ADMIN_TOKEN,
             "kind": "tsv",
             "body": TSV_FIXTURE,
             "blob_url_base": "https://r2.example/blobs"
@@ -137,6 +156,7 @@ async fn curator_full_loop_with_tsv_fixture() -> Result<()> {
     let decision: serde_json::Value = client
         .post(format!("{base}/api/curator/decision"))
         .json(&json!({
+            "admin_token": ADMIN_TOKEN,
             "source_sha256": sha,
             "curator_id": curator_id,
             "decision": "take",
@@ -161,6 +181,7 @@ async fn curator_full_loop_with_tsv_fixture() -> Result<()> {
     let thr: serde_json::Value = client
         .post(format!("{base}/api/curator/threshold"))
         .json(&json!({
+            "admin_token": ADMIN_TOKEN,
             "decision_id": decision_id,
             "target_max_dim": 1024,
             "q_imperceptible": 76.5,
@@ -249,6 +270,7 @@ async fn curator_jsonl_fixture_resolves_r2_url() -> Result<()> {
     let resp: serde_json::Value = client
         .post(format!("{base}/api/curator/manifest"))
         .json(&json!({
+            "admin_token": ADMIN_TOKEN,
             "kind": "jsonl",
             "body": JSONL_FIXTURE,
             "blob_url_base": "https://pub-test.r2.dev"
@@ -288,6 +310,7 @@ async fn curator_rejects_invalid_decision() -> Result<()> {
     let r = client
         .post(format!("{base}/api/curator/decision"))
         .json(&json!({
+            "admin_token": ADMIN_TOKEN,
             "source_sha256": "deadbeef".repeat(8),
             "curator_id": "anon",
             "decision": "take"
@@ -300,6 +323,7 @@ async fn curator_rejects_invalid_decision() -> Result<()> {
     client
         .post(format!("{base}/api/curator/manifest"))
         .json(&json!({
+            "admin_token": ADMIN_TOKEN,
             "kind": "tsv",
             "body": TSV_FIXTURE,
             "blob_url_base": "https://r2.example"
@@ -310,6 +334,7 @@ async fn curator_rejects_invalid_decision() -> Result<()> {
     let r = client
         .post(format!("{base}/api/curator/decision"))
         .json(&json!({
+            "admin_token": ADMIN_TOKEN,
             "source_sha256": "deadbeef".repeat(8),
             "curator_id": "anon",
             "decision": "explode"
@@ -334,6 +359,7 @@ async fn delete_candidate_requires_admin_and_removes_the_row() -> Result<()> {
     client
         .post(format!("{base}/api/curator/manifest"))
         .json(&json!({
+            "admin_token": ADMIN_TOKEN,
             "kind": "jsonl",
             "body": JSONL_FIXTURE,
             "blob_url_base": "https://r2.example"
@@ -342,16 +368,17 @@ async fn delete_candidate_requires_admin_and_removes_the_row() -> Result<()> {
         .await?
         .error_for_status()?;
 
-    // No admin token configured in this test process -> 503, never a deletion.
-    let r = client
-        .post(format!("{base}/api/curator/candidates/delete"))
-        .json(&json!({"admin_token": "whatever", "sha256": sha}))
-        .send()
-        .await?;
-    assert_eq!(r.status().as_u16(), 503, "must refuse when unconfigured");
+    // The unconfigured-deployment case (503) is covered by
+    // `curator::require_curator_admin`'s own unit test. It cannot be exercised
+    // here any more: the whole curator surface is admin-only now, so the suite
+    // configures a token in `spawn_app` to reach any of these endpoints at all,
+    // and unsetting a process-global mid-run would race the other tests sharing
+    // this binary.
 
-    // SAFETY: single-threaded section of this test; no other task reads it.
-    unsafe { std::env::set_var("SQUINTLY_SUGGESTION_ADMIN_TOKEN", "s3cret") };
+    // Uses the token `spawn_app` already configured rather than setting its
+    // own. Mutating a process-global mid-suite races the other tests sharing
+    // this binary — which is exactly what it did: this test passed alone and
+    // failed in the suite.
 
     let r = client
         .post(format!("{base}/api/curator/candidates/delete"))
@@ -362,14 +389,14 @@ async fn delete_candidate_requires_admin_and_removes_the_row() -> Result<()> {
 
     let r = client
         .post(format!("{base}/api/curator/candidates/delete"))
-        .json(&json!({"admin_token": "s3cret", "sha256": "zz"}))
+        .json(&json!({"admin_token": ADMIN_TOKEN, "sha256": "zz"}))
         .send()
         .await?;
     assert_eq!(r.status().as_u16(), 400, "malformed sha must be rejected");
 
     let r = client
         .post(format!("{base}/api/curator/candidates/delete"))
-        .json(&json!({"admin_token": "s3cret", "sha256": sha}))
+        .json(&json!({"admin_token": ADMIN_TOKEN, "sha256": sha}))
         .send()
         .await?
         .error_for_status()?;
@@ -385,6 +412,10 @@ async fn delete_candidate_requires_admin_and_removes_the_row() -> Result<()> {
     let remaining_sha = body["candidate"]["sha256"].as_str().unwrap_or("");
     assert_ne!(remaining_sha, sha, "deleted candidate still streaming");
 
-    unsafe { std::env::remove_var("SQUINTLY_SUGGESTION_ADMIN_TOKEN") };
+    // Deliberately does NOT clear the token. It is process-global and these
+    // tests share a binary on parallel threads, so removing it here yanked the
+    // credential out from under whichever test was mid-request — the cause of
+    // an intermittent 503 on `curator_full_loop_with_tsv_fixture`. `spawn_app`
+    // owns this variable and sets it exactly once.
     Ok(())
 }

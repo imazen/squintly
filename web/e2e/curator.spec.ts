@@ -11,7 +11,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 
 import { COEFFICIENT_PORT } from '../playwright.config';
-import { gotoFreshAsOperator } from './helpers';
+import { ADMIN_TOKEN, gotoFreshAsOperator, signInAsAdmin } from './helpers';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const FIXTURE_PATH = resolve(HERE, 'curator-fixture.jsonl');
@@ -23,7 +23,12 @@ test.describe('curator mode', () => {
     // Load the candidate manifest into the DB before each test. Idempotent
     // — the upsert keeps the same set on repeat calls.
     const r = await request.post('/api/curator/manifest', {
-      data: { kind: 'jsonl', body: FIXTURE_BODY, blob_url_base: BLOB_BASE },
+      data: {
+        kind: 'jsonl',
+        body: FIXTURE_BODY,
+        blob_url_base: BLOB_BASE,
+        admin_token: ADMIN_TOKEN,
+      },
     });
     expect(r.ok()).toBeTruthy();
     // Use a fresh curator UUID per test so streams don't leak, and enter as an
@@ -31,6 +36,15 @@ test.describe('curator mode', () => {
     // spec that drives it has to walk through the same door an operator does.
     await page.goto('/');
     await page.evaluate(() => localStorage.clear());
+    await page.evaluate(() => {
+      localStorage.setItem('squintly:curator_id', crypto.randomUUID());
+      localStorage.setItem('squintly_show_curator', '1');
+    });
+    await page.reload();
+    // Curator writes are admin-only. The UI has no shared token — it relies on
+    // the signed-in admin cookie, which is the actual operator path.
+    await signInAsAdmin(page, COEFFICIENT_PORT);
+    await page.goto('/');
     await page.evaluate(() => {
       localStorage.setItem('squintly:curator_id', crypto.randomUUID());
       localStorage.setItem('squintly_show_curator', '1');

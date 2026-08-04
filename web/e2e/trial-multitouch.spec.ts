@@ -93,8 +93,16 @@ test.describe('multi-touch', () => {
     expect(await shown(page), 'first finger on the left shows A').toBe('a');
 
     await touch(page, 'pointerdown', 2, rightX, y);
-    // Second finger down is a pinch, so the picture must not change under it.
-    expect(await shown(page), 'a second finger must not swap the variant').toBe('a');
+    // A second finger that has not MOVED is a second press, not a pinch: "show
+    // me B while I keep A ready". Committing to a pinch on the second
+    // pointerdown made this do nothing at all, which is the two-finger
+    // comparison being broken. Most-recent-still-held wins, as everywhere else.
+    expect(await shown(page), 'a stationary second finger shows its own half').toBe('b');
+
+    await touch(page, 'pointerup', 2, rightX, y);
+    expect(await shown(page), 'releasing it falls back to the finger still down').toBe('a');
+    await touch(page, 'pointerdown', 2, rightX, y);
+    expect(await shown(page), 'and pressing again shows B').toBe('b');
 
     await touch(page, 'pointerup', 1, leftX, y);
     expect(

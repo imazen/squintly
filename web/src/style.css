@@ -1420,17 +1420,15 @@ input[type="range"] {
 .pair-panel button.nudge {
   animation: cant-tell-breathe 2.8s ease-in-out infinite;
 }
-/* Respecting the preference is not optional here: a repeating animation is
-   exactly what it is set to suppress. The hint still needs to be visible, so
-   it becomes a static lifted fill rather than nothing at all — and it is
-   recorded either way, so the data stays comparable. */
+/* Under reduce-motion it SLOWS rather than stops. This animation moves nothing
+   — no transform, no position, no reflow, only colour — so it is not the
+   vestibular trigger the preference exists to suppress, and at 2.8s it is
+   nowhere near a flash threshold. Replacing it with a steady fill (the first
+   version) meant desktops with the OS preference set never saw a hint at all,
+   only a button that had quietly changed colour: the very thing that made the
+   1px outline useless. */
 @media (prefers-reduced-motion: reduce) {
-  .pair-panel button.nudge {
-    animation: none;
-    background-color: #1d3946;
-    background-color: color-mix(in srgb, var(--accent) 26%, var(--card));
-    box-shadow: inset 0 0 0 2px rgba(74, 209, 255, 0.5);
-  }
+  .pair-panel button.nudge { animation-duration: 4.5s; }
 }
 
 /* The gutter .trial no longer applies, restored per row so only the stage is
@@ -1523,3 +1521,52 @@ input[type="range"] {
 /* The menu is already a modal; the board must scroll inside it rather than
    pushing "Keep going" off a phone screen. */
 #menu-body { max-height: 42vh; overflow-y: auto; }
+
+/* ---- trial chrome on a phone ----------------------------------------------
+   The control row wrapped to two lines on a narrow screen, which costs more
+   vertical space than everything in it is worth. */
+
+/* The keyboard cheatsheet is meaningless without a keyboard, and the pause menu
+   carries it anyway. */
+@media (pointer: coarse) {
+  #keys-btn { display: none; }
+  /* Magnification is pinch and double-tap here — both implemented, both
+     tested — so the -/+ pair is redundant chrome on the device with the least
+     room for it. The readout stays: the factor is part of what is being
+     judged, so it must remain visible. */
+  .zoom-switch button { display: none; }
+  .zoom-switch { gap: 0; }
+}
+
+/* The readout sat on its own baseline between two 44px buttons, so it floated
+   off-centre. Centring it in the row rather than letting the text baseline
+   decide is what actually lines it up. */
+.zoom-switch {
+  align-items: center;
+}
+#zoom-readout {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 2.6em;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+@media (pointer: coarse) {
+  /* What is left in the row after dropping the keyboard sheet and the zoom
+     stepper still has to fit a 320px phone, so the labels shrink rather than
+     the row growing a second line. */
+  .view-switch button { padding: 8px 10px; font-size: 0.9rem; }
+  .undo-btn { padding: 8px 12px; }
+  .trial-controls { gap: 6px; flex-wrap: nowrap; }
+}
+
+/* Everything in the control row shares a centreline. Without this the children
+   sat on their own baselines — a 44px view-switch, a 30px readout and a 40px
+   icon button each starting at a different y — which read as a wrapped, ragged
+   row even though it was one line. It is also what actually centres the
+   magnification readout against the -/+ buttons. */
+.trial-controls {
+  align-items: center;
+}

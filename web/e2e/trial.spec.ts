@@ -300,13 +300,18 @@ test.describe('trial loop', () => {
     await page.keyboard.press('0');
     await expect(page.locator('#zoom-readout')).toHaveText('1×');
 
-    // Every whole factor, not just powers of two — the ladder is 1..8 and the
-    // stepper walks it one stop at a time.
+    // Every whole factor, not just powers of two — the ladder is 1..8 and each
+    // step walks it one stop at a time.
+    //
+    // Stepped by keyboard rather than by the -/+ buttons: those are dropped on
+    // touch, where pinch and double-tap cover magnification and the control row
+    // has no room for redundant chrome. The property under test is the ladder,
+    // not which control walks it.
     for (const z of [1, 2, 3, 4, 5, 6, 7, 8]) {
       while (
         (await page.locator('#zoom-readout').textContent())?.trim() !== `${z}\u00d7`
       ) {
-        await page.locator('.zoom-switch button[data-zoom-step="1"]').click();
+        await page.keyboard.press('ArrowUp');
       }
       await page.waitForTimeout(120);
       const m = await measure();

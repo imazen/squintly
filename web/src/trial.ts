@@ -52,6 +52,16 @@ const ZOOM_LADDER = [1, 2, 3, 4, 5, 6, 7, 8];
 /// question — `cant_tell_hint_ms` in the export is what answers it.
 const CANT_TELL_HINT_AFTER_HELD_MS = 9_000;
 
+/// How far two contacts must separate before a second finger counts as a pinch
+/// rather than as a second press.
+///
+/// Two fingers on the glass are ambiguous: sizing the picture, or holding one
+/// half while tapping the other to compare. Committing on the second
+/// `pointerdown` resolved that ambiguity the wrong way and silently disabled
+/// two-finger comparison. Distance is what actually distinguishes them, and it
+/// costs a few pixels of travel to find out.
+const PINCH_COMMIT_CSS = 12;
+
 /// Whether the observer has dismissed the how-to pill.
 ///
 /// localStorage, deliberately not a response column or a server field: it is a
@@ -220,6 +230,10 @@ export function startTrials(
 
     // A one-option select is a control that cannot do anything. On touch there
     // is exactly one mode, so the picker is simply absent there.
+    // Touch has one mode, no keyboard sheet and no zoom stepper, but still has
+    // the least room — so the labels that remain get shorter rather than the
+    // row getting taller.
+    const compact = availableInputModes().length === 1;
     const modePicker = availableInputModes().length > 1
       ? `<label class="mode-picker">
            <span class="sr-only">Interaction mode</span>
@@ -236,7 +250,7 @@ export function startTrials(
       <div class="trial" data-trial-id="${trial.trial_id}" data-input-mode="${inputMode}">
         <div class="progress">
           <span>Trial ${trialCount + 1}</span>
-          <span class="trial-license" data-corpus="${escapeAttr(corpus)}" data-license-id="${escapeAttr(licId)}" title="${escapeAttr(licLabel)}">${escapeHtml(corpus)} · ${escapeHtml(licLabel)}</span>
+          <span class="trial-license" data-corpus="${escapeAttr(corpus)}" data-license-id="${escapeAttr(licId)}" title="${escapeAttr(`${corpus} · ${licLabel}`)}">${escapeHtml(corpus)}</span>
           <button class="menu-btn" id="menu">menu</button>
         </div>
         <div class="stage" id="stage" data-view="${restingView(inputMode)}">
@@ -261,9 +275,9 @@ export function startTrials(
               isPair
                 ? `<button data-view="a" class="on">A</button>
                    <button data-view="b">B</button>
-                   <button data-view="ref">Original</button>`
-                : `<button data-view="a" class="on">Compressed</button>
-                   <button data-view="ref">Original</button>`
+                   <button data-view="ref">${compact ? 'Orig' : 'Original'}</button>`
+                : `<button data-view="a" class="on">${compact ? 'Comp' : 'Compressed'}</button>
+                   <button data-view="ref">${compact ? 'Orig' : 'Original'}</button>`
             }
           </div>
           <div class="zoom-switch" id="zoom-switch" role="group" aria-label="Magnification">
@@ -273,7 +287,7 @@ export function startTrials(
           </div>
           ${modePicker}
           <button class="undo-btn" id="undo-btn" aria-label="Take back the previous answer"
-                  title="Take back the previous answer (u)"${lastAnswered ? '' : ' hidden'}>↶ undo</button>
+                  title="Take back the previous answer (u)"${lastAnswered ? '' : ' hidden'}>↶${compact ? '' : ' undo'}</button>
           <button class="keys-btn" id="info-btn" aria-label="Image identifiers" title="Which images am I looking at? (i)">i</button>
           <button class="keys-btn" id="keys-btn" aria-label="Keyboard shortcuts" title="Keyboard shortcuts (?)">⌨</button>
         </div>
@@ -706,7 +720,10 @@ export function startTrials(
     /// to the resting view — clearing them here is what reintroduced "two
     /// fingers, lift one, the original appears".
     const applyHolds = () => {
-      if (gesture === 'pinch' || held.size >= 2) return;
+      // Only a committed pinch suppresses the view — flipping the variant while
+      // someone is sizing the picture would change it under them. Two contacts
+      // alone are not a pinch: see the pointerdown handler.
+      if (gesture === 'pinch') return;
       showView(holds.resolve(restingNow()));
     };
 
@@ -891,16 +908,25 @@ export function startTrials(
       }
 
       if (held.size >= 2) {
-        // Second finger down: this is a pinch, not a comparison gesture. Leave
-        // whatever is on screen alone — flipping the variant mid-pinch would
-        // change the picture while the observer is sizing it.
-        gesture = 'pinch';
+        // A second contact is a pinch CANDIDATE, not a pinch. Committing here
+        // broke the ordering the hold stack exists to provide: holding the left
+        // half and tapping the right did nothing at all, because `applyHolds`
+        // refused to run while two fingers were down. But a second finger that
+        // taps is a comparison gesture — "show me B while I keep A ready" — and
+        // only a second finger that MOVES is sizing the picture.
+        //
+        // So record what a pinch would start from, keep applying holds, and let
+        // `pointermove` commit to `pinch` if the distance actually changes.
         pinchStartDist = twoPointerDistance();
         pinchStartZoom = zoom;
         viewport.classList.remove('panning');
-        return;
+      } else {
+        // FIRST contact: always a fresh gesture. Guarding this with
+        // `if (gesture !== 'pinch')` stranded the state — once a pinch had been
+        // committed nothing ever cleared it, and every later single-finger drag
+        // was swallowed by the pinch branch instead of panning.
+        gesture = 'none';
       }
-      gesture = 'none';
       applyHolds();
     });
 
@@ -916,6 +942,16 @@ export function startTrials(
       h.lastY = e.clientY;
       if (Math.hypot(e.clientX - h.startX, e.clientY - h.startY) >= DRAG_THRESHOLD_CSS) {
         h.moved = true;
+      }
+
+      // Commit to a pinch only once the contacts have genuinely moved relative
+      // to each other. Below this, two fingers are still a comparison gesture
+      // and the hold stack keeps deciding what is on screen.
+      if (gesture !== 'pinch' && held.size >= 2 && pinchStartDist > 0) {
+        const d = twoPointerDistance();
+        if (d > 0 && Math.abs(d - pinchStartDist) >= PINCH_COMMIT_CSS) {
+          gesture = 'pinch';
+        }
       }
 
       if (gesture === 'pinch') {

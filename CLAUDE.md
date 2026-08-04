@@ -147,6 +147,15 @@ web component from `~/work/efficient-ui/`. No framework.
   the reveal hint had to obey). Position carries identity — A lights the LEFT
   edge, B the RIGHT, the original the TOP — matching `hold`'s halves and the A/B
   order of the answer buttons.
+  **Two contacts are not a pinch.** `applyHolds` used to refuse whenever
+  `held.size >= 2`, and `pointerdown` committed to `gesture = 'pinch'` on the
+  second finger — so holding one half and tapping the other did nothing at all,
+  silently disabling two-finger comparison on the only device the study runs
+  on. A pinch is now committed only once the contacts separate by
+  `PINCH_COMMIT_CSS`; until then the second finger is an ordinary press and the
+  hold stack decides, most-recent-still-held. The first contact ALWAYS resets
+  `gesture` to `none` — guarding that reset with `if (gesture !== 'pinch')`
+  stranded the state and swallowed every later single-finger drag.
   **The lit bar is COLOURED, and that is a deliberate exception to the
   neutral-surround rule.** The first version obeyed it (dark neutral grey) and
   was invisible on a phone — a cue nobody can see is not a cue. The bar now
@@ -263,7 +272,11 @@ web component from `~/work/efficient-ui/`. No framework.
 Squintly never claims to know per-image licenses unless the manifest
 provides them. The `licensing` registry maps **corpus** to policy. The
 welcome screen shows a credits panel; the curator screens show inline
-badges; trial cards show a corpus + license label. When the live R2
+badges; the trial header shows the **corpus alone**. The license label moved
+off the trial card to the `i` identifier panel and the header's `title` — it
+cost a scarce line on a phone to print a string nobody reads mid-trial, and
+attribution still ships in two places a reader can reach without leaving the
+trial. Do not put it back in the header. When the live R2
 manifest grows per-image `license_url` fields, the existing
 `curator_candidates.license_url` column carries them through to exports.
 

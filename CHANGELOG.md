@@ -3,6 +3,29 @@
 ## [Unreleased]
 
 ### Fixed
+- **Two fingers could not compare.** Holding one half and tapping the other did
+  nothing: `pointerdown` committed to a pinch on the second contact and
+  `applyHolds` refused to run while two were down, so the hold stack's ordering
+  was disabled on the only device the study runs on. A pinch is now committed
+  only once the contacts actually separate; until then the second finger is an
+  ordinary press and most-recent-still-held wins.
+- **The tie prompt was steady, not breathing, wherever the OS asks for reduced
+  motion.** The animation moves nothing — no transform, no reflow, only colour —
+  so it is not the vestibular trigger the preference exists to suppress, and
+  replacing it with a static fill meant those machines got no hint at all, just
+  a button that had quietly changed colour. It now slows to 4.5s instead.
+- **The trial control row was ragged.** Its children sat on their own baselines
+  — a 44px switch, a 30px readout, a 40px icon — which read as a wrapped row and
+  left the magnification readout floating off-centre between the -/+ buttons.
+  They share a centreline now. On touch the keyboard-cheatsheet button is gone
+  (meaningless without a keyboard, and in the pause menu anyway) and so is the
+  zoom stepper (pinch and double-tap both cover it); the readout stays, since
+  the factor is part of what is being judged.
+- **The trial header no longer prints the licence.** "imazen26-7000-lilith-plots
+  · Operator's own work" spent a scarce line on a string nobody reads mid-trial.
+  The corpus stays — it identifies the picture — and attribution still ships in
+  the credits panel and the `i` panel, with the full label on the header's
+  `title`.
 - **A held touch released on the slightest movement.** `syncButtons` handled a
   touch as `if (pointerdown) press else release`, and `pointermove` routes
   through it — so one pixel of drift released the hold and the variant snapped

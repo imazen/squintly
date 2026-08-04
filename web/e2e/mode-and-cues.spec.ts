@@ -495,3 +495,85 @@ test.describe('one hint at a time', () => {
     await expect(page.locator('#hint-dismiss')).toBeVisible();
   });
 })
+
+test.describe('trial chrome on a phone', () => {
+  // The control row wrapped to two lines on a narrow screen, costing more
+  // vertical space than everything in it is worth.
+  test('the controls fit on one line', async ({ page }, testInfo) => {
+    await toTrial(page);
+    const m = await page.evaluate(() => {
+      const bar = document.querySelector('.trial-controls')!;
+      const kids = [...bar.children].filter((c) => (c as HTMLElement).offsetParent !== null);
+      const rects = kids.map((c) => c.getBoundingClientRect());
+      const mids = rects.map((r) => r.top + r.height / 2);
+      return {
+        barH: bar.getBoundingClientRect().height,
+        tallest: Math.max(...rects.map((r) => r.height)),
+        // Distinct tops do NOT mean wrapping — children of different heights on
+        // one line start at different y. The centreline is what tells them
+        // apart, and a ragged one is the thing that reads as a wrapped row.
+        midSpread: Math.max(...mids) - Math.min(...mids),
+        widthUsed: rects.reduce((a, r) => a + r.width, 0),
+        barW: bar.getBoundingClientRect().width,
+      };
+    });
+    // One line: the row is no taller than its tallest child.
+    expect(m.barH, 'the control row must not wrap').toBeLessThan(m.tallest + 4);
+    expect(m.widthUsed, 'and its contents must fit across').toBeLessThan(m.barW);
+    // Only asserted where it is the binding constraint. A desktop has room and
+    // more controls (mode picker, keyboard sheet, zoom stepper).
+    if (desktop(testInfo)) return;
+    expect(m.midSpread, 'every control shares a centreline').toBeLessThan(1.5);
+  });
+
+  // Meaningless without a keyboard, and the pause menu carries it anyway.
+  test('the keyboard cheatsheet button is hidden on touch', async ({ page }, testInfo) => {
+    await toTrial(page);
+    const visible = await page
+      .locator('#keys-btn')
+      .evaluate((el) => (el as HTMLElement).offsetParent !== null);
+    expect(visible).toBe(desktop(testInfo));
+  });
+
+  // Pinch and double-tap both cover magnification on touch, so the -/+ pair is
+  // redundant chrome on the device with the least room for it. The readout
+  // stays: the factor is part of what is being judged.
+  test('the zoom stepper is dropped on touch but the factor is not', async ({ page }, testInfo) => {
+    await toTrial(page);
+    await expect(page.locator('#zoom-readout')).toBeVisible();
+    const steppers = await page
+      .locator('.zoom-switch button')
+      .evaluateAll((els) => els.filter((e) => (e as HTMLElement).offsetParent !== null).length);
+    expect(steppers).toBe(desktop(testInfo) ? 2 : 0);
+  });
+
+  // It floated off-centre between two 44px buttons.
+  test('the magnification readout is centred against the stepper', async ({ page }, testInfo) => {
+    test.skip(!desktop(testInfo), 'the stepper is only rendered where there is a mouse');
+    await toTrial(page);
+    const m = await page.evaluate(() => {
+      const out = document.querySelector('#zoom-readout')!.getBoundingClientRect();
+      const btn = document.querySelector('.zoom-switch button')!.getBoundingClientRect();
+      return { outMid: out.top + out.height / 2, btnMid: btn.top + btn.height / 2 };
+    });
+    expect(Math.abs(m.outMid - m.btnMid), 'readout must share the stepper centreline').toBeLessThan(
+      1.5,
+    );
+  });
+
+  // "imazen26-7000-lilith-plots · Operator's own work" spent a scarce line on a
+  // licence string nobody reads mid-trial. Attribution still ships — the
+  // credits panel and the `i` panel both carry it — so the header keeps only
+  // the corpus, which is the part that identifies the picture.
+  test('the header names the corpus, not the licence', async ({ page }) => {
+    await toTrial(page);
+    const label = page.locator('.trial-license');
+    await expect(label).toBeVisible();
+    const text = await label.innerText();
+    expect(text).not.toMatch(/own work|CC[- ]BY|public domain/i);
+    // Still recoverable without leaving the trial.
+    expect(await label.getAttribute('title')).toMatch(/·/);
+    await page.locator('#info-btn').click();
+    expect(await page.locator('.info-help').innerText()).toContain('license');
+  });
+});

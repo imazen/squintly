@@ -122,4 +122,4 @@ publish-corpus version="imazen26-v1":
         --bucket codec-corpus \
         --prefix squintly/demo-corpus/{{version}} \
         --public-base https://codec-corpus.r2.imazen.org
-    @echo "verify once live:  curl -s https://squintly-production.up.railway.app/api/export/pareto.manifest.json | python3 -c 'import json,sys; print(json.load(sys.stdin)[\"build_commit\"])'"
+    @echo "verify once live:  curl -s https://squintly.imazen.org/api/export/pareto.manifest.json | python3 -c 'import json,sys; print(json.load(sys.stdin)[\"build_commit\"])'"

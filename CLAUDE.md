@@ -110,6 +110,29 @@ web component from `~/work/efficient-ui/`. No framework.
   two-second answer. Stored raw and normalised in analysis — the useful form is
   relative to that observer's other trials, and the session is not finished when
   the row is written.
+- **A response can be revised, never deleted — and the first answer survives.**
+  Undo (migration 0020) writes `original_choice` / `revised_at` /
+  `revision_count`; `choice` holds the answer that counts. Deleting the first
+  one would let an observer retroactively tidy their own data, and "answered A,
+  then changed to B" is itself a signal about difficulty or attention. Two
+  guards that must not be relaxed: `record_response` revises only the *latest*
+  trial in the session (else 409), so undo cannot walk back through a whole
+  run; and attention checks score `COALESCE(original_choice, choice)` in BOTH
+  `grading.rs` and the leaderboard, or undo defeats the honeypot — fail it,
+  notice, take it back. Reopening a trial resets its seen-gate on purpose: an
+  undo is for a misclick, not for re-answering without looking again.
+- **Answering requires having seen every arm being judged.** Arrival of the
+  images was never evidence anyone looked at them: under `tap`, A is the resting
+  view, so B could be rated having never been on screen. `trial.ts` tracks a
+  `seen` set and gates on `requiredViews()` — both arms on a pair, the
+  compressed image on a single. Enforced inside `commit` as well as on the
+  buttons, because keys reach `commit` directly. The hint text is
+  **mode-specific** (`gateHintFor`): "look at B first" names a control only
+  `tap` renders, so under `hold` it would leave someone at a dead panel. A
+  single-stimulus trial IS gated under `hold`/`buttons` — the reference rests
+  there and the image being rated is genuinely not on screen yet; that is the
+  gate working, not a bug to remove. Note the A/B/Original switch is rendered in
+  every mode, which is why `satisfyGate` in the e2e helpers works everywhere.
 - **Participant exclusion is a recorded disposition, never a delete.**
   `src/exclusion.rs` runs the zenpapers Ch. 4 screens (§4.4 peer-mean
   correlation, §4.2.1 BT.500 kurtosis-2 band) and writes

@@ -1,6 +1,6 @@
 # Deploy Squintly to Railway
 
-> **Live deployment**: https://squintly-production.up.railway.app on Railway
+> **Live deployment**: https://squintly.imazen.org on Railway
 > Hobby plan, ~$7-9/month with 5GB volume. All four flows work; the corpus is
 > served from public R2 (§15).
 >
@@ -384,7 +384,7 @@ Provenance check after any deploy — this is the cheap way to confirm the runni
 image is the one you think it is:
 
 ```bash
-curl -s https://squintly-production.up.railway.app/api/export/pareto.manifest.json \
+curl -s https://squintly.imazen.org/api/export/pareto.manifest.json \
   | python3 -c 'import json,sys; print(json.load(sys.stdin)["build_commit"])'
 ```
 
@@ -406,7 +406,7 @@ python3 - "$R2" <<'PY'
 import json, sys, urllib.request
 body = open('/tmp/slice.jsonl').read()
 req = urllib.request.Request(
-    'https://squintly-production.up.railway.app/api/curator/manifest',
+    'https://squintly.imazen.org/api/curator/manifest',
     data=json.dumps({'kind': 'jsonl', 'body': body, 'blob_url_base': sys.argv[1]}).encode(),
     headers={'content-type': 'application/json'})
 print(urllib.request.urlopen(req).read().decode())

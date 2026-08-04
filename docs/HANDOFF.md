@@ -1,7 +1,7 @@
 # Squintly — Handoff
 
 Last full pass: 2026-05-01.
-Live: https://squintly-production.up.railway.app
+Live: https://squintly.imazen.org
 Repo: https://github.com/imazen/squintly
 
 This document is the complete pickup sheet. If you can read this and only
@@ -905,8 +905,8 @@ ready. Won't break anything if absent.
 Once coefficient is reachable:
 
 ```bash
-curl -X POST https://squintly-production.up.railway.app/api/manifest/refresh
-curl https://squintly-production.up.railway.app/api/stats
+curl -X POST https://squintly.imazen.org/api/manifest/refresh
+curl https://squintly.imazen.org/api/stats
 # should show non-zero manifest_sources / manifest_encodings
 ```
 
@@ -923,10 +923,15 @@ under "Lilith River's Projects" workspace. Single service `squintly`.
 Volume mounted at `/data`; SQLite lives there. Healthcheck on
 `/api/stats` with 60s timeout.
 
-Domain: `squintly-production.up.railway.app`. To add custom:
-```bash
-railway domain --custom squintly.imazen.io
-```
+Domain: **`squintly.imazen.org`** is the canonical one — hand that out. The
+generated `squintly-production.up.railway.app` still resolves to the same
+service, so old links keep working; it just is not the name to publish.
+
+Note the custom domain needs *two* DNS records, and `railway domain --json`
+only reports one of them: a per-domain CNAME target (it is not shared between
+domains — read it from that domain's own status) **and** a TXT ownership
+record that is absent from `status.dnsRecords` entirely. A CNAME on its own
+leaves the domain stuck unverified with no visible reason.
 
 ### 11.2 Env vars (all optional)
 
@@ -962,7 +967,7 @@ explicitly so you know exactly which deploy ID is running.
 railway logs --service squintly --build      # build phase
 railway logs --service squintly --deployment # runtime
 railway logs --service squintly              # default (last)
-curl https://squintly-production.up.railway.app/api/stats
+curl https://squintly.imazen.org/api/stats
 ```
 
 If healthcheck fails:
@@ -1181,12 +1186,12 @@ under current MAP. Don't accidentally invert that — picking the most-
 
 ### 13.18 The Vite shell vs the rendered page
 
-`curl https://squintly-production.up.railway.app/` returns the Vite
+`curl https://squintly.imazen.org/` returns the Vite
 shell — `<main id="app"></main>` plus a script tag. The actual welcome
 copy is rendered by JS *after* the codec probe finishes. To verify
 deployed copy is current, grep the JS bundle:
 ```bash
-curl https://squintly-production.up.railway.app/assets/main.js | grep "make the web faster"
+curl https://squintly.imazen.org/assets/main.js | grep "make the web faster"
 ```
 
 ### 13.19 Railway's edge 404
@@ -1471,7 +1476,7 @@ broken the contract.
 | Build for deploy | `just build` |
 | Deploy | `railway up --detach --service squintly` |
 | Tail logs | `railway logs --service squintly` |
-| Check live | `curl https://squintly-production.up.railway.app/api/stats` |
+| Check live | `curl https://squintly.imazen.org/api/stats` |
 | Inspect DB | `sqlite3 /data/squintly.db` (in container) |
 | Add a migration | `migrations/000N_<name>.sql`; runs automatically |
 | Add an env var | `railway variables --set "FOO=bar"` |

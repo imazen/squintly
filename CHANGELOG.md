@@ -2,7 +2,31 @@
 
 ## [Unreleased]
 
+### Added
+- **An answer can be taken back.** One stray tap used to record a judgement the
+  observer knew was wrong, permanently — and the trial screen is now driven by
+  thumb-sized buttons, held mouse buttons and single keystrokes, so stray taps
+  are *more* likely than they were. A known-wrong response is worse than a
+  missing one: it enters the fit as a real opinion. The correction is recorded
+  rather than destructive — `responses.original_choice` / `revised_at` /
+  `revision_count` (migration 0020) keep the first answer while `choice` holds
+  the one that counts, because deleting it would let someone tidy their own data
+  and "changed their mind" is itself a difficulty signal. Revising is limited to
+  the latest trial in the session (else 409) so it cannot walk back through a
+  whole run, and attention checks score `COALESCE(original_choice, choice)` so
+  undo cannot defeat a honeypot. Export gains all three columns;
+  `responses` schema_version 6 → 7 (63 columns). (dc3bfc7)
+
 ### Changed
+- **Answering now requires having seen both arms.** The panel was locked until
+  the images *arrived*, which says nothing about whether anyone looked at them:
+  under `tap`, A is the resting view, so B could be rated having never been on
+  screen. The gate now also requires every arm being judged — both on a pair,
+  the compressed image on a single — enforced in `commit` as well as on the
+  buttons, since keys reach `commit` directly. The hint names the gesture the
+  current mode actually uses; under `hold` a single-stimulus trial is genuinely
+  gated, because the reference rests there and the image being rated is not yet
+  on screen. (dc3bfc7)
 - **Every curator write is admin-only.** `POST /api/curator/manifest`,
   `/decision`, `/decision/undo`, `/threshold` and `/generate-variant` were
   ungated — a standing Known Bug, since they mutate the corpus every

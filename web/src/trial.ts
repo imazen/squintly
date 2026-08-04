@@ -48,6 +48,15 @@ interface TrialState {
   /// angle an artefact subtends differs, which is what this study conditions on.
   zoomFactor: number;
   keyboardUsed: boolean;
+  /// How many times the view changed. A pair flipped between six times is near
+  /// the observer's discrimination threshold; one answered after a single look
+  /// is not. BT treats both answers identically, so this is the only record
+  /// that the pair was hard.
+  switchCount: number;
+  /// Milliseconds each variant was actually on screen. `reveal_ms_total` only
+  /// ever measured the reference, which under `hold`/`buttons` is the resting
+  /// view and therefore says nothing about effort.
+  msOnView: { a: number; b: number; ref: number };
   /// Time from render to the judged image being painted. Kept separable from
   /// `dwell_ms`: waiting for a decode is not deliberation.
   uiReadyMs: number | null;
@@ -114,6 +123,8 @@ export function startTrials(root: HTMLElement, sessionId: string): TrialControll
       panDistanceCss: 0,
       zoomFactor,
       keyboardUsed: false,
+      switchCount: 0,
+      msOnView: { a: 0, b: 0, ref: 0 },
       uiReadyMs: null,
     };
 
@@ -314,11 +325,16 @@ export function startTrials(root: HTMLElement, sessionId: string): TrialControll
     // is stored alongside, so an analyst can tell them apart — see migration
     // 0017. Inferring the mode from the magnitude of this number afterwards
     // would be guessing.
-    let refShownAt: number | null = null;
-    const closeRefAccounting = (now: number) => {
-      if (refShownAt !== null) {
-        state.revealMsTotal += now - refShownAt;
-        refShownAt = null;
+    /// When the currently-shown view went up. Every view is timed, not just the
+    /// reference — see `msOnView`.
+    let viewShownAt: number | null = null;
+    const closeViewAccounting = (now: number) => {
+      if (viewShownAt !== null) {
+        const held = now - viewShownAt;
+        state.msOnView[currentSrc] += held;
+        // Kept in step so the existing column keeps its meaning.
+        if (currentSrc === 'ref') state.revealMsTotal += held;
+        viewShownAt = null;
       }
     };
 
@@ -328,11 +344,14 @@ export function startTrials(root: HTMLElement, sessionId: string): TrialControll
       if (which === 'b' && !isPair) return;
       const now = performance.now();
       if (which !== currentSrc) {
-        closeRefAccounting(now);
-        if (which === 'ref') {
-          refShownAt = now;
-          state.revealCount += 1;
-        }
+        closeViewAccounting(now);
+        // Only count a switch once the trial is actually up; the initial
+        // render is not something the observer did.
+        if (state.shownAt > 0) state.switchCount += 1;
+        if (which === 'ref') state.revealCount += 1;
+        viewShownAt = now;
+      } else if (viewShownAt === null) {
+        viewShownAt = now;
       }
       currentSrc = which;
       viewport.dataset.view = which;
@@ -857,7 +876,7 @@ export function startTrials(root: HTMLElement, sessionId: string): TrialControll
       submitted = true;
       detachKeys?.();
       detachKeys = null;
-      closeRefAccounting(performance.now());
+      closeViewAccounting(performance.now());
       setPanelEnabled(false);
       void submit(choice, state, trial, layers[currentSrc], viewport);
     };
@@ -1018,6 +1037,10 @@ export function startTrials(root: HTMLElement, sessionId: string): TrialControll
         input_mode: inputMode,
         keyboard_used: state.keyboardUsed,
         ui_ready_ms: state.uiReadyMs,
+        switch_count: state.switchCount,
+        ms_on_a: Math.round(state.msOnView.a),
+        ms_on_b: Math.round(state.msOnView.b),
+        ms_on_ref: Math.round(state.msOnView.ref),
         ...panGeometry(img, viewport),
         ...cond,
       });

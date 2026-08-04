@@ -114,6 +114,13 @@ export interface ResponseReq {
   keyboard_used: boolean;
   /// Render → judged-image-painted, kept out of `dwell_ms`'s interpretation.
   ui_ready_ms: number | null;
+  /// Difficulty signal: how often the observer swapped view, and how long each
+  /// variant was actually on screen. Raw, not normalised — the useful form is
+  /// relative to their other trials this session, which is not knowable yet.
+  switch_count: number;
+  ms_on_a: number;
+  ms_on_b: number;
+  ms_on_ref: number;
   viewport_w_css: number;
   viewport_h_css: number;
   orientation: 'portrait' | 'landscape';

@@ -39,6 +39,17 @@ pub struct Study {
     /// Hidden from the public picker. Still selectable by id — for operator or
     /// single-observer runs that shouldn't be offered to drive-by visitors.
     pub unlisted: bool,
+    /// Probability of re-serving a pair this observer already answered.
+    ///
+    /// **The control that makes the result interpretable.** Human-vs-ssim2
+    /// SROCC means nothing on its own: if an observer agrees with *themselves*
+    /// only 80% of the time on repeated pairs, ssim2 cannot exceed roughly
+    /// that, and "ssim2 scored 0.7" reads completely differently against a
+    /// ceiling of 0.95 than against one of 0.72. Repeats measure the ceiling
+    /// directly, from the same observers, on the same content, in the same
+    /// session — which is the only comparison that licenses a conclusion about
+    /// the metric rather than about the data collection.
+    pub p_repeat: f32,
     /// Whether an `excluded` participant disposition is *acted on* by default.
     ///
     /// The screens always run and are always recorded (see `exclusion.rs`);
@@ -69,6 +80,8 @@ pub const STUDIES: &[Study] = &[
         summary: "Which compression artefacts do people actually notice on real phones? \
                   Trains zensim, an open-source perceptual quality metric.",
         trial_style: "A mix of single-image ratings and A/B comparisons.",
+        // Single-stimulus staircases already re-measure the same conditions.
+        p_repeat: 0.0,
         // Listed, but not the default.
         //
         // Unlisting it entirely (to force the non-photo focus) removed the
@@ -89,6 +102,8 @@ pub const STUDIES: &[Study] = &[
             // photo and non-photo is part of what it measures.
             content: ContentFilter::Any,
             pairing: PairingRule::AdjacentQuality,
+            // Already controlled by single-stimulus honeypots and anchors.
+            p_golden_pair: 0.0,
             pairwise_only: false,
         },
     },
@@ -99,6 +114,10 @@ pub const STUDIES: &[Study] = &[
                   line-art, charts — the way a human does? Every trial is a forced choice, \
                   and every image is non-photographic.",
         trial_style: "A/B comparisons only. No star ratings.",
+        // ~1 trial in 12 re-serves a pair already answered, giving the
+        // intra-observer agreement ceiling this study's headline number has to
+        // be read against.
+        p_repeat: 0.08,
         unlisted: false,
         // A rank-agreement check run by a few careful observers. ch3-5 §4.6:
         // below ~15 subjects the modelling is under-identified, and with few
@@ -119,6 +138,11 @@ pub const STUDIES: &[Study] = &[
             // that says they are about non-photo content.
             content: ContentFilter::NonPhotoOnly,
             pairing: PairingRule::AdjacentQuality,
+            // ~1 trial in 12, matching the single-stimulus honeypot rate this
+            // study cannot use. Without it nothing here distinguishes a careful
+            // observer from a careless one — the honeypot and anchor rates are
+            // both zero, because both build single-stimulus trials.
+            p_golden_pair: 0.083,
             pairwise_only: true,
         },
     },
@@ -129,6 +153,7 @@ pub const STUDIES: &[Study] = &[
                   or only score better? Each pair is one JPEG against zensr's restored \
                   version of that exact file.",
         trial_style: "A/B comparisons only. No star ratings.",
+        p_repeat: 0.08,
         // Few, careful observers rather than an un-gated crowd, same as the
         // other forced-choice study: with few peers per stimulus the reference
         // distribution the screens need is noise (zenpapers ch3-5 §4.6).
@@ -155,6 +180,9 @@ pub const STUDIES: &[Study] = &[
             pairing: PairingRule::RestorationVsBaseline {
                 restored_prefix: "zensr",
             },
+            // Same attention check. A golden here falls back to a restoration
+            // pair when the source's ladder is too narrow to be unambiguous.
+            p_golden_pair: 0.083,
             // Forced choice. "Closer to the original" is the question that
             // matters and it is not the same as "looks better": artifact
             // removal can invent plausible detail that was never there, which

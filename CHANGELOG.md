@@ -2,6 +2,42 @@
 
 ## [Unreleased]
 
+### Added
+- **Per-view dwell and switch count** (migration 0019; `responses.tsv`
+  schema_version 5 → 6): `switch_count`, `ms_on_a`, `ms_on_b`, `ms_on_ref`.
+  `reveal_count`/`reveal_ms_total` only ever measured time on the *reference*,
+  and under `hold`/`buttons` the reference is the resting view — so that column
+  is dominated by "not currently pressing anything" and says nothing about
+  effort. The informative quantity is the inverse: time holding a variant up
+  against the original, and how often the observer went back and forth before
+  committing. A pair flipped six times over twenty seconds sits near that
+  observer's discrimination threshold; one answered in two seconds does not. BT
+  treats both answers identically, so this is the only record that the pair was
+  hard — which matters because a metric disagreeing on *hard* pairs is a
+  different finding from one disagreeing on easy ones.
+  - Stored **raw**, not normalised. The useful form is relative to that
+    observer's other trials in the same session, and the session is not finished
+    when the row is written; baking in a z-score against a partial session would
+    be unrecoverable, while analysis can always normalise afterwards.
+- **Study controls — the rank-agreement study had none.** `p_honeypot` and
+  `p_anchor` are necessarily `0.0` for `ssim2-nonphoto` because both build
+  single-stimulus trials that a forced-choice study excludes, so nothing in it
+  distinguished a careful observer from a careless one. Two controls now:
+  - **`Study::p_golden_pair`** (0.083) serves a pair far enough apart that the
+    answer is not in doubt, with `expected_choice` set — reusing
+    `is_trivial_pair`, the existing predicate for "obvious", which measurement
+    *excludes*. A source whose ladder is too narrow yields no golden rather than
+    a control whose correct answer is arguable. `grading.rs` already flags
+    `golden_fail`.
+  - **`Study::p_repeat`** (0.08) re-serves a pair the observer already answered,
+    recording the link in `trials.repeat_of_trial_id`. This is the control that
+    makes the headline number interpretable: if an observer agrees with
+    *themselves* only 80% of the time, ssim2 cannot exceed roughly that, and
+    "ssim2 scored 0.7" means something completely different against a ceiling of
+    0.95 than against 0.72. Repeats are counterbalanced independently, so a
+    repeat measures "do they judge it the same" rather than "do they remember
+    the layout".
+
 ### Changed
 - **All input logic is centralised in `web/src/hold-stack.ts`** — one table for
   what a press shows, one stack for what wins when several are held. It was four

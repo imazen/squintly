@@ -297,3 +297,119 @@ test.describe('content provenance in the export', () => {
     expect(corpus.length, 'stratum must be recorded').toBeGreaterThan(0);
   });
 });
+
+test.describe('study controls', () => {
+  async function answer(request: import('@playwright/test').APIRequestContext, trialId: string) {
+    return request.post(`/api/trial/${trialId}/response`, {
+      data: {
+        choice: 'a',
+        dwell_ms: 5000,
+        reveal_count: 2,
+        reveal_ms_total: 1200,
+        zoom_used: false,
+        pan_count: 0,
+        pan_distance_css: 0,
+        zoom_factor: 1,
+        input_mode: 'hold',
+        keyboard_used: false,
+        ui_ready_ms: 90,
+        switch_count: 4,
+        ms_on_a: 1800,
+        ms_on_b: 1500,
+        ms_on_ref: 1200,
+        pannable_w_css: 0,
+        pannable_h_css: 0,
+        visible_w_css: 300,
+        visible_h_css: 300,
+        viewport_w_css: 400,
+        viewport_h_css: 600,
+        orientation: 'portrait',
+        image_displayed_w_css: 300,
+        image_displayed_h_css: 300,
+        intrinsic_to_device_ratio: 1,
+        pixels_per_degree: null,
+      },
+    });
+  }
+
+  async function session(request: import('@playwright/test').APIRequestContext) {
+    return (
+      await request.post('/api/session', {
+        data: {
+          observer_id: null,
+          user_agent: 'e2e',
+          device_pixel_ratio: 2,
+          screen_width_css: 400,
+          screen_height_css: 800,
+          local_date: new Date().toISOString().slice(0, 10),
+          supported_codecs: ['jpeg', 'webp'],
+          study_id: 'ssim2-nonphoto',
+        },
+      })
+    ).json();
+  }
+
+  // Difficulty signal. `reveal_ms_total` only ever measured the reference,
+  // which under hold/buttons is the RESTING view — so it reflects "not pressing
+  // anything" rather than effort. Per-view dwell and switch count are what say
+  // whether a pair was near the observer's discrimination threshold.
+  test('per-view dwell and switch count reach the export', async ({ request }) => {
+    const sess = await session(request);
+    const t = await (await request.get(`/api/trial/next?session_id=${sess.session_id}`)).json();
+    const ok = await answer(request, t.trial_id);
+    expect(ok.ok(), await ok.text()).toBeTruthy();
+
+    const tsv = await (await request.get('/api/export/responses.tsv')).text();
+    const [header, ...lines] = tsv.trim().split('\n');
+    const cols = header.split('\t');
+    for (const c of ['switch_count', 'ms_on_a', 'ms_on_b', 'ms_on_ref', 'repeat_of_trial_id']) {
+      expect(cols, `export must carry ${c}`).toContain(c);
+    }
+    const row = lines.map((l) => l.split('\t')).find((r) => r[0] === t.trial_id)!;
+    expect(row, 'the response should be in the export').toBeTruthy();
+    expect(row[cols.indexOf('switch_count')]).toBe('4');
+    expect(row[cols.indexOf('ms_on_a')]).toBe('1800');
+    expect(row[cols.indexOf('ms_on_b')]).toBe('1500');
+    expect(row[cols.indexOf('ms_on_ref')]).toBe('1200');
+  });
+
+  // Test-retest. Human-vs-ssim2 SROCC is uninterpretable without it: if an
+  // observer agrees with themselves only 80% of the time, the metric cannot
+  // exceed roughly that, and the headline number reads completely differently
+  // against a ceiling of 0.95 than against 0.72.
+  test('the study re-serves pairs it has already asked, and records which', async ({ request }) => {
+    const sess = await session(request);
+
+    const answered = new Map<string, string>(); // trial id → source+encodings
+    let repeats = 0;
+    for (let i = 0; i < 80; i++) {
+      const r = await request.get(`/api/trial/next?session_id=${sess.session_id}`);
+      if (!r.ok()) continue;
+      const t = await r.json();
+      if (t.kind !== 'pair') continue;
+      const key = [t.source_hash, ...[t.a.encoding_id, t.b.encoding_id].sort()].join('|');
+      // A repeat presents a pair already answered in this session.
+      if ([...answered.values()].includes(key)) repeats += 1;
+      answered.set(t.trial_id, key);
+      await answer(request, t.trial_id);
+    }
+
+    expect(repeats, 'p_repeat = 0.08 over ~80 trials should re-serve several').toBeGreaterThan(0);
+
+    // And the link is recorded, so analysis can pair them without guessing.
+    const tsv = await (await request.get('/api/export/responses.tsv')).text();
+    const [header, ...lines] = tsv.trim().split('\n');
+    const cols = header.split('\t');
+    const idx = cols.indexOf('repeat_of_trial_id');
+    const linked = lines
+      .map((l) => l.split('\t'))
+      .filter((r) => (r[idx] ?? '').length > 0);
+    expect(linked.length, 'repeats must record what they repeat').toBeGreaterThan(0);
+    // Every link points at a real, earlier trial.
+    const allIds = new Set(lines.map((l) => l.split('\t')[0]));
+    for (const r of linked) {
+      expect(allIds.has(r[idx]), `repeat_of ${r[idx]} should name a known trial`).toBe(true);
+      expect(r[idx], 'a trial cannot repeat itself').not.toBe(r[0]);
+    }
+  });
+});

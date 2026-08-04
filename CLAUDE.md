@@ -86,6 +86,23 @@ web component from `~/work/efficient-ui/`. No framework.
   study, never admitted; keep the table in sync with
   `scripts/build_demo_corpus.py::R2_STRATA` (guarded by
   `strata_agree_with_the_corpus_builder`).
+- **A rank-agreement number is meaningless without a noise ceiling.**
+  `Study::p_repeat` re-serves pairs the observer already answered; their
+  agreement with themselves is the ceiling any metric could reach. "ssim2
+  scored 0.7" reads completely differently against a ceiling of 0.95 than
+  against 0.72, so the repeat data is not optional colour — it is what licenses
+  a conclusion about the metric rather than about the data collection.
+  `Study::p_golden_pair` is the attention check: `p_honeypot`/`p_anchor` are
+  necessarily 0 in a forced-choice study (both build single-stimulus trials),
+  so before this the study had **no controls at all**.
+- **Difficulty is recorded per view, raw.** `reveal_ms_total` only ever measured
+  the reference, which under `hold`/`buttons` is the *resting* view — so it
+  tracks "not pressing anything", not effort. `switch_count` + `ms_on_a/b/ref`
+  (migration 0019) are the real signal: a pair flipped six times over twenty
+  seconds sits near the observer's threshold, and BT cannot tell that from a
+  two-second answer. Stored raw and normalised in analysis — the useful form is
+  relative to that observer's other trials, and the session is not finished when
+  the row is written.
 - **Participant exclusion is a recorded disposition, never a delete.**
   `src/exclusion.rs` runs the zenpapers Ch. 4 screens (§4.4 peer-mean
   correlation, §4.2.1 BT.500 kurtosis-2 band) and writes

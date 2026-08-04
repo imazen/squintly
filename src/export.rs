@@ -697,7 +697,8 @@ pub async fn responses_tsv(pool: &SqlitePool) -> Result<String> {
          \tage_bracket\tvision_corrected\tresponded_at\tstudy_id\tpan_count\tpan_distance_css\
          \tvisible_w_css\tvisible_h_css\tzoom_factor\tobserver_disposition\tobserver_r_s\
          \tobserver_outlier_rate\texclusion_enforced\tinput_mode\tkeyboard_used\tui_ready_ms\
-         \tsource_corpus\tcontent_class\n",
+         \tsource_corpus\tcontent_class\tswitch_count\tms_on_a\tms_on_b\tms_on_ref\
+         \trepeat_of_trial_id\n",
     );
     let rows = sqlx::query(
         "SELECT t.id, t.session_id, s.observer_id, t.kind, t.source_hash, t.a_encoding_id, \
@@ -710,7 +711,8 @@ pub async fn responses_tsv(pool: &SqlitePool) -> Result<String> {
                 s.ambient_light, s.css_px_per_mm, o.age_bracket, o.vision_corrected, r.responded_at, \
                 s.study_id, r.pan_count, r.pan_distance_css, r.visible_w_css, r.visible_h_css, r.zoom_factor, \
                 d.disposition, d.r_s, d.outlier_rate, d.policy_enabled, \
-                r.input_mode, r.keyboard_used, r.ui_ready_ms, t.source_corpus, t.content_class \
+                r.input_mode, r.keyboard_used, r.ui_ready_ms, t.source_corpus, t.content_class, \
+                r.switch_count, r.ms_on_a, r.ms_on_b, r.ms_on_ref, t.repeat_of_trial_id \
          FROM trials t \
          JOIN responses r ON r.trial_id = t.id \
          JOIN sessions  s ON s.id = t.session_id \
@@ -726,7 +728,7 @@ pub async fn responses_tsv(pool: &SqlitePool) -> Result<String> {
     // two impossible to produce from one export, which is the whole point of
     // carrying a disposition instead of deleting data.
     for row in rows {
-        for i in 0..55 {
+        for i in 0..60 {
             if i > 0 {
                 out.push('\t');
             }

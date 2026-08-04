@@ -540,16 +540,18 @@ pub async fn next_trial(
     // longer exists in the binary keeps working on the default rather than
     // 500ing, but says so — silently swapping protocols mid-study would be
     // worse than a loud log.
-    let sampler = match crate::studies::by_id(&study_id) {
-        Some(s) => s.sampler,
+    let study = match crate::studies::by_id(&study_id) {
+        Some(s) => s,
         None => {
             tracing::warn!(
                 study_id,
                 "session references an unknown study; using default mix"
             );
-            crate::studies::default_study().sampler
+            crate::studies::default_study()
         }
     };
+
+    let sampler = study.sampler;
 
     let manifest = state.manifest.read().await;
     let anchors = state.anchors.read().await;
@@ -594,7 +596,57 @@ pub async fn next_trial(
     // ASAP override. Without it slot B held the higher-quality encoding on every
     // trial (measured 60/60 live), so "which is closer to the original" had the
     // same answer every time. See `sampling::counterbalance_pair`.
-    let plan = crate::sampling::counterbalance_pair(plan, &mut rand::rng());
+    let mut plan = crate::sampling::counterbalance_pair(plan, &mut rand::rng());
+
+    // Test-retest control: sometimes re-serve a pair this observer already
+    // answered in this session. Their agreement with themselves is the ceiling
+    // any metric could reach, and without it the headline SROCC is
+    // uninterpretable — see `Study::p_repeat`.
+    //
+    // Done here rather than in the sampler because it needs response history,
+    // and the sampler is deliberately a pure function of the manifest.
+    let mut repeat_of: Option<String> = None;
+    if study.p_repeat > 0.0 && rand::Rng::random::<f32>(&mut rand::rng()) < study.p_repeat {
+        let prior: Option<(String, String, String, String)> = sqlx::query_as(
+            "SELECT t.id, t.source_hash, t.a_encoding_id, t.b_encoding_id \
+             FROM trials t \
+             JOIN responses r ON r.trial_id = t.id \
+             JOIN sessions s ON s.id = t.session_id \
+             WHERE s.observer_id = (SELECT observer_id FROM sessions WHERE id = ?) \
+               AND s.study_id = ? AND t.kind = 'pair' AND t.b_encoding_id IS NOT NULL \
+               AND t.repeat_of_trial_id IS NULL \
+               AND t.id NOT IN (SELECT repeat_of_trial_id FROM trials \
+                                WHERE repeat_of_trial_id IS NOT NULL) \
+             ORDER BY RANDOM() LIMIT 1",
+        )
+        .bind(&q.session_id)
+        .bind(&study_id)
+        .fetch_optional(&state.pool)
+        .await?;
+        if let Some((prior_id, src_hash, a_id, b_id)) = prior {
+            if let (Some(source), Some(a), Some(b)) = (
+                manifest.source(&src_hash),
+                manifest.encoding(&a_id),
+                manifest.encoding(&b_id),
+            ) {
+                repeat_of = Some(prior_id);
+                // Counterbalanced again, independently: a repeat that always
+                // reproduced the original slot order would measure "did they
+                // remember the layout" rather than "do they judge it the same".
+                plan = crate::sampling::counterbalance_pair(
+                    TrialPlan::Pair {
+                        source: source.clone(),
+                        a: a.clone(),
+                        b: b.clone(),
+                        is_golden: false,
+                        expected_choice: None,
+                        held_out: false,
+                    },
+                    &mut rand::rng(),
+                );
+            }
+        }
+    }
 
     let trial_id = Uuid::new_v4().to_string();
     let served_at = now_ms();
@@ -611,8 +663,9 @@ pub async fn next_trial(
             sqlx::query(
                 "INSERT INTO trials (id, session_id, kind, source_hash, a_encoding_id, a_codec, \
                  a_quality, a_bytes, intrinsic_w, intrinsic_h, staircase_target, is_golden, \
-                 expected_choice, held_out, served_at, source_corpus, content_class) \
-                 VALUES (?, ?, 'single', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                 expected_choice, held_out, served_at, source_corpus, content_class, \
+                 repeat_of_trial_id) \
+                 VALUES (?, ?, 'single', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             )
             .bind(&trial_id)
             .bind(&q.session_id)
@@ -633,6 +686,7 @@ pub async fn next_trial(
             // just did, when AI product shots moved from non-photo to photo.
             .bind(source.corpus.as_deref())
             .bind(crate::content_class::classify(source.corpus.as_deref()).as_str())
+            .bind(repeat_of.as_deref())
             .execute(&state.pool)
             .await?;
 
@@ -670,8 +724,8 @@ pub async fn next_trial(
                 "INSERT INTO trials (id, session_id, kind, source_hash, a_encoding_id, a_codec, \
                  a_quality, a_bytes, b_encoding_id, b_codec, b_quality, b_bytes, intrinsic_w, \
                  intrinsic_h, is_golden, expected_choice, held_out, served_at, source_corpus, \
-                 content_class) \
-                 VALUES (?, ?, 'pair', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                 content_class, repeat_of_trial_id) \
+                 VALUES (?, ?, 'pair', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             )
             .bind(&trial_id)
             .bind(&q.session_id)
@@ -695,6 +749,7 @@ pub async fn next_trial(
             // just did, when AI product shots moved from non-photo to photo.
             .bind(source.corpus.as_deref())
             .bind(crate::content_class::classify(source.corpus.as_deref()).as_str())
+            .bind(repeat_of.as_deref())
             .execute(&state.pool)
             .await?;
 
@@ -805,6 +860,18 @@ pub struct ResponseReq {
     /// `dwell_ms`'s interpretation: a slow first paint is not deliberation.
     #[serde(default)]
     pub ui_ready_ms: Option<i64>,
+    /// Difficulty signal. `reveal_ms_total` only ever measured the reference,
+    /// which under `hold`/`buttons` is the resting view — so it reflects "not
+    /// pressing anything" rather than effort. These are per-view, raw, and
+    /// deliberately un-normalised (see migration 0019).
+    #[serde(default)]
+    pub switch_count: i64,
+    #[serde(default)]
+    pub ms_on_a: i64,
+    #[serde(default)]
+    pub ms_on_b: i64,
+    #[serde(default)]
+    pub ms_on_ref: i64,
 }
 
 #[derive(Debug, Serialize)]
@@ -869,8 +936,9 @@ pub async fn record_response(
          zoom_used, viewport_w_css, viewport_h_css, orientation, image_displayed_w_css, \
          image_displayed_h_css, intrinsic_to_device_ratio, pixels_per_degree, response_flags, \
          responded_at, pan_count, pan_distance_css, pannable_w_css, pannable_h_css, \
-         visible_w_css, visible_h_css, zoom_factor, input_mode, keyboard_used, ui_ready_ms) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+         visible_w_css, visible_h_css, zoom_factor, input_mode, keyboard_used, ui_ready_ms, \
+         switch_count, ms_on_a, ms_on_b, ms_on_ref) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&trial_id)
     .bind(&req.choice)
@@ -897,6 +965,10 @@ pub async fn record_response(
     .bind(&req.input_mode)
     .bind(req.keyboard_used as i64)
     .bind(req.ui_ready_ms)
+    .bind(req.switch_count)
+    .bind(req.ms_on_a)
+    .bind(req.ms_on_b)
+    .bind(req.ms_on_ref)
     .execute(&state.pool)
     .await?;
 
@@ -991,7 +1063,7 @@ fn schema_version(kind: ExportKind) -> u32 {
         // the pan/visible-area telemetry that the 1:1 display rule made
         // necessary. Appended rather than inserted so positional consumers
         // keep working; the bump is here so strict ones can refuse.
-        ExportKind::Responses => 5,
+        ExportKind::Responses => 6,
         ExportKind::Unified => 1,
     }
 }
@@ -2023,10 +2095,11 @@ mod tests {
     fn responses_schema_version_reflects_the_appended_columns() {
         assert_eq!(
             schema_version(ExportKind::Responses),
-            5,
+            6,
             "v2 added study_id + pan/visible telemetry; v3 the participant exclusion \
              disposition; v4 input_mode + keyboard_used + ui_ready_ms; v5 source_corpus + \
-             content_class. Bump whenever columns change."
+             content_class; v6 per-view dwell, switch_count and repeat_of_trial_id. \
+             Bump whenever columns change."
         );
         assert_eq!(schema_version(ExportKind::Pareto), 1, "pareto is unchanged");
     }

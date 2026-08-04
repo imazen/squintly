@@ -212,6 +212,17 @@ pub struct SamplerConfig {
     pub content: ContentFilter,
     /// How a pair's two arms are chosen. See [`PairingRule`].
     pub pairing: PairingRule,
+    /// Probability of serving a **golden pair**: two encodings far enough apart
+    /// that the answer is not in doubt, with `expected_choice` set.
+    ///
+    /// The rank-agreement study had NO controls. `p_honeypot` and `p_anchor`
+    /// are zero there and had to be — both build single-stimulus trials, which
+    /// a forced-choice study excludes — so nothing in it could tell a careless
+    /// observer from a careful one. `is_trivial_pair` is the existing predicate
+    /// for "the answer is obvious", used to *exclude* such pairs from
+    /// measurement; deliberately serving a few of them is exactly an attention
+    /// check, and `grading.rs` already flags `golden_fail`.
+    pub p_golden_pair: f32,
     /// Serve **only** pairwise (2AFC) trials, never single-stimulus ratings.
     ///
     /// For a rank-agreement study — e.g. validating SSIMULACRA2 as the
@@ -236,6 +247,7 @@ impl Default for SamplerConfig {
             p_anchor: 0.30,
             content: ContentFilter::Any,
             pairing: PairingRule::AdjacentQuality,
+            p_golden_pair: 0.0,
             pairwise_only: false,
         }
     }
@@ -278,6 +290,7 @@ impl SamplerConfig {
             p_anchor: prob("SQUINTLY_P_ANCHOR", d.p_anchor),
             content: d.content,
             pairing: d.pairing,
+            p_golden_pair: d.p_golden_pair,
             pairwise_only,
         }
     }
@@ -474,6 +487,38 @@ pub fn pick_trial(
             })
         };
 
+        // A pair whose answer is not in doubt. `is_trivial_pair` is the
+        // project's existing definition of "obvious"; measurement excludes
+        // these, so serving one is a pure attention check.
+        let try_golden_pair = || -> Option<TrialPlan> {
+            let mut r_codec = rng();
+            let codec_encs = choose_codec(&by_codec, 2, &mut r_codec)?;
+            let mut sorted: Vec<&EncodingMeta> = codec_encs.to_vec();
+            sorted.sort_by(|a, b| {
+                a.quality
+                    .unwrap_or(0.0)
+                    .partial_cmp(&b.quality.unwrap_or(0.0))
+                    .unwrap()
+            });
+            let lo = *sorted.first()?;
+            let hi = *sorted.last()?;
+            if !is_trivial_pair(lo, hi) {
+                // This source's ladder is too narrow to be unambiguous. Better
+                // no control than one whose "correct" answer is arguable.
+                return None;
+            }
+            Some(TrialPlan::Pair {
+                source: (*src).clone(),
+                a: lo.clone(),
+                b: hi.clone(),
+                is_golden: true,
+                // The higher-quality arm is the one closer to the original.
+                // `counterbalance_pair` flips this with the slots.
+                expected_choice: Some("b".to_string()),
+                held_out: held_out_src,
+            })
+        };
+
         let try_pair = || -> Option<TrialPlan> {
             // CID22 §Selection of stimuli — drop trivial pairs whose answer
             // is foregone. Adjacent quality steps within a codec are always
@@ -515,6 +560,16 @@ pub fn pick_trial(
         // pairwise_only there is no fallback — we move on to the next source,
         // and if none can produce a pair the caller gets a clean 409.
         let pair_fn = || match cfg.pairing {
+            _ if rng().random::<f32>() < cfg.p_golden_pair => {
+                // Fall through to a real pair when this source cannot make an
+                // unambiguous one, rather than skipping the trial.
+                try_golden_pair().or_else(|| match cfg.pairing {
+                    PairingRule::AdjacentQuality => try_pair(),
+                    PairingRule::RestorationVsBaseline { restored_prefix } => {
+                        try_restoration(restored_prefix)
+                    }
+                })
+            }
             PairingRule::AdjacentQuality => try_pair(),
             PairingRule::RestorationVsBaseline { restored_prefix } => {
                 try_restoration(restored_prefix)
@@ -1054,6 +1109,7 @@ mod tests {
             p_anchor: 0.0,
             content: ContentFilter::NonPhotoOnly,
             pairing: PairingRule::AdjacentQuality,
+            p_golden_pair: 0.0,
             pairwise_only: true,
         };
 
@@ -1167,6 +1223,7 @@ mod tests {
             pairing: PairingRule::RestorationVsBaseline {
                 restored_prefix: "zensr",
             },
+            p_golden_pair: 0.0,
             pairwise_only: true,
         };
 
@@ -1250,6 +1307,7 @@ mod tests {
             pairing: PairingRule::RestorationVsBaseline {
                 restored_prefix: "zensr",
             },
+            p_golden_pair: 0.0,
             pairwise_only: true,
         };
         assert!(
@@ -1263,6 +1321,127 @@ mod tests {
             ..SamplerConfig::default()
         };
         assert!(pick_trial(&manifest, &normal, None, None, None).is_some());
+    }
+
+    /// The rank-agreement study had no controls at all: `p_honeypot` and
+    /// `p_anchor` are zero there and must be, because both build
+    /// single-stimulus trials that a forced-choice study excludes. Nothing in
+    /// it could tell a careful observer from a careless one.
+    #[test]
+    fn golden_pairs_are_unambiguous_and_carry_the_right_answer() {
+        let src = SourceMeta {
+            hash: "s1".into(),
+            width: 512,
+            height: 512,
+            size_bytes: 1000,
+            corpus: Some("imazen26-7000-lilith-plots".into()),
+            filename: None,
+        };
+        let enc = |id: &str, q: f32| EncodingMeta {
+            id: id.into(),
+            source_hash: "s1".into(),
+            codec: "mozjpeg".into(),
+            quality: Some(q),
+            effort: None,
+            bytes: (q as u64) * 200,
+        };
+        // A wide ladder, so the extremes are unambiguous.
+        let manifest = Manifest {
+            sources: vec![src],
+            encodings: vec![enc("q10", 10.0), enc("q40", 40.0), enc("q95", 95.0)],
+        };
+        let cfg = SamplerConfig {
+            p_single: 0.0,
+            p_honeypot: 0.0,
+            p_anchor: 0.0,
+            content: ContentFilter::Any,
+            pairing: PairingRule::AdjacentQuality,
+            p_golden_pair: 1.0,
+            pairwise_only: true,
+        };
+
+        let mut goldens = 0;
+        for _ in 0..200 {
+            let plan = pick_trial(&manifest, &cfg, None, None, None).expect("a pair exists");
+            let TrialPlan::Pair {
+                a,
+                b,
+                is_golden,
+                expected_choice,
+                ..
+            } = plan
+            else {
+                panic!("forced-choice study must never emit a single");
+            };
+            if !is_golden {
+                continue;
+            }
+            goldens += 1;
+            assert!(
+                is_trivial_pair(&a, &b),
+                "a control whose answer is arguable is not a control: {a:?} vs {b:?}"
+            );
+            // The expected answer must name the slot actually holding the
+            // better encoding — counterbalancing flips both together.
+            let better = if a.quality.unwrap() > b.quality.unwrap() {
+                "a"
+            } else {
+                "b"
+            };
+            assert_eq!(
+                expected_choice.as_deref(),
+                Some(better),
+                "expected_choice must follow the encoding, not the slot"
+            );
+        }
+        assert!(goldens > 0, "p_golden_pair = 1.0 produced no goldens");
+    }
+
+    /// A source whose ladder is too narrow to be unambiguous must fall back to
+    /// a real measurement pair rather than serve a control whose "correct"
+    /// answer is arguable.
+    #[test]
+    fn a_narrow_ladder_yields_no_golden_rather_than_a_dubious_one() {
+        let src = SourceMeta {
+            hash: "s1".into(),
+            width: 512,
+            height: 512,
+            size_bytes: 1000,
+            corpus: Some("imazen26-7000-lilith-plots".into()),
+            filename: None,
+        };
+        let enc = |id: &str, q: f32| EncodingMeta {
+            id: id.into(),
+            source_hash: "s1".into(),
+            codec: "mozjpeg".into(),
+            quality: Some(q),
+            effort: None,
+            bytes: 10_000,
+        };
+        // 20 points apart: under the 30-point trivial threshold.
+        let manifest = Manifest {
+            sources: vec![src],
+            encodings: vec![enc("q40", 40.0), enc("q50", 50.0), enc("q60", 60.0)],
+        };
+        let cfg = SamplerConfig {
+            p_single: 0.0,
+            p_honeypot: 0.0,
+            p_anchor: 0.0,
+            content: ContentFilter::Any,
+            pairing: PairingRule::AdjacentQuality,
+            p_golden_pair: 1.0,
+            pairwise_only: true,
+        };
+        for _ in 0..100 {
+            let plan = pick_trial(&manifest, &cfg, None, None, None).expect("a pair exists");
+            let TrialPlan::Pair { is_golden, .. } = plan else {
+                panic!("expected a pair");
+            };
+            assert!(
+                !is_golden,
+                "no pair here is unambiguous, so none may be a control"
+            );
+        }
     }
 
     #[test]
@@ -1465,6 +1644,7 @@ mod tests {
             p_anchor: 1.0,
             content: ContentFilter::Any,
             pairing: PairingRule::AdjacentQuality,
+            p_golden_pair: 0.0,
             pairwise_only: true,
         };
         let mut allowed = HashSet::new();

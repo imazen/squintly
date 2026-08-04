@@ -119,54 +119,7 @@ async function welcome(): Promise<void> {
 function openCalibration(): void {
   renderCalibration(root, (result) => {
     saveCalibration(result);
-    void /// Is this a returning observer who has already been through onboarding?
-///
-/// Reopening the app used to drop everyone back on the welcome screen and walk
-/// them through Begin -> calibration -> profile again, even though the observer
-/// id, profile and calibration were all already in localStorage. For someone
-/// coming back for a second batch of trials that is three screens of friction
-/// in front of the thing they returned to do.
-///
-/// "Already onboarded" means we have an observer id and a saved profile — the
-/// two things the profile step exists to produce. Calibration is deliberately
-/// not required: it is optional and skippable, so demanding it would make the
-/// resume path stricter than the path that created the state.
-function hasOnboarded(): boolean {
-  const p = loadProfile();
-  return (
-    !!getObserverId() &&
-    (p.ambient_light !== null || p.vision_corrected !== null || p.age_bracket !== null)
-  );
-}
-
-async function boot(): Promise<void> {
-  if (!hasOnboarded()) {
-    await welcome();
-    return;
-  }
-  // Straight back into trials. A new session row is correct rather than
-  // resuming the old one: conditions are re-captured, and the screen, lighting
-  // or device may well have changed since last time — pretending otherwise
-  // would file new responses under stale viewing conditions.
-  root.innerHTML = `
-    <div class="screen center" data-screen="resuming">
-      <div class="spinner" role="status" aria-label="Resuming"></div>
-      <p class="muted">Welcome back — picking up where you left off…</p>
-      <p class="muted"><a id="not-now" href="#" style="color:inherit;text-decoration:underline;">Start from the beginning instead</a></p>
-    </div>
-  `;
-  let cancelled = false;
-  root.querySelector<HTMLAnchorElement>('#not-now')!.addEventListener('click', (e) => {
-    e.preventDefault();
-    cancelled = true;
-    void welcome();
-  });
-  const support = await detectCodecs();
-  if (cancelled) return;
-  await beginSession(loadProfile(), support, { keepScreen: true });
-}
-
-void boot();
+    void boot();
   });
 }
 
@@ -288,54 +241,7 @@ function profileForm(support: { supported: Set<string>; cached: boolean }): void
     });
   }
   root.querySelector<HTMLButtonElement>('#back')!.addEventListener('click', () => {
-    void /// Is this a returning observer who has already been through onboarding?
-///
-/// Reopening the app used to drop everyone back on the welcome screen and walk
-/// them through Begin -> calibration -> profile again, even though the observer
-/// id, profile and calibration were all already in localStorage. For someone
-/// coming back for a second batch of trials that is three screens of friction
-/// in front of the thing they returned to do.
-///
-/// "Already onboarded" means we have an observer id and a saved profile — the
-/// two things the profile step exists to produce. Calibration is deliberately
-/// not required: it is optional and skippable, so demanding it would make the
-/// resume path stricter than the path that created the state.
-function hasOnboarded(): boolean {
-  const p = loadProfile();
-  return (
-    !!getObserverId() &&
-    (p.ambient_light !== null || p.vision_corrected !== null || p.age_bracket !== null)
-  );
-}
-
-async function boot(): Promise<void> {
-  if (!hasOnboarded()) {
-    await welcome();
-    return;
-  }
-  // Straight back into trials. A new session row is correct rather than
-  // resuming the old one: conditions are re-captured, and the screen, lighting
-  // or device may well have changed since last time — pretending otherwise
-  // would file new responses under stale viewing conditions.
-  root.innerHTML = `
-    <div class="screen center" data-screen="resuming">
-      <div class="spinner" role="status" aria-label="Resuming"></div>
-      <p class="muted">Welcome back — picking up where you left off…</p>
-      <p class="muted"><a id="not-now" href="#" style="color:inherit;text-decoration:underline;">Start from the beginning instead</a></p>
-    </div>
-  `;
-  let cancelled = false;
-  root.querySelector<HTMLAnchorElement>('#not-now')!.addEventListener('click', (e) => {
-    e.preventDefault();
-    cancelled = true;
-    void welcome();
-  });
-  const support = await detectCodecs();
-  if (cancelled) return;
-  await beginSession(loadProfile(), support, { keepScreen: true });
-}
-
-void boot();
+    void boot();
   });
   root.querySelector<HTMLButtonElement>('#start')!.addEventListener('click', async () => {
     saveProfile(profile);

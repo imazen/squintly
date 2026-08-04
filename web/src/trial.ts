@@ -1737,7 +1737,8 @@ async function showLeaderboard(host: HTMLElement): Promise<void> {
           <th title="Agreement with themselves on re-served pairs — the ceiling any metric could reach against this reviewer">Self-agree</th>
           <th title="Attention-check pass rate">Checks</th>
           <th title="Median seconds per judgement">s/trial</th>
-          <th title="Median view swaps per trial — how much comparing they actually did">Swaps</th>
+          <th title="Median view swaps per trial — how much comparing they actually did. Over instrumented trials only; older responses predate the counter.">Swaps</th>
+          <th title="Engaged time: gaps between consecutive answers within a session, each capped so a break is not billed, plus the first answer's dwell">Hours</th>
         </tr></thead>
         <tbody>${rows
           .map(
@@ -1748,7 +1749,12 @@ async function showLeaderboard(host: HTMLElement): Promise<void> {
               <td>${pct(r.self_agreement)}${r.repeat_pairs ? '' : ' <span class="muted">(n/a)</span>'}</td>
               <td>${pct(r.golden_pass_rate)}</td>
               <td>${num(r.median_seconds)}</td>
-              <td>${num(r.median_switches)}</td>
+              <td>${num(r.median_switches, 0)}${
+                r.instrumented_trials && r.instrumented_trials < r.trials
+                  ? ` <span class="muted">(${r.instrumented_trials})</span>`
+                  : ''
+              }</td>
+              <td>${(r.active_seconds / 3600).toFixed(2)}</td>
             </tr>`,
           )
           .join('')}</tbody>
@@ -1756,6 +1762,13 @@ async function showLeaderboard(host: HTMLElement): Promise<void> {
       <p class="muted board-note">Names are derived from a salted hash and cannot be
         reversed. Self-agreement is shown beside volume on purpose: answering a lot
         quickly is only good if the answers are consistent.</p>
+      <p class="muted board-note"><b>Hours</b> is engaged time, not wall clock: the
+        gap between consecutive answers in a session, with any gap long enough to
+        be a break counted only up to the cap, plus the first answer's own dwell.
+        It can be recomputed from the response export. A bracketed number beside
+        <b>Swaps</b> is how many of that reviewer's trials carry the counter —
+        responses recorded before it existed are excluded rather than read as
+        zero.</p>
     </div>`;
 }
 

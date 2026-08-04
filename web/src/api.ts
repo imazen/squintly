@@ -184,7 +184,15 @@ export interface LeaderboardRow {
   self_agreement: number | null;
   repeat_pairs: number;
   median_seconds: number | null;
+  /// Over instrumented responses only — a row written before migration 0019
+  /// carries the column's DEFAULT 0, which is "not recorded", not "did not
+  /// switch". Read against `instrumented_trials`.
   median_switches: number | null;
+  instrumented_trials: number;
+  /// Engaged time: gaps between consecutive answers in a session, each capped
+  /// at the server's idle cap, plus the first answer's dwell. Reproducible from
+  /// responses.tsv, so the figure can be checked rather than trusted.
+  active_seconds: number;
 }
 
 export async function listLeaderboard(): Promise<LeaderboardRow[]> {

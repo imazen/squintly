@@ -1570,3 +1570,18 @@ input[type="range"] {
 .trial-controls {
   align-items: center;
 }
+
+/* A card is 85.6mm on its long edge and a phone is ~65mm wide, so a landscape
+   card cannot fit across a portrait screen. Turned, its long edge runs down the
+   screen where there is room; CSS pixels are square, so measuring along either
+   axis gives the same mm-per-px. */
+.card-mock.upright > span {
+  writing-mode: vertical-rl;
+  text-orientation: mixed;
+}
+.card-rotate {
+  margin-top: 8px;
+  padding: 8px 14px;
+  font-size: 0.85rem;
+  border-radius: 999px;
+}

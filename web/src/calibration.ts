@@ -28,7 +28,7 @@ export function renderCalibration(
   root.innerHTML = `
     <div class="screen center">
       <h1>Calibration: hold a card to your screen</h1>
-      <p class="muted">Find any card the size of a debit/credit/transit card. Drag the slider until the on-screen rectangle matches its size.</p>
+      <p class="muted">Find any card the size of a debit/credit/transit card. Drag the slider until the on-screen rectangle matches its size — turn the card if it does not fit across your screen.</p>
       ${
         prior.css_px_per_mm
           ? `<p class="muted">Already calibrated on this device${
@@ -36,10 +36,11 @@ export function renderCalibration(
             } — adjust only if something changed.</p>`
           : ''
       }
-      <div id="card" class="card-mock">credit-card sized</div>
-      <input id="slider" type="range" min="80" max="600" step="1" value="${Math.round(
+      <div id="card" class="card-mock"><span>credit-card sized</span></div>
+      <input id="slider" type="range" min="80" max="700" step="1" value="${Math.round(
         (prior.css_px_per_mm ?? 200 / CARD_MM_W) * CARD_MM_W,
       )}" />
+      <button id="rotate-card" class="card-rotate">↻ Turn the card</button>
       <div class="choice-row" style="max-width: 360px; width: 100%;">
         <button id="skip">Skip</button>
         <button id="next" class="primary">Looks right</button>
@@ -48,13 +49,33 @@ export function renderCalibration(
   `;
   const card = root.querySelector<HTMLDivElement>('#card')!;
   const slider = root.querySelector<HTMLInputElement>('#slider')!;
+
+  /// Which way the card lies on screen.
+  ///
+  /// A card is 85.6mm along its long edge and a phone is about 65mm wide, so a
+  /// LANDSCAPE card physically cannot fit across a portrait phone — the slider
+  /// ran out of travel before the rectangle reached a real card, which made
+  /// calibration impossible on the device this study mostly runs on. Turning
+  /// the card puts its long edge down the screen, where there is room.
+  ///
+  /// Measuring along either axis is equivalent: CSS pixels are square, so
+  /// mm-per-px is the same horizontally and vertically. The slider therefore
+  /// keeps meaning "the long edge, in px" in both orientations, and a value
+  /// stored in one is valid in the other.
+  let upright = window.innerHeight > window.innerWidth;
   const updateCard = () => {
-    const widthPx = parseInt(slider.value, 10);
-    pxPerMm = widthPx / CARD_MM_W;
-    card.style.width = `${widthPx}px`;
-    card.style.height = `${pxPerMm * CARD_MM_H}px`;
+    const longPx = parseInt(slider.value, 10);
+    pxPerMm = longPx / CARD_MM_W;
+    const shortPx = pxPerMm * CARD_MM_H;
+    card.style.width = `${upright ? shortPx : longPx}px`;
+    card.style.height = `${upright ? longPx : shortPx}px`;
+    card.classList.toggle('upright', upright);
   };
   slider.addEventListener('input', updateCard);
+  root.querySelector<HTMLButtonElement>('#rotate-card')!.addEventListener('click', () => {
+    upright = !upright;
+    updateCard();
+  });
   updateCard();
   // Skip keeps whatever was already measured. Returning nulls here meant the
   // caller wrote nulls over a good calibration — skipping is "leave it alone",

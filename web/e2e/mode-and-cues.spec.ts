@@ -577,3 +577,89 @@ test.describe('trial chrome on a phone', () => {
     expect(await page.locator('.info-help').innerText()).toContain('license');
   });
 });
+
+test.describe('measuring a card on a phone', () => {
+  // A card is 85.6mm on its long edge; a phone is about 65mm wide. So a
+  // landscape card physically cannot fit across a portrait screen — the slider
+  // ran out of travel before the rectangle reached a real card, which made
+  // calibration impossible on the device this study mostly runs on.
+  test('the card lies upright where the screen is taller than it is wide', async ({ page }) => {
+    await gotoFresh(page);
+    await clickBegin(page);
+    await expect(page.locator('#slider')).toBeVisible();
+
+    const box = await page.locator('#card').boundingBox();
+    const portraitScreen = await page.evaluate(() => window.innerHeight > window.innerWidth);
+    expect(
+      box!.height > box!.width,
+      'a portrait screen must start with the card turned',
+    ).toBe(portraitScreen);
+  });
+
+  test('the card can be turned either way, and the measurement is unchanged', async ({ page }) => {
+    await gotoFresh(page);
+    await clickBegin(page);
+    await page.locator('#slider').fill('400');
+    await page.locator('#slider').dispatchEvent('input');
+
+    const dims = async () => {
+      const b = (await page.locator('#card').boundingBox())!;
+      return { w: Math.round(b.width), h: Math.round(b.height) };
+    };
+    const before = await dims();
+    await page.locator('#rotate-card').click();
+    const after = await dims();
+    // Same rectangle, turned: the long edge is always the slider's value, so
+    // the measurement is identical either way. CSS pixels are square.
+    expect(after.w).toBe(before.h);
+    expect(after.h).toBe(before.w);
+    expect(Math.max(after.w, after.h), 'the long edge is what the slider sets').toBe(400);
+
+    // And it stores the same mm-per-px whichever way up it was measured.
+    await page.getByRole('button', { name: /Looks right/i }).click();
+    await page.getByRole('button', { name: /^Skip$/ }).click();
+    const stored = await page.evaluate(() =>
+      JSON.parse(localStorage.getItem('squintly:calibration') || 'null'),
+    );
+    expect(stored.css_px_per_mm).toBeCloseTo(400 / 85.6, 3);
+  });
+});
+
+test.describe('the board reports effort honestly', () => {
+  // The swap median read 0 for everyone. Responses written before migration
+  // 0019 carry the column's NOT NULL DEFAULT 0, which means "never recorded",
+  // not "never switched" — and with 91 of the first 154 live responses
+  // predating it, the median landed squarely in the backfill (measured
+  // 2026-08-04; the same rows median 69 once excluded).
+  test('swaps come from instrumented trials, and hours are engaged time', async ({ page }) => {
+    await toTrial(page);
+    // Do some real comparing so there is something to measure.
+    for (let i = 0; i < 2; i++) {
+      await satisfyGate(page);
+      await page.keyboard.down('ArrowRight');
+      await page.keyboard.up('ArrowRight');
+      await page.keyboard.down('ArrowLeft');
+      await page.keyboard.up('ArrowLeft');
+      const id = await page.locator('.trial').getAttribute('data-trial-id');
+      await page.locator('.rating-panel button, .pair-panel button').first().click();
+      await expect
+        .poll(async () => page.locator('.trial').getAttribute('data-trial-id'), { timeout: 15_000 })
+        .not.toBe(id);
+      await page.waitForSelector('.viewport.all-ready', { timeout: 20_000 });
+    }
+
+    const board = await page.evaluate(async () => (await fetch('/api/leaderboard')).json());
+    expect(Array.isArray(board)).toBe(true);
+    const mine = board.find((r: { trials: number }) => r.trials > 0);
+    expect(mine, 'this observer should be on the board').toBeTruthy();
+
+    // The counter was exercised, so it must not read as zero.
+    expect(mine.instrumented_trials, 'these trials carry the counter').toBeGreaterThan(0);
+    expect(mine.median_switches, 'and the median must reflect them').toBeGreaterThan(0);
+
+    // Engaged time: real, and bounded by wall-clock — a measure that can exceed
+    // the elapsed session is not a measure of time spent.
+    expect(mine.active_seconds).toBeGreaterThan(0);
+    expect(mine.active_seconds, 'engaged time cannot exceed the session').toBeLessThan(600);
+  });
+});

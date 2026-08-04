@@ -3,6 +3,14 @@
 ## [Unreleased]
 
 ### Fixed
+- **The leaderboard reported "0 swaps" for everyone.** Responses written before
+  migration 0019 carry that column's `NOT NULL DEFAULT 0`, which means *not
+  recorded*, not *did not switch* — and with 91 of the first 154 live responses
+  predating it, the median landed in the backfill. Un-instrumented rows are now
+  excluded (identified by all four per-view columns being zero, which an
+  instrumented trial cannot be), and `instrumented_trials` is published so the
+  figure can be read against its sample. Measured 2026-08-04: median 0 over all
+  rows, 69 over instrumented ones.
 - **Two fingers could not compare.** Holding one half and tapping the other did
   nothing: `pointerdown` committed to a pinch on the second contact and
   `applyHolds` refused to run while two were down, so the hold stack's ordering
@@ -70,6 +78,21 @@
   it (the menu button drove a 52px row); the corpus + license label stays, since
   attribution is a standing commitment, but truncates instead of pushing the row
   taller.
+- **Engaged time per reviewer, in a form that can be billed.**
+  `active_seconds` on the leaderboard, shown as Hours: within a session, the gap
+  between consecutive answers with each gap capped at 5 minutes, plus the first
+  answer's own dwell. Summing `dwell_ms` would undercount (it starts at first
+  paint, missing the wait for the next trial), and last-minus-first would
+  overcount by every break. Reproducible from `responses.tsv` alone, so the
+  figure can be checked rather than trusted.
+- **The calibration card can be turned upright.** A card is 85.6mm on its long
+  edge and a phone is about 65mm wide, so a landscape card cannot fit across a
+  portrait screen — the slider ran out of travel before the rectangle reached a
+  real card, making calibration impossible on the device the study mostly runs
+  on. It now starts turned where the screen is taller than it is wide, and a
+  button flips it either way. CSS pixels are square, so measuring along either
+  axis gives the same mm-per-px and a value stored in one orientation is valid
+  in the other.
 - **The reviewer leaderboard is reachable.** `/api/leaderboard` existed but
   nothing in the app linked to it, so the board was unreachable from the thing
   it was built for. Now a pause-menu entry, rendered inline (the menu is already

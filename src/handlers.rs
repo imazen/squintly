@@ -1327,7 +1327,19 @@ pub struct LeaderboardRow {
     /// decisive differs from fast and careless only by whether they looked.
     pub median_seconds: Option<f64>,
     /// Median view swaps per trial — how much comparing they actually did.
+    ///
+    /// Over instrumented responses only. Rows written before migration 0019
+    /// carry the column's DEFAULT 0, which means "not recorded", not "did not
+    /// switch"; mixing them in put the median in the backfill and showed 0
+    /// swaps for everybody.
     pub median_switches: Option<f64>,
+    /// How many of this reviewer's responses carry per-view instrumentation.
+    /// Published so a swap figure can be read against the sample it came from.
+    pub instrumented_trials: i64,
+    /// Engaged time, in seconds: consecutive answers within a session summed
+    /// with each gap capped at `IDLE_CAP_MS`, plus the first answer's dwell.
+    /// See the derivation at the call site — it is reproducible from the TSV.
+    pub active_seconds: f64,
 }
 
 /// GET /api/leaderboard
@@ -1336,6 +1348,14 @@ pub struct LeaderboardRow {
 /// rewards clicking through, which is the behaviour the honeypots exist to
 /// catch; the client can sort by any column, and the payload carries the
 /// quality fields needed to judge a high count.
+/// Longest gap between two answers still counted as work.
+///
+/// Above this the observer had stopped, and only the cap is credited. Five
+/// minutes is deliberately generous against the observed distribution: live
+/// trials run a median of ~14s but the tail reaches 163s (measured 2026-08-04),
+/// so a tighter cap would start discarding genuine deliberation on hard pairs.
+const IDLE_CAP_MS: i64 = 5 * 60 * 1000;
+
 pub async fn leaderboard(
     State(state): State<SharedState>,
 ) -> Result<Json<Vec<LeaderboardRow>>, AppError> {
@@ -1410,8 +1430,9 @@ pub async fn leaderboard(
             }
         }
 
-        let timing: Vec<(i64, i64)> = sqlx::query_as(
-            "SELECT r.dwell_ms, r.switch_count FROM responses r \
+        let timing: Vec<(i64, i64, i64, i64, i64)> = sqlx::query_as(
+            "SELECT r.dwell_ms, r.switch_count, r.ms_on_a, r.ms_on_b, r.ms_on_ref \
+             FROM responses r \
              JOIN trials t ON t.id = r.trial_id \
              JOIN sessions s ON s.id = t.session_id \
              WHERE s.observer_id = ?",
@@ -1419,6 +1440,23 @@ pub async fn leaderboard(
         .bind(&oid)
         .fetch_all(&state.pool)
         .await?;
+
+        // A response written before migration 0019 has `switch_count` etc. at
+        // their NOT NULL DEFAULT 0 — which is "never recorded", NOT "never
+        // switched". Averaging the two together made the board read 0 swaps for
+        // everyone: 91 of the first 154 live responses predate the migration,
+        // so the median landed in the backfill (measured 2026-08-04 — the same
+        // rows give a median of 69 once excluded).
+        //
+        // The discriminator is reliable rather than a date guess: an
+        // instrumented trial always accrues time on *some* view, because
+        // `closeViewAccounting` closes the open interval when the answer is
+        // committed. All four at zero can only mean the columns did not exist.
+        let instrumented: Vec<(i64, i64)> = timing
+            .iter()
+            .filter(|(_, sw, a, b, r)| !(*sw == 0 && *a == 0 && *b == 0 && *r == 0))
+            .map(|(d, sw, _, _, _)| (*d, *sw))
+            .collect();
         let median = |mut v: Vec<f64>| -> Option<f64> {
             if v.is_empty() {
                 return None;
@@ -1426,6 +1464,49 @@ pub async fn leaderboard(
             v.sort_by(|a, b| a.partial_cmp(b).unwrap());
             Some(v[v.len() / 2])
         };
+
+        // ---- time actually spent, in a form that could be billed ----------
+        //
+        // Neither obvious measure is fair. Summing `dwell_ms` undercounts: it
+        // starts when the stimulus paints, so it excludes waiting for the next
+        // trial to be chosen and downloaded, and the moments between answering
+        // and the next trial appearing. Taking last-response minus
+        // first-response overcounts by every break, meal and overnight gap.
+        //
+        // So: walk each session in order and add the gap between consecutive
+        // answers, capped at `IDLE_CAP_MS`. A gap under the cap is work — the
+        // observer was looking at a trial. A gap over it is someone who walked
+        // away, and only the cap's worth is credited. The first answer of a
+        // session contributes its own dwell, so the first trial is not free.
+        //
+        // This is the standard idle-timeout model used by time trackers, and it
+        // is reproducible from `responses.tsv` alone (`session_id`,
+        // `responded_at`, `dwell_ms`) — deliberately, so the number on the board
+        // can be checked rather than trusted.
+        let marks: Vec<(String, i64, i64)> = sqlx::query_as(
+            "SELECT t.session_id, r.responded_at, r.dwell_ms \
+             FROM responses r \
+             JOIN trials t ON t.id = r.trial_id \
+             JOIN sessions s ON s.id = t.session_id \
+             WHERE s.observer_id = ? \
+             ORDER BY t.session_id, r.responded_at",
+        )
+        .bind(&oid)
+        .fetch_all(&state.pool)
+        .await?;
+        let mut active_ms: i64 = 0;
+        let mut prev: Option<(&str, i64)> = None;
+        for (sid, at, dwell) in &marks {
+            match prev {
+                Some((psid, pat)) if psid == sid => {
+                    active_ms += (at - pat).clamp(0, IDLE_CAP_MS);
+                }
+                // First answer of a session (or the very first).
+                _ => active_ms += (*dwell).clamp(0, IDLE_CAP_MS),
+            }
+            prev = Some((sid, *at));
+        }
+        let active_s = active_ms as f64 / 1000.0;
 
         out.push(LeaderboardRow {
             handle: crate::handle::handle_for(&identity, &salt),
@@ -1438,9 +1519,13 @@ pub async fn leaderboard(
             },
             self_agreement: (comparable > 0).then(|| agree as f32 / comparable as f32),
             repeat_pairs: comparable,
-            median_seconds: median(timing.iter().map(|(d, _)| *d as f64 / 1000.0).collect())
+            // Dwell has been recorded since the first migration, so it spans
+            // every response; swaps only exist on instrumented ones.
+            median_seconds: median(timing.iter().map(|(d, ..)| *d as f64 / 1000.0).collect())
                 .map(|v| (v * 10.0).round() / 10.0),
-            median_switches: median(timing.iter().map(|(_, s)| *s as f64).collect()),
+            median_switches: median(instrumented.iter().map(|(_, s)| *s as f64).collect()),
+            instrumented_trials: instrumented.len() as i64,
+            active_seconds: active_s,
         });
     }
     out.sort_by_key(|r| std::cmp::Reverse(r.trials));

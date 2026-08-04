@@ -182,6 +182,28 @@ web component from `~/work/efficient-ui/`. No framework.
   *is* the resting view, so `ms_on_a + ms_on_b` would grow while someone sits
   doing nothing. Never fires on a single-stimulus trial (no tie to offer) or
   before the seen-both gate is satisfied.
+- **A DEFAULT-0 backfill is not data.** Columns added by a migration arrive on
+  every existing row as `NOT NULL DEFAULT 0`, which means *not recorded* — never
+  *measured as zero*. The leaderboard averaged the two together and reported "0
+  swaps" for everybody, because 91 of the first 154 live responses predate
+  migration 0019 and the median landed in the backfill (measured 2026-08-04; the
+  same rows median 69 once excluded). `leaderboard` now filters on
+  `switch_count = 0 AND ms_on_a = 0 AND ms_on_b = 0 AND ms_on_ref = 0` — reliable
+  rather than a date guess, because an instrumented trial always accrues time on
+  *some* view when `closeViewAccounting` closes the open interval at commit —
+  and publishes `instrumented_trials` so the figure can be read against its
+  sample. Any future effort column needs the same treatment.
+- **Billable time is engaged time, with an idle cap.** `active_seconds` on the
+  leaderboard: within a session, the gap between consecutive answers, each
+  capped at `IDLE_CAP_MS` (5 min), plus the first answer's dwell. Neither naive
+  measure is fair — summing `dwell_ms` undercounts (it starts at first paint, so
+  it excludes waiting for the next trial to be chosen and fetched), and
+  last-minus-first overcounts by every break and overnight gap. The cap is
+  generous against the observed distribution on purpose: trials run a median
+  ~14s but the tail reaches 163s, so a tighter one would discard genuine
+  deliberation on hard pairs. Deliberately reproducible from `responses.tsv`
+  alone (`session_id`, `responded_at`, `dwell_ms`) so the number can be checked
+  rather than trusted.
 - **A response can be revised, never deleted — and the first answer survives.**
   Undo (migration 0020) writes `original_choice` / `revised_at` /
   `revision_count`; `choice` holds the answer that counts. Deleting the first

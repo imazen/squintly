@@ -9,6 +9,14 @@ import {
   useMode,
 } from './helpers';
 
+/// Every way a reference image can be requested.
+///
+/// Sources are served straight from the store when the browser can reach it,
+/// and through `/api/proxy/source/` when it cannot. A route pattern covering
+/// only one of those silently stops matching the day the other is used — which
+/// is exactly how the loading assertion below went vacuous once before.
+const SOURCE_ROUTE = /\/(api\/proxy\/source\/|api\/sources\/)/;
+
 /// Get onto a trial screen with the images decoded.
 async function toTrial(page: import('@playwright/test').Page) {
   await gotoFresh(page);
@@ -92,7 +100,7 @@ test.describe('trial input', () => {
     // Hold the images so the loading state is observable rather than a flash.
     let release: () => void = () => {};
     const gate = new Promise<void>((r) => (release = r));
-    await page.route('**/api/proxy/source/**', async (route) => {
+    await page.route(SOURCE_ROUTE, async (route) => {
       await gate;
       await route.continue();
     });
@@ -101,9 +109,10 @@ test.describe('trial input', () => {
 
     // The reference is held on the wire, so the trial cannot be complete —
     // asserted unconditionally. This used to be wrapped in `if (loading)`,
-    // which made it vacuous: the route pattern matched nothing (references are
-    // served from /api/proxy/source/, not /api/sources/), so the gate never
-    // applied and the branch never ran.
+    // which made it vacuous: the route pattern matched nothing, so the gate
+    // never applied and the branch never ran. `SOURCE_ROUTE` covers both the
+    // direct store URL and the proxy, so it cannot silently stop matching
+    // again.
     const state = await page.evaluate(() => {
       const btn = document.querySelector<HTMLButtonElement>(
         '.rating-panel button, .pair-panel button',
@@ -459,7 +468,7 @@ test.describe('no flash on switch', () => {
     let release: () => void = () => {};
     const gate = new Promise<void>((r) => (release = r));
     let gated = 0;
-    await page.route('**/api/proxy/source/**', async (route) => {
+    await page.route(SOURCE_ROUTE, async (route) => {
       gated += 1;
       await gate;
       await route.continue();

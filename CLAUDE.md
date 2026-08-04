@@ -382,6 +382,20 @@ is that the curator UI is currently usable by an anonymous operator, so gating
 these turns curation into a sign-in-required flow. **Decide that trade before
 advertising the live URL widely.**
 
+### Trial images are served DIRECT; the proxy is for canvas paths only
+
+`handlers::source_url` / `encoding_url` hand the browser the store's own URL
+whenever the store is web-reachable (`CoefficientSource::public_source_url`),
+falling back to `/api/proxy/...` for `Fs`/`Disabled` or when
+`SQUINTLY_DIRECT_BLOBS=0` forces it (an IP-allowlisted origin). Everything used
+to be proxied, so the server fetched and re-served every stimulus — up to 9.5 MB
+each — and added a whole round trip to the thing the observer is waiting for.
+`HttpCoefficient` sends no credentials, so anything it can fetch is by
+construction fetchable by the browser too.
+
+The proxy is NOT dead: the note below is why. Anything reading canvas pixels
+must keep using it.
+
 ### R2 corpus blobs have no CORS — canvas paths must use the proxy
 
 The canonical bucket (`pub-…​.r2.dev`) serves blobs with **no**

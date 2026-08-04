@@ -1332,6 +1332,7 @@ export function startTrials(
         ['kind', trial.kind],
         ['session', sessionId],
         ['study', loadStudyId() ?? '(default)'],
+        ...(trial.source_filename ? [['source file', trial.source_filename] as [string, string]] : []),
         ['source sha256', trial.source_hash],
         ['source size', `${trial.source_w} x ${trial.source_h}`],
         ['corpus', trial.source_corpus ?? 'unknown'],

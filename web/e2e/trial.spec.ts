@@ -260,7 +260,12 @@ test.describe('trial loop', () => {
     expect(a, 'A and B must be different encodings').not.toBe(b);
     expect(ref, 'the reference must differ from A').not.toBe(a);
     expect(ref, 'the reference must differ from B').not.toBe(b);
-    expect(ref, 'the reference should be the source proxy').toContain('/api/proxy/source/');
+    // Direct from the store where the browser can reach it, through the proxy
+    // where it cannot — either is a reference, and which one is a deployment
+    // property rather than something this test should pin.
+    expect(ref, 'the reference must come from the source, not an encoding').toMatch(
+      /\/(api\/proxy\/source\/|api\/sources\/)/,
+    );
   });
 
   /// Magnification is integer-only and nearest-neighbour, and never goes below

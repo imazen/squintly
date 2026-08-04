@@ -77,6 +77,38 @@ impl CoefficientSource {
             Self::Disabled => Ok(Manifest::default()),
         }
     }
+    /// A URL the BROWSER can fetch this blob from directly, if one exists.
+    ///
+    /// The proxy exists for the canvas paths (the curator's threshold encoder
+    /// reads pixels back, and R2 serves the corpus without CORS). Plain `<img>`
+    /// display needs none of that — so routing every trial image through the
+    /// server just made it pay for bytes twice, on stimuli up to 9.5 MB, adding
+    /// a whole round trip of latency to the thing the observer is waiting for.
+    ///
+    /// `Http` can always answer: it sends no credentials, so anything it can
+    /// fetch is by construction fetchable by anyone. `Fs` cannot — local files
+    /// are not web-reachable — and neither can `Disabled`, so both keep the
+    /// proxy.
+    pub fn public_source_url(&self, hash: &str) -> Option<String> {
+        match self {
+            Self::Http(c) => c
+                .url(&format!("/api/sources/{hash}/image"))
+                .ok()
+                .map(Into::into),
+            _ => None,
+        }
+    }
+
+    pub fn public_encoding_url(&self, id: &str) -> Option<String> {
+        match self {
+            Self::Http(c) => c
+                .url(&format!("/api/encodings/{id}/image"))
+                .ok()
+                .map(Into::into),
+            _ => None,
+        }
+    }
+
     pub async fn fetch_source_png(&self, hash: &str) -> Result<(Vec<u8>, String)> {
         match self {
             Self::Http(c) => c
@@ -128,7 +160,7 @@ impl HttpCoefficient {
     }
 
     /// `path` must be relative (no leading `/`) so any base prefix survives.
-    fn url(&self, path: &str) -> Result<url::Url> {
+    pub(crate) fn url(&self, path: &str) -> Result<url::Url> {
         Ok(self.base.join(path.trim_start_matches('/'))?)
     }
 }

@@ -2,6 +2,19 @@
 
 ## [Unreleased]
 
+### Changed
+- **Trial images are fetched straight from the store.** Every stimulus was
+  proxied through the server, which paid for the bytes twice — a real source is
+  9.5 MB — and added a round trip to the thing the observer is waiting on. The
+  browser now gets the store's own URL wherever the store is web-reachable;
+  `HttpCoefficient` sends no credentials, so anything it can fetch is by
+  construction fetchable directly. The proxy stays for the canvas paths (R2
+  serves the corpus without CORS) and for stores the browser cannot reach, and
+  `SQUINTLY_DIRECT_BLOBS=0` forces it back for an IP-allowlisted origin.
+- **The identifier panel lists the source filename.** Every imazen26 source
+  carries a meaningful one, and it is what a person uses to find the picture
+  again — a sha256 identifies an image but says nothing about what it is.
+
 ### Fixed
 - **The leaderboard reported "0 swaps" for everyone.** Responses written before
   migration 0019 carry that column's `NOT NULL DEFAULT 0`, which means *not

@@ -663,3 +663,31 @@ test.describe('the board reports effort honestly', () => {
     expect(mine.active_seconds, 'engaged time cannot exceed the session').toBeLessThan(600);
   });
 });
+
+test.describe('images come from the store', () => {
+  // Proxying every trial image made the server pay for the bytes twice — a real
+  // source is 9.5 MB — and added a round trip to the thing the observer is
+  // waiting for. The proxy exists for the canvas paths (R2 serves the corpus
+  // without CORS), and plain <img> display needs none of that.
+  test('trial images are fetched direct, not through the proxy', async ({ page }) => {
+    await toTrial(page);
+    const urls = await page.evaluate(() =>
+      [...document.querySelectorAll<HTMLImageElement>('.viewport img.layer')].map((i) => i.src),
+    );
+    expect(urls.length).toBeGreaterThanOrEqual(2);
+    for (const u of urls) {
+      expect(u, `${u} should not be proxied`).not.toContain('/api/proxy/');
+    }
+  });
+
+  // A sha256 identifies an image; it does not say what it is. Every imazen26
+  // source carries a meaningful filename, and it is what a person uses to find
+  // the picture again when reporting a bad encode.
+  test('the identifier panel lists the source filename', async ({ page }) => {
+    await toTrial(page);
+    await page.locator('#info-btn').click();
+    const text = await page.locator('.info-help').innerText();
+    expect(text).toContain('source file');
+    expect(text).toMatch(/source file\s+\S+/);
+  });
+});

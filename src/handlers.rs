@@ -353,6 +353,10 @@ pub struct TrialPayload {
     pub kind: &'static str, // "single" | "pair"
     pub source_hash: String,
     pub source_url: String,
+    /// The store's own name for this image. Every imazen26 source has a
+    /// meaningful one, and it is what a person uses to find the picture again —
+    /// a sha256 identifies it but says nothing about what it is.
+    pub source_filename: Option<String>,
     pub source_w: u32,
     pub source_h: u32,
     /// Corpus name from the manifest (`SourceMeta::corpus`). Used by the
@@ -698,14 +702,15 @@ pub async fn next_trial(
                 trial_id,
                 kind: "single",
                 source_hash: source.hash.clone(),
-                source_url: format!("/api/proxy/source/{}", source.hash),
+                source_url: source_url(&state, &source.hash),
+                source_filename: source.filename.clone(),
                 source_w: source.width,
                 source_h: source.height,
                 source_corpus: source.corpus.clone(),
                 source_license_id: policy.id.to_string(),
                 source_license_label: policy.label,
                 a: TrialEncoding {
-                    url: format!("/api/proxy/encoding/{}", encoding.id),
+                    url: encoding_url(&state, &encoding.id),
                     encoding_id: encoding.id.clone(),
                     codec: encoding.codec.clone(),
                     quality: encoding.quality,
@@ -761,21 +766,22 @@ pub async fn next_trial(
                 trial_id,
                 kind: "pair",
                 source_hash: source.hash.clone(),
-                source_url: format!("/api/proxy/source/{}", source.hash),
+                source_url: source_url(&state, &source.hash),
+                source_filename: source.filename.clone(),
                 source_w: source.width,
                 source_h: source.height,
                 source_corpus: source.corpus.clone(),
                 source_license_id: policy.id.to_string(),
                 source_license_label: policy.label,
                 a: TrialEncoding {
-                    url: format!("/api/proxy/encoding/{}", a.id),
+                    url: encoding_url(&state, &a.id),
                     encoding_id: a.id.clone(),
                     codec: a.codec.clone(),
                     quality: a.quality,
                     bytes: a.bytes,
                 },
                 b: Some(TrialEncoding {
-                    url: format!("/api/proxy/encoding/{}", b.id),
+                    url: encoding_url(&state, &b.id),
                     encoding_id: b.id.clone(),
                     codec: b.codec.clone(),
                     quality: b.quality,
@@ -1348,6 +1354,35 @@ pub struct LeaderboardRow {
 /// rewards clicking through, which is the behaviour the honeypots exist to
 /// catch; the client can sort by any column, and the payload carries the
 /// quality fields needed to judge a high count.
+/// Where the browser should fetch a trial's images from.
+///
+/// Direct from the store when it is web-reachable, so the server does not pay
+/// for every stimulus twice — a real source is 9.5 MB, and proxying it added a
+/// full round trip to the thing the observer is waiting on. The proxy remains
+/// for the canvas paths (see `blob_proxy`) and for stores the browser cannot
+/// reach, and `SQUINTLY_DIRECT_BLOBS=0` forces it back for an origin that is
+/// IP-allowlisted rather than public.
+fn direct_blobs_enabled() -> bool {
+    !matches!(
+        std::env::var("SQUINTLY_DIRECT_BLOBS").as_deref(),
+        Ok("0") | Ok("false")
+    )
+}
+
+fn source_url(state: &AppState, hash: &str) -> String {
+    direct_blobs_enabled()
+        .then(|| state.coefficient.public_source_url(hash))
+        .flatten()
+        .unwrap_or_else(|| format!("/api/proxy/source/{hash}"))
+}
+
+fn encoding_url(state: &AppState, id: &str) -> String {
+    direct_blobs_enabled()
+        .then(|| state.coefficient.public_encoding_url(id))
+        .flatten()
+        .unwrap_or_else(|| format!("/api/proxy/encoding/{id}"))
+}
+
 /// Longest gap between two answers still counted as work.
 ///
 /// Above this the observer had stopped, and only the cap is credited. Five

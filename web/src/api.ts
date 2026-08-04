@@ -59,6 +59,9 @@ export interface TrialPayload {
   kind: 'single' | 'pair';
   source_hash: string;
   source_url: string;
+  /// The store's own name for the image. A sha256 identifies it; the filename
+  /// is what a person uses to find it again.
+  source_filename: string | null;
   source_w: number;
   source_h: number;
   source_corpus: string | null;

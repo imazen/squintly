@@ -114,24 +114,31 @@ test.describe('trial input', () => {
     ).toBeEnabled();
   });
 
-  test('arrows cycle the view and space peeks at the original', async ({ page }) => {
+  // Arrows are HELD, not tapped. They used to step a carousel, which meant the
+  // keyboard and the mouse disagreed about what "left" does — the mouse held a
+  // view down while the keyboard latched one.
+  test('arrows and space hold rather than latch', async ({ page }) => {
     await toTrial(page);
     const shown = () =>
       page.evaluate(
         () => document.querySelector<HTMLImageElement>('.viewport img.shown')!.dataset.layer,
       );
 
-    const first = await shown();
-    await page.keyboard.press('ArrowRight');
-    expect(await shown(), 'ArrowRight must change the view').not.toBe(first);
-    await page.keyboard.press('ArrowLeft');
-    expect(await shown(), 'ArrowLeft must come back').toBe(first);
+    const rest = await shown();
+    await page.keyboard.down('ArrowLeft');
+    expect(await shown(), 'ArrowLeft holds A').toBe('a');
+    await page.keyboard.up('ArrowLeft');
+    expect(await shown(), 'releasing returns to rest').toBe(rest);
 
     await page.keyboard.down(' ');
-    expect(await shown(), 'holding space shows the original').toBe('ref');
+    expect(await shown(), 'space peeks at the original').toBe('ref');
     await expect(page.locator('.trial.revealing')).toHaveCount(1);
     await page.keyboard.up(' ');
-    expect(await shown(), 'releasing space returns to the judged image').toBe(first);
+    expect(await shown(), 'releasing space returns to rest').toBe(rest);
+
+    // A tap must not leave the view advanced.
+    await page.keyboard.press('ArrowLeft');
+    expect(await shown(), 'a tap must not latch').toBe(rest);
   });
 
   test('number keys rate a single-stimulus trial', async ({ page }) => {
@@ -535,5 +542,110 @@ test.describe('default input mode', () => {
       () => document.querySelector<HTMLElement>('.trial')!.dataset.inputMode,
     );
     expect(after, 'the chosen mode must survive a reload').toBe(other);
+  });
+});
+
+test.describe('hold ordering through the UI', () => {
+  // The stack's unit tests prove the logic; this proves it is actually wired to
+  // the mouse, in every mode, including the fall-back-on-release cases.
+  for (const mode of ['tap', 'hold', 'buttons'] as const) {
+    test(`right button shows B in ${mode} mode, and releasing falls back`, async ({
+      page,
+    }, testInfo) => {
+      test.skip(testInfo.project.name !== 'chromium-desktop', 'needs mouse buttons');
+      await toTrial(page);
+      expect(await toKind(page, 'pair'), 'needed a pair trial').toBe(true);
+      await page.locator('#input-mode').selectOption(mode);
+      await page.waitForSelector(`.trial[data-input-mode="${mode}"]`);
+      await page.waitForSelector('.viewport.all-ready');
+
+      const shown = () =>
+        page.evaluate(
+          () => document.querySelector<HTMLImageElement>('.viewport img.shown')!.dataset.layer,
+        );
+      const box = (await page.locator('#viewport').boundingBox())!;
+      // Deliberately the LEFT half, so `hold` mode's positional left button
+      // does not coincide with what the right button does.
+      const x = box.x + box.width * 0.25;
+      const y = box.y + box.height / 2;
+      await page.mouse.move(x, y);
+
+      const rest = await shown();
+
+      // Right button → B, regardless of mode or position.
+      await page.mouse.down({ button: 'right' });
+      expect(await shown(), `right button in ${mode}`).toBe('b');
+      await page.mouse.up({ button: 'right' });
+      expect(await shown(), 'released → resting').toBe(rest);
+
+      // LMB held, then RMB → B; release RMB → back to whatever LMB shows.
+      await page.mouse.down({ button: 'left' });
+      const underLeft = await shown();
+      await page.mouse.down({ button: 'right' });
+      expect(await shown(), 'newest hold wins').toBe('b');
+      await page.mouse.up({ button: 'right' });
+      expect(await shown(), 'LMB still down → falls back to it').toBe(underLeft);
+      await page.mouse.up({ button: 'left' });
+      expect(await shown(), 'all released → resting').toBe(rest);
+    });
+  }
+
+  test('RMB held, LMB pressed and released, returns to B', async ({ page }, testInfo) => {
+    test.skip(testInfo.project.name !== 'chromium-desktop', 'needs mouse buttons');
+    await toTrial(page);
+    expect(await toKind(page, 'pair'), 'needed a pair trial').toBe(true);
+    await page.locator('#input-mode').selectOption('buttons');
+    await page.waitForSelector('.trial[data-input-mode="buttons"]');
+    await page.waitForSelector('.viewport.all-ready');
+
+    const shown = () =>
+      page.evaluate(
+        () => document.querySelector<HTMLImageElement>('.viewport img.shown')!.dataset.layer,
+      );
+    const box = (await page.locator('#viewport').boundingBox())!;
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+
+    await page.mouse.down({ button: 'right' });
+    expect(await shown()).toBe('b');
+    await page.mouse.down({ button: 'left' });
+    expect(await shown()).toBe('a');
+    await page.mouse.up({ button: 'left' });
+    expect(await shown(), 'RMB still down → back to B').toBe('b');
+
+    // Releasing the *underneath* hold while A is on top changes nothing...
+    await page.mouse.down({ button: 'left' });
+    expect(await shown()).toBe('a');
+    await page.mouse.up({ button: 'right' });
+    expect(await shown(), 'A was on top').toBe('a');
+    // ...and pressing it again puts B back on top.
+    await page.mouse.down({ button: 'right' });
+    expect(await shown()).toBe('b');
+    await page.mouse.up({ button: 'right' });
+    await page.mouse.up({ button: 'left' });
+  });
+
+  // Arrows are HELD now, not tapped — they used to step a carousel.
+  test('arrow keys hold rather than toggle, and stack with each other', async ({ page }) => {
+    await toTrial(page);
+    expect(await toKind(page, 'pair'), 'needed a pair trial').toBe(true);
+    const shown = () =>
+      page.evaluate(
+        () => document.querySelector<HTMLImageElement>('.viewport img.shown')!.dataset.layer,
+      );
+    const rest = await shown();
+
+    await page.keyboard.down('ArrowRight');
+    expect(await shown(), 'ArrowRight holds B').toBe('b');
+    await page.keyboard.down('ArrowLeft');
+    expect(await shown(), 'newest hold wins').toBe('a');
+    await page.keyboard.up('ArrowLeft');
+    expect(await shown(), 'ArrowRight still down').toBe('b');
+    await page.keyboard.up('ArrowRight');
+    expect(await shown(), 'released → resting').toBe(rest);
+
+    // Held, not toggled: pressing and releasing returns to rest rather than
+    // leaving the view advanced.
+    await page.keyboard.press('ArrowRight');
+    expect(await shown(), 'a tap must not latch').toBe(rest);
   });
 });

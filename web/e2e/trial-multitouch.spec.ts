@@ -106,10 +106,13 @@ test.describe('multi-touch', () => {
     const cy = box.y + box.height / 2;
     const cx = box.x + box.width / 2;
 
-    // Not necessarily 1x: an undersized stimulus is magnified to cover the
-    // frame on load, so read the starting factor rather than assume it.
-    const start = Number((await page.locator('#zoom-readout').textContent())!.replace('×', ''));
-    expect(start).toBeGreaterThanOrEqual(1);
+    // Reset to 1x so there is headroom to magnify into. An undersized stimulus
+    // is magnified to cover the frame on load, and a small source can land on
+    // the ladder's 8x cap — where spreading the fingers correctly does nothing.
+    // `0` is an explicit choice, which outranks the cover default.
+    await page.keyboard.press('0');
+    await expect(page.locator('#zoom-readout')).toHaveText('1×');
+    const start = 1;
 
     // Two fingers 60px apart, spread to 240px — a 4x span.
     await touch(page, 'pointerdown', 1, cx - 30, cy);

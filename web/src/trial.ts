@@ -5,6 +5,13 @@
 import { nextTrial, recordResponse, type TrialPayload } from './api';
 import { captureTrial, loadCalibration } from './conditions';
 import {
+  HoldStack,
+  buttonForKey,
+  diffButtons,
+  holdIdFor,
+  viewForPress,
+} from './hold-stack';
+import {
   INPUT_MODE_LABELS,
   availableInputModes,
   type InputMode,
@@ -329,7 +336,6 @@ export function startTrials(root: HTMLElement, sessionId: string): TrialControll
       }
       currentSrc = which;
       viewport.dataset.view = which;
-      if (which !== 'ref') choiceSrc = which;
       // Marks "you are looking at the original" — accents the hint pill, and is
       // what the e2e suite reads to tell the two states apart. Correct in both
       // modes: under `hold` the reference is the resting view, so it is on
@@ -426,7 +432,13 @@ export function startTrials(root: HTMLElement, sessionId: string): TrialControll
     viewSwitch.querySelectorAll<HTMLButtonElement>('button').forEach((b) => {
       b.addEventListener('click', () => {
         const v = b.dataset.view as View | undefined;
-        if (v) showView(v);
+        if (!v) return;
+        // An explicit pick moves the resting view; a transient hold must not.
+        // `showView` used to set `choiceSrc` itself, so peeking at B with the
+        // right button silently redefined "resting" as B and releasing left it
+        // there — the hold never came back.
+        if (v !== 'ref') choiceSrc = v;
+        showView(v);
       });
     });
 
@@ -484,8 +496,6 @@ export function startTrials(root: HTMLElement, sessionId: string): TrialControll
       startY: number;
       lastX: number;
       lastY: number;
-      /// Which variant this finger/button selects, decided on press.
-      view: View | null;
       downAt: number;
       moved: boolean;
     }
@@ -514,23 +524,65 @@ export function startTrials(root: HTMLElement, sessionId: string): TrialControll
       return x < r.left + r.width / 2 ? 'left' : 'right';
     };
 
-    /// The variant a given press selects, per input mode.
-    const viewForPress = (e: PointerEvent): View | null => {
-      if (inputMode === 'buttons') return e.button === 2 && isPair ? 'b' : 'a';
-      if (inputMode === 'hold') return pressedHalf(e.clientX) === 'right' && isPair ? 'b' : 'a';
-      return 'ref'; // `tap`: press-and-hold peeks at the reference
+    /// Every held input — mouse buttons, touches and keys alike — in one stack.
+    /// The most recent still-held press decides what is on screen; releasing it
+    /// falls back to the next one down rather than to the resting view. See
+    /// `hold-stack.ts` for the table and the ordering cases.
+    const holds = new HoldStack();
+
+    /// What is on screen when nothing is held. Under `tap` that is the variant
+    /// the observer last chose with the view switch, not a fixed side.
+    const restingNow = (): View => (inputMode === 'tap' ? choiceSrc : 'ref');
+
+    /// Apply whatever the stack currently implies.
+    ///
+    /// Suppressed mid-pinch: sizing the picture is not a comparison gesture, so
+    /// the second contact must not swap the variant under it. The holds are
+    /// still tracked, so lifting one finger falls back to the other rather than
+    /// to the resting view — clearing them here is what reintroduced "two
+    /// fingers, lift one, the original appears".
+    const applyHolds = () => {
+      if (gesture === 'pinch' || held.size >= 2) return;
+      showView(holds.resolve(restingNow()));
     };
 
-    /// The view implied by whatever is still held — the most recent remaining
-    /// press wins. Lifting one finger while another is down must leave the
-    /// other finger's variant on screen, not snap to the resting view.
-    const viewFromHeld = (): View => {
-      let latest: Held | null = null;
-      for (const h of held.values()) {
-        if (h.view && (!latest || h.downAt > latest.downAt)) latest = h;
+    /// Mouse button state, reconciled from the `buttons` bitmask on every
+    /// pointer event — a second button press fires no `pointerdown`, so
+    /// down/up events alone cannot see it. See `diffButtons`.
+    let lastButtons = 0;
+    const syncButtons = (e: PointerEvent) => {
+      if (e.pointerType === 'mouse') {
+        const { pressed, released } = diffButtons(lastButtons, e.buttons, e.pointerId);
+        lastButtons = e.buttons;
+        for (const id of released) holds.release(id);
+        for (const { id, button } of pressed) {
+          holds.press(
+            id,
+            viewForPress(button, {
+              mode: inputMode,
+              isPair,
+              half: pressedHalf(e.clientX),
+            }),
+          );
+        }
+        if (pressed.length || released.length) applyHolds();
+        return;
       }
-      if (latest?.view) return latest.view;
-      return inputMode === 'tap' ? choiceSrc : 'ref';
+      // Touch: one contact, one hold, keyed by pointer.
+      const id = holdIdFor(e.pointerType, e.pointerId, e.button);
+      if (e.type === 'pointerdown') {
+        holds.press(
+          id,
+          viewForPress('touch', {
+            mode: inputMode,
+            isPair,
+            half: pressedHalf(e.clientX),
+          }),
+        );
+      } else {
+        holds.release(id);
+      }
+      applyHolds();
     };
 
     const twoPointerDistance = (): number => {
@@ -611,19 +663,28 @@ export function startTrials(root: HTMLElement, sessionId: string): TrialControll
     // and desktop, which would interrupt the hold exactly when it is the
     // primary gesture.
     viewport.addEventListener('contextmenu', (e) => {
-      if (inputMode !== 'tap') e.preventDefault();
+      // The right button means B in every mode, so the context menu must never
+      // interrupt it. It is also the only event some browsers deliver for a
+      // right press while another button is held, so reconcile from it.
+      e.preventDefault();
+      if ('buttons' in e) syncButtons(e as PointerEvent);
     });
 
     viewport.addEventListener('pointerdown', (e: PointerEvent) => {
-      held.set(e.pointerId, {
-        startX: e.clientX,
-        startY: e.clientY,
-        lastX: e.clientX,
-        lastY: e.clientY,
-        view: viewForPress(e),
-        downAt: performance.now(),
-        moved: false,
-      });
+      // A mouse fires `pointerdown` again for a second button on the SAME
+      // pointer id. Restarting the drag record under it would zero an
+      // in-progress pan, so only the first press of a pointer creates one.
+      if (!held.has(e.pointerId)) {
+        held.set(e.pointerId, {
+          startX: e.clientX,
+          startY: e.clientY,
+          lastX: e.clientX,
+          lastY: e.clientY,
+          downAt: performance.now(),
+          moved: false,
+        });
+      }
+      syncButtons(e);
       try {
         viewport.setPointerCapture(e.pointerId);
       } catch {
@@ -641,10 +702,13 @@ export function startTrials(root: HTMLElement, sessionId: string): TrialControll
         return;
       }
       gesture = 'none';
-      showView(viewFromHeld());
+      applyHolds();
     });
 
     viewport.addEventListener('pointermove', (e: PointerEvent) => {
+      // Button changes arrive here, not as down/up, whenever another button is
+      // already held.
+      syncButtons(e);
       const h = held.get(e.pointerId);
       if (!h) return;
       const dx = e.clientX - h.lastX;
@@ -689,6 +753,10 @@ export function startTrials(root: HTMLElement, sessionId: string): TrialControll
     const endPointer = (e: PointerEvent) => {
       const h = held.get(e.pointerId);
       if (!h) return;
+      syncButtons(e);
+      // `buttons` is the bitmask of what is STILL down. A mouse with another
+      // button held is not finished, so the drag record stays.
+      if (e.pointerType === 'mouse' && e.buttons !== 0) return;
       held.delete(e.pointerId);
       try {
         viewport.releasePointerCapture(e.pointerId);
@@ -718,10 +786,11 @@ export function startTrials(root: HTMLElement, sessionId: string): TrialControll
 
       if (held.size === 0) {
         gesture = 'none';
+        lastButtons = 0;
         viewport.classList.remove('panning');
       }
       // Whatever is still held decides what stays on screen.
-      showView(viewFromHeld());
+      applyHolds();
     };
     viewport.addEventListener('pointerup', endPointer);
     viewport.addEventListener('pointercancel', endPointer);
@@ -809,10 +878,6 @@ export function startTrials(root: HTMLElement, sessionId: string): TrialControll
     // be the zoom ladder. On pair trials nothing owns the digits, so there they
     // do select magnification. `+` / `-` / `0` zoom in every trial type, which
     // is the mapping to reach for if you want one that never changes meaning.
-    const cycle = (dir: 1 | -1) => {
-      const i = views.indexOf(currentSrc);
-      showView(views[(i + dir + views.length) % views.length]);
-    };
 
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.metaKey || e.ctrlKey || e.altKey) return;
@@ -833,15 +898,21 @@ export function startTrials(root: HTMLElement, sessionId: string): TrialControll
 
       state.keyboardUsed = true;
 
+      // Arrows and space are HELD, not tapped: they go through the same stack
+      // as the mouse buttons, so ordering behaves identically on either input.
+      const btn = buttonForKey(k);
+      if (btn) {
+        e.preventDefault();
+        // `repeat` fires continuously while a key is down; re-pressing would
+        // be idempotent anyway, but this keeps reveal accounting honest.
+        if (!e.repeat) {
+          holds.press(`k${btn}`, viewForPress(btn, { mode: inputMode, isPair, half: null }));
+          applyHolds();
+        }
+        return;
+      }
+
       switch (k) {
-        case 'ArrowRight':
-          e.preventDefault();
-          cycle(1);
-          return;
-        case 'ArrowLeft':
-          e.preventDefault();
-          cycle(-1);
-          return;
         case 'ArrowUp':
         case '+':
         case '=':
@@ -857,12 +928,6 @@ export function startTrials(root: HTMLElement, sessionId: string): TrialControll
         case '0':
           e.preventDefault();
           applyZoom(1);
-          return;
-        case ' ':
-          // Hold to peek at the reference; `repeat` fires while held, and
-          // re-entering would inflate the reveal count.
-          e.preventDefault();
-          if (!e.repeat) showView('ref');
           return;
       }
 
@@ -884,7 +949,10 @@ export function startTrials(root: HTMLElement, sessionId: string): TrialControll
     };
 
     const onKeyUp = (e: KeyboardEvent) => {
-      if (e.key === ' ') showView(inputMode === 'tap' ? choiceSrc : 'ref');
+      const btn = buttonForKey(e.key);
+      if (!btn) return;
+      holds.release(`k${btn}`);
+      applyHolds();
     };
 
     window.addEventListener('keydown', onKeyDown);

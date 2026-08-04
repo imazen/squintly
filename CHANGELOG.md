@@ -3,6 +3,51 @@
 ## [Unreleased]
 
 ### Changed
+- **All input logic is centralised in `web/src/hold-stack.ts`** — one table for
+  what a press shows, one stack for what wins when several are held. It was four
+  places that each half-decided the answer and disagreed: a pointer resolver, a
+  release resolver, a keyboard `cycle()` that toggled instead of holding, and a
+  space-bar branch.
+
+  | input | tap | hold | buttons |
+  |---|---|---|---|
+  | LMB / touch | ref (peek) | half: L→a R→b | a |
+  | RMB | **b** | **b** | **b** |
+  | ArrowLeft | a | a | a |
+  | ArrowRight | **b** | **b** | **b** |
+  | Space | ref | ref | ref |
+
+  - **The right button always means B**, in every mode — the one binding that
+    never changes meaning. The left button is the mode-dependent one.
+  - **Arrow keys are held, not tapped.** They used to step a carousel, so the
+    keyboard and the mouse disagreed about what "left" does.
+  - **Ordering is a stack**: the most recent still-held press wins, and
+    releasing falls back to the next one still down. A "current wins" rule gets
+    the first case right and the rest wrong; "first wins" gets the opposite set
+    wrong. Keyboard and pointer share one stack.
+  - On a single-stimulus trial anything selecting B collapses to the other
+    available view, so no binding goes dead. A and the reference exist on every
+    trial and are unaffected.
+
+### Fixed
+- **A second mouse button was invisible.** Per Pointer Events, `pointerdown`
+  fires only on the no-buttons→some-button transition, so pressing a second
+  button while one is held fires *no* `pointerdown`, and releasing one of two
+  fires no `pointerup`. Measured in Chromium: `pointerdown buttons=1`, then only
+  `contextmenu buttons=3`, then a single `pointerup buttons=0`. Button state is
+  now reconciled by diffing the `buttons` mask on every pointer event.
+- **Mouse holds were keyed by pointer id**, so the second button replaced the
+  first and one release dropped both — a mouse reports every button on one
+  pointer id. Mouse holds key by button; touches still key by pointer.
+- **A transient hold redefined the resting view.** `showView` set `choiceSrc` on
+  every call, so peeking at B with the right button made B the resting view and
+  releasing left it there. Only an explicit pick on the view switch moves it now.
+- **Two fingers cleared the hold stack**, reintroducing "two fingers, lift one,
+  the original appears" — the bug the stack was added to fix. Holds are kept
+  during a pinch and only the *visual* update is suppressed, so lifting one
+  finger falls back to the other rather than to the resting view.
+
+### Changed
 - **Touch devices default to `hold` mode.** On a phone the segmented control is
   three small targets below the picture, and every switch is a look away from
   the thing being compared; holding one half keeps the eye on the stimulus and

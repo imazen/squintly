@@ -40,6 +40,23 @@ web component from `~/work/efficient-ui/`. No framework.
   the surround of a psychovisual stimulus, so luminance changes shift local
   adaptation and tints bias colour judgements. Nothing may be painted *over*
   the stimulus (see the hint-pill note below).
+- **One table, one stack: `web/src/hold-stack.ts` owns every input.** What a
+  press shows, and what wins when several are held, is decided in exactly one
+  place. It was four that disagreed — a pointer resolver, a release resolver, a
+  keyboard `cycle()` that *toggled* instead of holding, and a space branch.
+  - **The right button always means B**, in every mode. The left button is the
+    mode-dependent one (`tap` peeks at the reference, `hold` is positional,
+    `buttons` is plainly A). Arrows mirror the buttons: left is A, right is B.
+  - **Most recent still-held press wins**; releasing falls back to the next one
+    still down, not to the resting view. Keyboard and pointer share the stack.
+  - **A second mouse button fires no `pointerdown`** — per Pointer Events that
+    only fires on the no-buttons→some-button transition, so the second press
+    arrives as `pointermove` with a changed `buttons` mask (measured: Chromium
+    delivers `contextmenu buttons=3` and nothing else). Button state is
+    reconciled by diffing the mask on every pointer event; anything driven off
+    down/up alone cannot see the middle of the sequence.
+  - Mouse holds key by *button*, touches by *pointer id* — a mouse reports every
+    button on one pointer id.
 - **Trial input modes**: `tap` (default; segmented control + hold-to-peek),
   `hold` (reference at rest, press the left/right half of the frame for A/B),
   `buttons` (same, but the mouse button picks the side — `pointer: fine` only).

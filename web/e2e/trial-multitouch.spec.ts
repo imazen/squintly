@@ -374,3 +374,43 @@ test.describe('undersized stimuli', () => {
     }
   });
 });
+
+test.describe('a moving touch is still a touch', () => {
+  // A thumb resting on glass is never perfectly still. `syncButtons` routed
+  // `pointermove` into its release branch, so one pixel of drift released the
+  // hold and the variant snapped back to the resting view — under `hold`, the
+  // only touch mode, that is the entire gesture. The mouse path was unaffected
+  // (it diffs the button mask), which is why the existing drag test, driven by
+  // `page.mouse`, never saw it.
+  test('dragging during a hold does not release it', async ({ page }) => {
+    await toTrial(page);
+    expect(await toKind(page, 'pair'), 'needed a pair trial').toBe(true);
+    await useMode(page, 'hold');
+    await page.waitForSelector('.viewport:not(.is-loading)');
+
+    const box = (await page.locator('#viewport').boundingBox())!;
+    const y = box.y + box.height / 2;
+    const leftX = box.x + box.width * 0.25;
+    const rest = await shown(page);
+
+    await touch(page, 'pointerdown', 1, leftX, y);
+    expect(await shown(page), 'the left half shows A').toBe('a');
+
+    // One pixel. This alone used to end the hold.
+    await touch(page, 'pointermove', 1, leftX + 1, y);
+    expect(await shown(page), 'a single pixel of drift must not release').toBe('a');
+
+    for (let i = 2; i <= 20; i += 2) {
+      await touch(page, 'pointermove', 1, leftX + i, y);
+    }
+    expect(await shown(page), 'a real drag must not release either').toBe('a');
+
+    // Still A across the midline: the half is decided on press, so a drag
+    // cannot swap the variant mid-comparison.
+    await touch(page, 'pointermove', 1, box.x + box.width * 0.75, y);
+    expect(await shown(page), 'the half is fixed at press time').toBe('a');
+
+    await touch(page, 'pointerup', 1, box.x + box.width * 0.75, y);
+    expect(await shown(page), 'lifting returns to the resting view').toBe(rest);
+  });
+});

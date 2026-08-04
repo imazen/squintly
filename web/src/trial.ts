@@ -677,6 +677,16 @@ export function startTrials(
         return;
       }
       // Touch: one contact, one hold, keyed by pointer.
+      //
+      // Only the events that actually END a contact release it. This was
+      // `else { holds.release(id) }`, and `pointermove` routes through here —
+      // so a single pixel of movement released the hold and the variant snapped
+      // back to the resting view. Under `hold`, the only touch mode, that is
+      // the whole gesture: a thumb resting on the glass is never perfectly
+      // still, so the comparison collapsed almost immediately.
+      //
+      // A moving contact is still a contact. Panning is driven separately from
+      // `held`, so nothing here needs to know about the drag.
       const id = holdIdFor(e.pointerType, e.pointerId, e.button);
       if (e.type === 'pointerdown') {
         holds.press(
@@ -687,8 +697,10 @@ export function startTrials(
             half: pressedHalf(e.clientX),
           }),
         );
-      } else {
+      } else if (e.type === 'pointerup' || e.type === 'pointercancel') {
         holds.release(id);
+      } else {
+        return;
       }
       applyHolds();
     };
@@ -780,19 +792,19 @@ export function startTrials(
 
     // Suppress the native long-press gesture on touch.
     //
-    // Cancelling `contextmenu` is not enough on Android: the long-press
-    // recogniser fires **`pointercancel` first**, and that is not cancellable.
-    // `endPointer` is bound to it — correctly, since a genuinely cancelled
-    // pointer must not leave a stuck hold — so the variant snapped back to the
-    // resting view about a second into a press that was still held. In `hold`
-    // mode that is the primary gesture, so the comparison broke on exactly the
-    // interaction the mode exists for.
+    // Belt-and-braces alongside `touch-action: none` and the `contextmenu`
+    // handler above: on Android the long-press recogniser can fire
+    // `pointercancel`, which is not cancellable, and `endPointer` is bound to
+    // it — correctly, since a genuinely cancelled pointer must not leave a
+    // stuck hold. Preventing the default action of `touchstart` stops the
+    // recogniser before it starts. Pointer events are generated independently
+    // of it, so nothing this code listens to is lost, and `passive: false` is
+    // required or the preventDefault is ignored.
     //
-    // Preventing the default action of `touchstart` stops the recogniser
-    // before it starts. Pointer events are generated independently of it, so
-    // nothing this code listens to is lost; `touch-action: none` already
-    // handles scroll and pinch-zoom, and `passive: false` is required or the
-    // preventDefault is ignored.
+    // This is NOT what caused holds to collapse mid-press — that was
+    // `syncButtons` releasing a touch hold on `pointermove`, see there. Kept
+    // because the callout is a real hazard for a press-and-hold UI, but it
+    // fixed nothing on its own.
     viewport.addEventListener(
       'touchstart',
       (e) => {

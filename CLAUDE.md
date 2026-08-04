@@ -123,16 +123,22 @@ web component from `~/work/efficient-ui/`. No framework.
   chooser renders a how-to instead of a one-option "choice". `loadInputMode`
   demotes a stored mode the device no longer offers, or a phone that picked
   `tap` earlier would be stranded in an unavailable UI.
-- **On touch, `touchstart` must keep its `preventDefault()`.** Android's
-  long-press recogniser fires **`pointercancel` before `contextmenu`**, and that
-  cancel is not cancellable — `endPointer` is bound to it (rightly: a genuinely
-  cancelled pointer must not leave a stuck hold), so a press held for about a
-  second snapped back to the resting view. Suppressing `contextmenu` alone does
-  not help. Pointer events are generated independently of the touch default
-  action, so preventing it costs nothing and `touch-action: none` still handles
-  scroll/pinch. Note this reproduces on real devices only — headless Chromium
-  does not run the gesture recogniser, so an e2e test (synthetic *or* CDP touch)
-  will not catch a regression here.
+- **A moving touch is still a touch.** `syncButtons`'s touch branch must
+  release only on `pointerup`/`pointercancel`. It was
+  `if (pointerdown) press else release`, and `pointermove` routes through it, so
+  a single pixel of drift released the hold — and under `hold` (the only touch
+  mode) holding IS the gesture, so the comparison collapsed as soon as a thumb
+  moved. Panning is driven separately from the hold stack, so nothing there
+  needs to know about the drag. The mouse branch diffs the button mask and was
+  never affected, which is exactly why this survived: the drag test uses
+  `page.mouse`, so touch-plus-movement had no coverage. Any new hold logic needs
+  a *touch* test, not just a mouse one.
+  `touchstart` also carries `preventDefault()` (`passive: false`) against
+  Android's long-press callout, whose `pointercancel` is not cancellable — real
+  hardening for a press-and-hold UI, but it was not this bug's cause. Beware
+  diagnosing hold problems as the callout: headless Chromium does not run the
+  gesture recogniser, so that hypothesis is unfalsifiable here, while the
+  release-on-move bug reproduces in a plain e2e test.
 - **The variant indicator must survive the stimulus covering the frame.** The
   tiled letterbox surround only paints where the picture does not reach, so it
   vanishes exactly when someone magnifies — most of a careful session. The edge

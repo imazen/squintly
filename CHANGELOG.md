@@ -3,13 +3,22 @@
 ## [Unreleased]
 
 ### Fixed
-- **A held touch snapped back to the original about a second in.** Android's
-  long-press recogniser fires `pointercancel` *before* `contextmenu`, and it is
-  not cancellable — so suppressing the context menu was not enough, and the
-  cancel released the hold mid-press. Under `hold`, which is now the only touch
-  mode, that broke the primary gesture. Fixed by preventing the default action
-  of `touchstart` (`passive: false`), which stops the recogniser before it
-  starts; pointer events are generated independently, so nothing is lost.
+- **A held touch released on the slightest movement.** `syncButtons` handled a
+  touch as `if (pointerdown) press else release`, and `pointermove` routes
+  through it — so one pixel of drift released the hold and the variant snapped
+  back to the resting view. A thumb on glass is never perfectly still, and
+  under `hold` (the only touch mode) that is the entire gesture, so the
+  comparison collapsed almost immediately. Only `pointerup`/`pointercancel`
+  release now; a moving contact is still a contact, and panning is driven
+  separately from the hold stack.
+  - The mouse path was never affected — it diffs the button mask — which is why
+    the existing "survives a drag across the midline" test, driven by
+    `page.mouse`, passed throughout. Touch-plus-movement had no coverage at all;
+    it does now.
+  - `touchstart` also gets `preventDefault()` (`passive: false`) to suppress
+    Android's long-press callout, whose `pointercancel` is not cancellable.
+    That is real hardening for a press-and-hold UI, but it was **not** the cause
+    of this bug and fixed nothing on its own.
 - **`main.ts` carried three byte-identical copies of `boot()`**, two of them
   spliced into the middle of an expression (between `void ` and `boot();`, so
   the calibration callback and the profile screen each ran their own shadowed

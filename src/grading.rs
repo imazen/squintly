@@ -119,7 +119,12 @@ impl HardGate {
 /// Called at session-end. Drops the first 3 trials per CID22.
 pub async fn grade_session(pool: &SqlitePool, session_id: &str) -> Result<SessionGrade> {
     let rows = sqlx::query(
-        "SELECT t.kind, t.is_golden, t.expected_choice, r.choice, r.dwell_ms, r.reveal_count, \
+        // `COALESCE(r.original_choice, r.choice)` — attention checks score the
+        // FIRST answer. Otherwise undo defeats the honeypot: fail it, notice,
+        // take it back. Ordinary trials are unaffected, since `original_choice`
+        // is NULL unless a revision happened.
+        "SELECT t.kind, t.is_golden, t.expected_choice, \
+                COALESCE(r.original_choice, r.choice), r.dwell_ms, r.reveal_count, \
                 r.response_flags, t.served_at \
          FROM trials t JOIN responses r ON r.trial_id = t.id \
          WHERE t.session_id = ? \

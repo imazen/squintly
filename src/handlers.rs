@@ -889,6 +889,74 @@ pub async fn record_response(
     Path(trial_id): Path<String>,
     Json(req): Json<ResponseReq>,
 ) -> Result<Json<ResponseAck>, AppError> {
+    // Already answered? Then this is a correction, not a new judgement.
+    //
+    // Allowed ONLY when it is the most recent response in the session. That is
+    // the "I just misclicked" window; letting an observer reach back past
+    // later trials would let them revise in light of what they saw afterwards,
+    // which is a different and much less innocent thing.
+    let existing: Option<(String, i64, Option<String>)> = sqlx::query_as(
+        "SELECT r.choice, r.revision_count, r.original_choice FROM responses r \
+         WHERE r.trial_id = ?",
+    )
+    .bind(&trial_id)
+    .fetch_optional(&state.pool)
+    .await?;
+    if let Some((prev_choice, revisions, original)) = existing {
+        let is_latest: Option<(i64,)> = sqlx::query_as(
+            "SELECT COUNT(*) FROM responses r2 \
+             JOIN trials t2 ON t2.id = r2.trial_id \
+             WHERE t2.session_id = (SELECT session_id FROM trials WHERE id = ?) \
+               AND r2.responded_at > (SELECT responded_at FROM responses WHERE trial_id = ?)",
+        )
+        .bind(&trial_id)
+        .bind(&trial_id)
+        .fetch_optional(&state.pool)
+        .await?;
+        if is_latest.map(|(n,)| n).unwrap_or(0) > 0 {
+            return Err(AppError::Conflict(
+                "only the most recent response can be corrected — later trials have \
+                 been answered since this one"
+                    .into(),
+            ));
+        }
+        // The FIRST answer is preserved once and never overwritten again.
+        let keep_original = original.unwrap_or(prev_choice);
+        sqlx::query(
+            "UPDATE responses SET choice = ?, original_choice = ?, revised_at = ?, \
+             revision_count = ?, dwell_ms = ?, switch_count = ?, ms_on_a = ?, ms_on_b = ?, \
+             ms_on_ref = ? WHERE trial_id = ?",
+        )
+        .bind(&req.choice)
+        .bind(&keep_original)
+        .bind(now_ms())
+        .bind(revisions + 1)
+        .bind(req.dwell_ms)
+        .bind(req.switch_count)
+        .bind(req.ms_on_a)
+        .bind(req.ms_on_b)
+        .bind(req.ms_on_ref)
+        .bind(&trial_id)
+        .execute(&state.pool)
+        .await?;
+        // A correction does not re-count the trial: the observer answered once
+        // and fixed it, which is one contribution, not two.
+        let total: (i64,) = sqlx::query_as(
+            "SELECT total_trials FROM observers WHERE id = \
+             (SELECT observer_id FROM sessions WHERE id = \
+              (SELECT session_id FROM trials WHERE id = ?))",
+        )
+        .bind(&trial_id)
+        .fetch_one(&state.pool)
+        .await
+        .unwrap_or((0,));
+        return Ok(Json(ResponseAck {
+            total_trials: total.0.max(0) as u32,
+            milestone_badge: None,
+            flags: None,
+        }));
+    }
+
     // Pull the trial we're answering so we can compute inline grading flags.
     let row = sqlx::query(
         "SELECT kind, is_golden, expected_choice, intrinsic_w \
@@ -1066,7 +1134,7 @@ fn schema_version(kind: ExportKind) -> u32 {
         // the pan/visible-area telemetry that the 1:1 display rule made
         // necessary. Appended rather than inserted so positional consumers
         // keep working; the bump is here so strict ones can refuse.
-        ExportKind::Responses => 6,
+        ExportKind::Responses => 7,
         ExportKind::Unified => 1,
     }
 }
@@ -1276,7 +1344,10 @@ pub async fn leaderboard(
 
         // Attention checks.
         let golden: Option<(i64, i64)> = sqlx::query_as(
-            "SELECT COUNT(*), SUM(CASE WHEN r.choice = t.expected_choice THEN 1 ELSE 0 END) \
+            // First answer, for the same reason as `grading.rs`: undo must not
+            // launder a failed attention check.
+            "SELECT COUNT(*), SUM(CASE WHEN COALESCE(r.original_choice, r.choice) \
+                                          = t.expected_choice THEN 1 ELSE 0 END) \
              FROM responses r JOIN trials t ON t.id = r.trial_id \
              JOIN sessions s ON s.id = t.session_id \
              WHERE s.observer_id = ? AND t.is_golden = 1 AND t.expected_choice IS NOT NULL",
@@ -2242,11 +2313,11 @@ mod tests {
     fn responses_schema_version_reflects_the_appended_columns() {
         assert_eq!(
             schema_version(ExportKind::Responses),
-            6,
+            7,
             "v2 added study_id + pan/visible telemetry; v3 the participant exclusion \
              disposition; v4 input_mode + keyboard_used + ui_ready_ms; v5 source_corpus + \
-             content_class; v6 per-view dwell, switch_count and repeat_of_trial_id. \
-             Bump whenever columns change."
+             content_class; v6 per-view dwell, switch_count and repeat_of_trial_id; \
+             v7 response revisions. Bump whenever columns change."
         );
         assert_eq!(schema_version(ExportKind::Pareto), 1, "pareto is unchanged");
     }

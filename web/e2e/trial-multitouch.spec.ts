@@ -1,6 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
 
-import { clickBegin, completeProfileAndStart, gotoFresh } from './helpers';
+import { clickBegin, completeProfileAndStart, gotoFresh, satisfyGate } from './helpers';
 
 async function toTrial(page: Page) {
   await gotoFresh(page);
@@ -13,7 +13,8 @@ async function toTrial(page: Page) {
 
 async function advance(page: Page) {
   const before = await page.locator('.trial').getAttribute('data-trial-id');
-  await page.locator('.rating-panel button, .pair-panel button').first().click();
+  await satisfyGate(page);
+    await page.locator('.rating-panel button, .pair-panel button').first().click();
   await expect
     .poll(async () => page.locator('.trial').getAttribute('data-trial-id'), { timeout: 15_000 })
     .not.toBe(before);

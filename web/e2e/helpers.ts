@@ -42,15 +42,33 @@ export async function completeProfileAndStart(page: Page) {
   await page.getByRole('button', { name: /Start rating/i }).click();
 }
 
+/**
+ * Look at every arm the trial requires, so the answer panel unlocks.
+ *
+ * The panel is gated until both A and B have been on screen — "which is closer
+ * to the original" is not answerable from one of them. A real observer has to
+ * do this, so the helpers do too rather than reaching past the gate.
+ */
+export async function satisfyGate(page: Page) {
+  await page.waitForSelector('.viewport.all-ready', { timeout: 20_000 }).catch(() => {});
+  for (const v of ['a', 'b'] as const) {
+    const btn = page.locator(`.view-switch button[data-view="${v}"]`);
+    if (await btn.count()) await btn.click();
+  }
+  await expect(page.locator('#panel')).toHaveAttribute('data-gated', 'no', { timeout: 15_000 });
+}
+
 /** Submit one single-stimulus trial with the given 4-tier rating. */
 export async function rateSingle(page: Page, rating: 1 | 2 | 3 | 4) {
   await page.waitForSelector('.rating-panel', { state: 'visible', timeout: 10_000 });
+  await satisfyGate(page);
   await page.locator(`.rating-panel button[data-r="${rating}"]`).click();
 }
 
 /** Submit one pair trial with A/tie/B. */
 export async function ratePair(page: Page, choice: 'a' | 'tie' | 'b') {
   await page.waitForSelector('.pair-panel', { state: 'visible', timeout: 10_000 });
+  await satisfyGate(page);
   await page.locator(`.pair-panel button[data-c="${choice}"]`).click();
 }
 
@@ -72,6 +90,7 @@ export async function submitOneTrial(
   await page.waitForSelector('.trial[data-trial-id]', { state: 'visible', timeout: 10_000 });
   const before = await page.locator('.trial').getAttribute('data-trial-id');
   await page.waitForSelector('.rating-panel, .pair-panel', { state: 'visible', timeout: 10_000 });
+  await satisfyGate(page);
   const kind = await page.evaluate(() => {
     if (document.querySelector('.rating-panel')) return 'single';
     if (document.querySelector('.pair-panel')) return 'pair';

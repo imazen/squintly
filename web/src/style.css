@@ -1230,3 +1230,28 @@ input[type="range"] {
   font-size: 0.8rem;
   margin: 0;
 }
+
+
+/* Answer gate. The panel is disabled until both arms have been looked at —
+   "which is closer to the original" is not answerable from one of them — so it
+   has to say WHY, or a disabled panel reads as a broken one. */
+.gate-hint {
+  margin: 0;
+  text-align: center;
+  font-size: 0.85rem;
+  color: var(--muted);
+  min-height: 1.1em;
+}
+.undo-btn,
+.keys-btn {
+  min-width: 44px;
+  min-height: 44px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--card);
+  color: inherit;
+}
+.undo-btn {
+  padding: 0 0.7rem;
+  font-size: 0.9rem;
+}

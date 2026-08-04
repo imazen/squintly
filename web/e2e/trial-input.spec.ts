@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test';
 
-import { clickBegin, completeProfileAndStart, gotoFresh } from './helpers';
+import { clickBegin, completeProfileAndStart, gotoFresh, satisfyGate } from './helpers';
 
 /// Get onto a trial screen with the images decoded.
 async function toTrial(page: import('@playwright/test').Page) {
@@ -20,7 +20,8 @@ async function toTrial(page: import('@playwright/test').Page) {
 /// The trial id changing is the only reliable edge.
 async function advance(page: import('@playwright/test').Page) {
   const before = await page.locator('.trial').getAttribute('data-trial-id');
-  await page.locator('.rating-panel button, .pair-panel button').first().click();
+  await satisfyGate(page);
+    await page.locator('.rating-panel button, .pair-panel button').first().click();
   await expect
     .poll(async () => page.locator('.trial').getAttribute('data-trial-id'), { timeout: 15_000 })
     .not.toBe(before);
@@ -109,6 +110,9 @@ test.describe('trial input', () => {
 
     release();
     await page.waitForSelector('.viewport:not(.is-loading)');
+    // Arrival is necessary but no longer sufficient — the seen-both gate is the
+    // other lock, and this test is about the loading one, so open it explicitly.
+    await satisfyGate(page);
     await expect(
       page.locator('.rating-panel button, .pair-panel button').first(),
     ).toBeEnabled();
@@ -145,6 +149,9 @@ test.describe('trial input', () => {
     await toTrial(page);
     expect(await toKind(page, 'single'), 'needed a rating trial').toBe(true);
     const before = await page.locator('.trial').getAttribute('data-trial-id');
+    // In hold mode the compressed image is not the resting view, so it has to
+    // be looked at before it can be rated.
+    await satisfyGate(page);
     await page.keyboard.press('2');
     // Advancing to a different trial is the observable effect of a recorded
     // response.
@@ -165,6 +172,12 @@ test.describe('trial input', () => {
     await expect(page.locator('#zoom-readout')).toHaveText('3×');
     await page.keyboard.press('0');
     await expect(page.locator('#zoom-readout')).toHaveText('1×');
+
+    // Answering is gated on having seen both sides, and the keyboard is a
+    // first-class way to satisfy that: holding the arrows counts as looking.
+    await page.keyboard.press('ArrowLeft');
+    await page.keyboard.press('ArrowRight');
+    await expect(page.locator('#panel')).toHaveAttribute('data-gated', 'no');
 
     const before = await page.locator('.trial').getAttribute('data-trial-id');
     await page.keyboard.press('c'); // "can't tell"
@@ -470,6 +483,9 @@ test.describe('no flash on switch', () => {
 
     release();
     await page.waitForSelector('.viewport.all-ready', { timeout: 20_000 });
+    // Arrival is one of two locks; open the seen-both one so what remains
+    // measures loading alone.
+    await satisfyGate(page);
     const done = await page.evaluate(() => ({
       disabled: document.querySelector<HTMLButtonElement>(
         '.rating-panel button, .pair-panel button',

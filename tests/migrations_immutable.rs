@@ -93,6 +93,10 @@ fn expected() -> BTreeMap<&'static str, &'static str> {
             "7bc23a29a895a3a9ca685f80e500b95c777c54ce03bb83d99df2328c1893d503",
         ),
         (
+            "0020_response_revisions.sql",
+            "10b0c189be8b6c4c7c483d46fd4a8b7805d85337a488f16276b5c1cbc3e927dc",
+        ),
+        (
             "0019_view_dwell_and_controls.sql",
             "61422e60afa21a218e149cbe64f680b0226f7ac2cbba59736cb5924eab3677ef",
         ),
@@ -115,6 +119,15 @@ fn shipped_migrations_are_unmodified() {
         let name = path.file_name().unwrap().to_string_lossy().to_string();
         let bytes = std::fs::read(&path).expect("read migration");
         actual.insert(name, blake3::hash(&bytes).to_hex().to_string());
+    }
+
+    // Report the current hashes first: both failures below tell the reader to
+    // re-run with this set, so printing it after the assertions would make that
+    // advice useless — the panic gets there first.
+    if std::env::var("SHOW_MIGRATION_HASHES").is_ok() {
+        for (name, hash) in &actual {
+            println!("        (\"{name}\", \"{hash}\"),");
+        }
     }
 
     let exp = expected();
@@ -142,11 +155,4 @@ fn shipped_migrations_are_unmodified() {
         }
     }
     assert!(drifted.is_empty(), "{}", drifted.join("\n"));
-
-    // Report the current hashes so a new migration can be pinned by copy-paste.
-    if std::env::var("SHOW_MIGRATION_HASHES").is_ok() {
-        for (name, hash) in &actual {
-            println!("        (\"{name}\", \"{hash}\"),");
-        }
-    }
 }

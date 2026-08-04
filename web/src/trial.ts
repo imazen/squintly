@@ -86,6 +86,14 @@ export function startTrials(
   /// The trial currently on screen, so the menu can re-render it after a
   /// settings change without re-fetching.
   let currentTrial: TrialPayload | null = null;
+  /// The trial just answered, kept so a misclick can be taken back.
+  ///
+  /// Only the immediately-previous one: reaching further back would let an
+  /// observer revise in light of trials they saw afterwards, which is a
+  /// different and much less innocent thing than fixing a stray tap. The server
+  /// enforces the same rule (`record_response` refuses a revision once a later
+  /// response exists), so this is not the only line of defence.
+  let lastAnswered: { trial: TrialPayload; choice: string } | null = null;
   /// Opens the keyboard cheatsheet for the trial on screen.
   let showKeyHelp: (() => void) | null = null;
   let aborted = false;
@@ -204,9 +212,12 @@ export function startTrials(
             <button data-zoom-step="1" aria-label="Magnify more">+</button>
           </div>
           ${modePicker}
+          <button class="undo-btn" id="undo-btn" aria-label="Take back the previous answer"
+                  title="Take back the previous answer (u)"${lastAnswered ? '' : ' hidden'}>↶ undo</button>
           <button class="keys-btn" id="keys-btn" aria-label="Keyboard shortcuts" title="Keyboard shortcuts (?)">⌨</button>
         </div>
         <div class="reveal-hint" id="hint"></div>
+        <p class="gate-hint" id="gate-hint" hidden></p>
         <div id="panel"></div>
       </div>
     `;
@@ -214,6 +225,7 @@ export function startTrials(
     const panel = root.querySelector<HTMLDivElement>('#panel')!;
     const hint = root.querySelector<HTMLDivElement>('#hint')!;
     const status = root.querySelector<HTMLDivElement>('#vp-status')!;
+    const gateHint = root.querySelector<HTMLParagraphElement>('#gate-hint')!;
     root.querySelector<HTMLButtonElement>('#menu')!.addEventListener('click', () => openMenu());
 
     // ---- every variant is loaded up front -------------------------------
@@ -260,6 +272,26 @@ export function startTrials(
     // per response anyway.
     let zoom = zoomFactor;
     let submitted = false;
+    /// Which variants the observer has actually looked at.
+    ///
+    /// "Which is closer to the original" is not answerable from one arm, so the
+    /// response panel stays locked until both have been on screen. Under `hold`
+    /// and `buttons` the resting view is the reference, so this forces a
+    /// deliberate look at each side rather than a reflex answer; under `tap` A
+    /// is already up, so only B has to be sought out.
+    const seen = new Set<View>();
+
+    // Function DECLARATIONS, not const arrows: `showView` runs during setup and
+    // calls `refreshGate`, which calls these. As `const` they sat in the
+    // temporal dead zone at that point and every render threw — the trial screen
+    // simply never appeared.
+    /// Which arms must have been looked at before an answer is allowed.
+    function requiredViews(): View[] {
+      return isPair ? ['a', 'b'] : ['a'];
+    }
+    function allSeen(): boolean {
+      return requiredViews().every((v) => seen.has(v));
+    }
 
     const clampPan = () => {
       pan.x = Math.max(-panLimit.x, Math.min(panLimit.x, pan.x));
@@ -375,6 +407,7 @@ export function startTrials(
         viewShownAt = now;
       }
       currentSrc = which;
+      seen.add(which);
       viewport.dataset.view = which;
       // Marks "you are looking at the original" — accents the hint pill, and is
       // what the e2e suite reads to tell the two states apart. Correct in both
@@ -393,6 +426,7 @@ export function startTrials(
       }
       recomputePanLimits();
       markActive(viewSwitch, 'view', which);
+      refreshGate();
     };
 
     // ---- load / decode tracking -----------------------------------------
@@ -428,10 +462,10 @@ export function startTrials(
       viewport.classList.add('all-ready');
       viewport.classList.remove('is-loading');
       status.hidden = true;
-      setPanelEnabled(true);
       // Before the panel is usable, not after: the observer should never be
       // offered a judgement on a stimulus too small to judge.
       ensureCovers();
+      refreshGate();
       recomputePanLimits();
       if (state.shownAt === 0) {
         state.shownAt = performance.now();
@@ -888,12 +922,54 @@ export function startTrials(
         b.disabled = !on;
       });
     }
+
+    /// Re-evaluate the gate. Called whenever a view changes or a layer lands.
+    function refreshGate() {
+      const ready = pending <= 0;
+      const ok = ready && allSeen();
+      setPanelEnabled(ok);
+      panel.dataset.gated = ok ? 'no' : 'yes';
+      if (gateHint) {
+        const missing = requiredViews().filter((v) => !seen.has(v));
+        gateHint.hidden = ok;
+        gateHint.textContent = !ready ? 'loading…' : missing.length ? gateHintFor(missing) : '';
+      }
+    }
+
+    /// Say how to see the arms that are still unseen, in the vocabulary of the
+    /// mode the observer is actually in.
+    ///
+    /// "look at B first" is only meaningful under `tap`, where an A/B/Original
+    /// control is on screen to look with. Under `hold` there is no such control
+    /// — you press a half of the frame — so the same sentence names a button
+    /// that does not exist and leaves the observer stuck at a disabled panel
+    /// with no idea what it wants.
+    function gateHintFor(missing: View[]): string {
+      const names = missing.map((v) => (v === 'a' ? 'A' : 'B'));
+      if (inputMode === 'tap') return `look at ${names.join(' and ')} first`;
+      if (inputMode === 'buttons') {
+        // One arm per mouse button, so name the button rather than the arm.
+        const how = missing
+          .map((v) => (v === 'a' ? 'left' : 'right'))
+          .join(' and the ');
+        return `hold the ${how} button to see ${names.join(' and ')} first`;
+      }
+      // hold: halves of the frame. On a single-stimulus trial there is no
+      // left/right split to describe, so say what the press is for instead.
+      if (!isPair) return 'press and hold to see the compressed image first';
+      const how = missing.map((v) => (v === 'a' ? 'left' : 'right')).join(' and ');
+      return `press and hold the ${how} half to see ${names.join(' and ')} first`;
+    }
     // Answering before the image is on screen would record a judgement of
-    // something never seen.
+    // something never seen — and the same is true of the arm you never looked
+    // at, which is what `refreshGate` adds.
     setPanelEnabled(false);
 
     const commit = (choice: string) => {
       if (submitted || state.shownAt === 0) return;
+      // The keyboard bypasses the disabled buttons, so the gate is enforced
+      // here too rather than only in the UI.
+      if (!allSeen()) return;
       submitted = true;
       detachKeys?.();
       detachKeys = null;
@@ -929,6 +1005,11 @@ export function startTrials(
       if (k === '?') {
         e.preventDefault();
         toggleKeyHelp();
+        return;
+      }
+      if (k === 'u' || k === 'U') {
+        e.preventDefault();
+        void undoLast();
         return;
       }
       if (k === 'Escape') {
@@ -1011,12 +1092,14 @@ export function startTrials(
       const rows = isPair
         ? [
             ['A / B / C', 'answer: A closer, B closer, can’t tell'],
+            ['u', 'take back the previous answer'],
             ['← →', 'cycle A → B → Original'],
             ['space (hold)', 'peek at the original'],
             ['1 – 8', 'magnify by that whole factor'],
           ]
         : [
             ['1 – 4', 'answer: imperceptible → I hate it'],
+            ['u', 'take back the previous answer'],
             ['← →', 'switch compressed ↔ original'],
             ['space (hold)', 'peek at the original'],
             ['+ / − / wheel', 'magnify in / out (whole steps)'],
@@ -1035,6 +1118,22 @@ export function startTrials(
     };
     root.querySelector<HTMLButtonElement>('#keys-btn')!.addEventListener('click', toggleKeyHelp);
     showKeyHelp = toggleKeyHelp;
+    root.querySelector<HTMLButtonElement>('#undo-btn')!.addEventListener('click', () => void undoLast());
+  };
+
+  /// Reopen the previous trial so its answer can be corrected.
+  ///
+  /// Re-renders that trial with its gate reset — the observer has to look at
+  /// both arms again before re-answering, which is the point: an undo is for
+  /// "I hit the wrong button", not for changing an answer without re-examining.
+  const undoLast = async () => {
+    if (!lastAnswered) return;
+    const { trial } = lastAnswered;
+    lastAnswered = null;
+    // The trial we were about to serve is abandoned; a fresh one is drawn after
+    // the correction, chosen with the corrected answer in hand.
+    trialCount = Math.max(0, trialCount - 1);
+    renderTrial(trial);
   };
 
   const submit = async (
@@ -1069,6 +1168,7 @@ export function startTrials(
     } catch (e) {
       console.warn('record failed', e);
     }
+    lastAnswered = { trial, choice };
     trialCount += 1;
     if (trialCount > 0 && trialCount % 25 === 0) {
       renderBreak(() => fetchAndRender());

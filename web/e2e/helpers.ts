@@ -40,6 +40,29 @@ export async function completeProfileAndStart(page: Page) {
   await page.getByRole('button', { name: /^no$/ }).click();
   await page.getByRole('button', { name: /^25-35$/ }).click();
   await page.getByRole('button', { name: /Start rating/i }).click();
+  await acceptModeChooser(page);
+}
+
+/**
+ * Accept whatever comparison mode the chooser preselects.
+ *
+ * It sits between the profile and the first trial, and is shown once per
+ * browser — so a test that pins `squintly_input_mode` beforehand (to drive a
+ * particular gesture) correctly never sees it.
+ *
+ * Waits for *either* the chooser or the first trial before deciding. That is
+ * not a "click it if it happens to be there" skip: both are terminal states of
+ * the same step, so this blocks until the app has definitely reached one of
+ * them, and a hang means neither arrived — which is a real failure and reads
+ * as one.
+ */
+export async function acceptModeChooser(page: Page) {
+  await page
+    .locator('#mode-continue, .trial[data-trial-id]')
+    .first()
+    .waitFor({ state: 'visible', timeout: 30_000 });
+  const go = page.locator('#mode-continue');
+  if (await go.count()) await go.click();
 }
 
 /**
@@ -152,4 +175,33 @@ export async function signInAsAdmin(page: Page, coefficientPort: number) {
   await page.goto(`/api/auth/verify?token=${token}`);
   const who = await (await page.request.get('/api/auth/whoami')).json();
   if (!who.is_admin) throw new Error(`signed in but not admin: ${JSON.stringify(who)}`);
+}
+
+/**
+ * Which comparison modes this project's device can drive — mirrors
+ * `availableInputModes()`. Touch is `hold` only: `tap` costs a look away from
+ * the stimulus per switch on the smallest screen, and `buttons` has no touch
+ * equivalent.
+ */
+export function deviceModes(testInfo: { project: { name: string } }): string[] {
+  return testInfo.project.name === 'chromium-desktop' ? ['tap', 'hold', 'buttons'] : ['hold'];
+}
+
+/**
+ * Put the trial screen into a given mode.
+ *
+ * Returns immediately when it is already there — which is the normal case on
+ * touch, where `hold` is the only mode and the trial screen therefore has no
+ * mode select to drive. Asking for a mode the device cannot drive is a test
+ * bug, not a condition to absorb, so it throws rather than passing quietly.
+ */
+export async function useMode(page: Page, mode: string) {
+  const trial = page.locator('.trial');
+  if ((await trial.getAttribute('data-input-mode')) === mode) return;
+  const sel = page.locator('#input-mode');
+  if (!(await sel.count())) {
+    throw new Error(`this device offers no mode select, and is not already in ${mode}`);
+  }
+  await sel.selectOption(mode);
+  await page.waitForSelector(`.trial[data-input-mode="${mode}"]`, { timeout: 15_000 });
 }

@@ -875,6 +875,15 @@ pub struct ResponseReq {
     pub ms_on_b: i64,
     #[serde(default)]
     pub ms_on_ref: i64,
+    /// When the UI first suggested "can't tell" on this trial, in ms from the
+    /// trial appearing. `None` means it never did.
+    ///
+    /// Recorded because it is a nudge toward one specific answer, fired exactly
+    /// on the trials where the answer is hardest — so tie rates on hinted
+    /// trials are not comparable with unhinted ones unless you can tell them
+    /// apart. See migration 0021.
+    #[serde(default)]
+    pub cant_tell_hint_ms: Option<i64>,
 }
 
 #[derive(Debug, Serialize)]
@@ -921,11 +930,18 @@ pub async fn record_response(
             ));
         }
         // The FIRST answer is preserved once and never overwritten again.
+        //
+        // `cant_tell_hint_ms` is COALESCEd for the same reason: the hint acted
+        // on the answer that was actually given, so a correction must not erase
+        // the fact that it fired. Reopening a trial builds fresh client state,
+        // which would otherwise send NULL and quietly launder a hinted trial
+        // into an unhinted one.
         let keep_original = original.unwrap_or(prev_choice);
         sqlx::query(
             "UPDATE responses SET choice = ?, original_choice = ?, revised_at = ?, \
              revision_count = ?, dwell_ms = ?, switch_count = ?, ms_on_a = ?, ms_on_b = ?, \
-             ms_on_ref = ? WHERE trial_id = ?",
+             ms_on_ref = ?, cant_tell_hint_ms = COALESCE(cant_tell_hint_ms, ?) \
+             WHERE trial_id = ?",
         )
         .bind(&req.choice)
         .bind(&keep_original)
@@ -936,6 +952,7 @@ pub async fn record_response(
         .bind(req.ms_on_a)
         .bind(req.ms_on_b)
         .bind(req.ms_on_ref)
+        .bind(req.cant_tell_hint_ms)
         .bind(&trial_id)
         .execute(&state.pool)
         .await?;
@@ -1008,8 +1025,8 @@ pub async fn record_response(
          image_displayed_h_css, intrinsic_to_device_ratio, pixels_per_degree, response_flags, \
          responded_at, pan_count, pan_distance_css, pannable_w_css, pannable_h_css, \
          visible_w_css, visible_h_css, zoom_factor, input_mode, keyboard_used, ui_ready_ms, \
-         switch_count, ms_on_a, ms_on_b, ms_on_ref) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+         switch_count, ms_on_a, ms_on_b, ms_on_ref, cant_tell_hint_ms) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&trial_id)
     .bind(&req.choice)
@@ -1040,6 +1057,7 @@ pub async fn record_response(
     .bind(req.ms_on_a)
     .bind(req.ms_on_b)
     .bind(req.ms_on_ref)
+    .bind(req.cant_tell_hint_ms)
     .execute(&state.pool)
     .await?;
 
@@ -1134,7 +1152,7 @@ fn schema_version(kind: ExportKind) -> u32 {
         // the pan/visible-area telemetry that the 1:1 display rule made
         // necessary. Appended rather than inserted so positional consumers
         // keep working; the bump is here so strict ones can refuse.
-        ExportKind::Responses => 7,
+        ExportKind::Responses => 8,
         ExportKind::Unified => 1,
     }
 }
@@ -2313,11 +2331,11 @@ mod tests {
     fn responses_schema_version_reflects_the_appended_columns() {
         assert_eq!(
             schema_version(ExportKind::Responses),
-            7,
+            8,
             "v2 added study_id + pan/visible telemetry; v3 the participant exclusion \
              disposition; v4 input_mode + keyboard_used + ui_ready_ms; v5 source_corpus + \
              content_class; v6 per-view dwell, switch_count and repeat_of_trial_id; \
-             v7 response revisions. Bump whenever columns change."
+             v7 response revisions; v8 cant_tell_hint_ms. Bump whenever columns change."
         );
         assert_eq!(schema_version(ExportKind::Pareto), 1, "pareto is unchanged");
     }

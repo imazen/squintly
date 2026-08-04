@@ -1255,3 +1255,119 @@ input[type="range"] {
   padding: 0 0.7rem;
   font-size: 0.9rem;
 }
+
+/* ---- the comparison-mode chooser ------------------------------------------
+   Shown once, immediately before the first trial. Each card carries what the
+   hand does, not an abstract label, because this is the text someone reads
+   *instead of* experimenting. */
+.mode-grid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  width: 100%;
+  max-width: 780px;
+  margin: 8px 0 4px;
+}
+.mode-grid.one { max-width: 420px; }
+.mode-card {
+  display: grid;
+  gap: 6px;
+  padding: 14px;
+  border-radius: 12px;
+  text-align: left;
+  min-width: 0;
+  align-content: start;
+}
+.mode-card.on {
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+.mode-card-head { display: flex; align-items: center; gap: 8px; }
+.mode-icon { font-size: 1.15rem; line-height: 1; }
+.mode-card-title { font-weight: 600; }
+.mode-card-why { font-size: 0.85rem; line-height: 1.35; opacity: 0.75; }
+.mode-card-how {
+  margin: 2px 0 0;
+  padding-left: 1.1em;
+  font-size: 0.85rem;
+  line-height: 1.5;
+}
+.mode-card-how li { margin: 0; }
+
+/* ---- which variant is live, on an edge the stimulus cannot cover -----------
+
+   The tiled letterbox surround only shows where the picture does NOT reach, so
+   it vanishes exactly when someone magnifies — which is most of a careful
+   session, and the moment knowing "am I on A or B" matters most. This frame is
+   OUTSIDE the stimulus: `.stage` reserves the strip with padding, so the
+   picture is inset by it rather than painted over. Nothing occludes the pixels
+   under judgement, which is the same rule the reveal hint had to obey.
+
+   POSITION carries the identity, and the glyph confirms it: A lights the LEFT
+   edge, B the RIGHT, the original the TOP. That matches `hold` mode's halves
+   (left half = A, right half = B) and the A/B order of the answer buttons, so
+   the cue is readable peripherally without reading anything.
+
+   Strictly neutral grey at low luminance, exactly as the letterbox surround:
+   this is now the surround immediately adjacent to the stimulus, so tinting it
+   would bias colour judgements and brightening it would shift local
+   adaptation. Only ONE bar is glyphed at a time, so what changes between views
+   is where a dark-grey texture sits, not how bright the frame is. */
+.stage {
+  position: relative;
+  display: grid;
+  grid-template-rows: minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr);
+  padding: var(--edge-w) var(--edge-w) 0;
+  background: #000;
+  border-radius: 12px;
+  overflow: hidden;
+  min-width: 0;
+  min-height: 0;
+  --edge-w: 14px;
+}
+@media (max-width: 420px) {
+  .stage { --edge-w: 11px; }
+}
+.stage > .viewport { border-radius: 0 0 10px 10px; }
+.edge {
+  position: absolute;
+  background-repeat: repeat;
+  background-position: center;
+  pointer-events: none;
+}
+.edge-left  { left: 0; top: 0; bottom: 0; width: var(--edge-w); }
+.edge-right { right: 0; top: 0; bottom: 0; width: var(--edge-w); }
+.edge-top   { left: 0; right: 0; top: 0; height: var(--edge-w); }
+.stage[data-view="a"]   .edge-left  { background-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2214%22%20height%3D%2240%22%3E%3Ctext%20x%3D%227%22%20y%3D%2220%22%20font-family%3D%22system-ui%2Csans-serif%22%20font-size%3D%2211%22%20font-weight%3D%22700%22%20fill%3D%22%233a3a3a%22%20text-anchor%3D%22middle%22%20dominant-baseline%3D%22central%22%3EA%3C%2Ftext%3E%3C%2Fsvg%3E"); }
+.stage[data-view="b"]   .edge-right { background-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2214%22%20height%3D%2240%22%3E%3Ctext%20x%3D%227%22%20y%3D%2220%22%20font-family%3D%22system-ui%2Csans-serif%22%20font-size%3D%2211%22%20font-weight%3D%22700%22%20fill%3D%22%233a3a3a%22%20text-anchor%3D%22middle%22%20dominant-baseline%3D%22central%22%3EB%3C%2Ftext%3E%3C%2Fsvg%3E"); }
+.stage[data-view="ref"] .edge-top   { background-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2256%22%20height%3D%2214%22%3E%3Ctext%20x%3D%2228%22%20y%3D%227%22%20font-family%3D%22system-ui%2Csans-serif%22%20font-size%3D%2210%22%20font-weight%3D%22700%22%20fill%3D%22%233a3a3a%22%20text-anchor%3D%22middle%22%20dominant-baseline%3D%22central%22%3EORIG%3C%2Ftext%3E%3C%2Fsvg%3E"); }
+
+/* ---- "can't tell" is a real answer ----------------------------------------
+   After a long comparison (see CANT_TELL_HINT_AFTER_HELD_MS) the tie button
+   breathes, because at threshold the truthful answer is a tie but the button
+   reads as giving up — so people grind on and eventually guess, and a guess
+   recorded as a preference is worse data than a recorded tie.
+
+   Slow and low-contrast on purpose. This sits beside a stimulus under
+   judgement: a fast or bright pulse would drag the eye off the picture and
+   change what is being measured. Border only — no fill, no colour, no motion
+   of the button itself, so nothing reflows and the surround luminance barely
+   moves. */
+@keyframes cant-tell-breathe {
+  0%, 100% { box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.10); }
+  50%      { box-shadow: inset 0 0 0 2px rgba(255, 255, 255, 0.34); }
+}
+.pair-panel button.nudge {
+  animation: cant-tell-breathe 2.8s ease-in-out infinite;
+}
+/* Respecting the preference is not optional here: a repeating animation is
+   exactly what it is set to suppress. The hint still needs to be visible, so
+   it becomes a static outline rather than nothing at all — and it is still
+   recorded either way, so the data stays comparable. */
+@media (prefers-reduced-motion: reduce) {
+  .pair-panel button.nudge {
+    animation: none;
+    box-shadow: inset 0 0 0 2px rgba(255, 255, 255, 0.28);
+  }
+}

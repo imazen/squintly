@@ -1,6 +1,12 @@
 import { expect, test, type Page } from '@playwright/test';
 
-import { clickBegin, completeProfileAndStart, gotoFresh, satisfyGate } from './helpers';
+import {
+  clickBegin,
+  completeProfileAndStart,
+  gotoFresh,
+  satisfyGate,
+  useMode,
+} from './helpers';
 
 async function toTrial(page: Page) {
   await gotoFresh(page);
@@ -74,8 +80,7 @@ test.describe('multi-touch', () => {
   test('lifting one finger while another is held keeps that finger showing', async ({ page }) => {
     await toTrial(page);
     expect(await toKind(page, 'pair'), 'needed a pair trial').toBe(true);
-    await page.locator('#input-mode').selectOption('hold');
-    await page.waitForSelector('.trial[data-input-mode="hold"]');
+    await useMode(page, 'hold');
     await page.waitForSelector('.viewport:not(.is-loading)');
 
     const box = (await page.locator('#viewport').boundingBox())!;

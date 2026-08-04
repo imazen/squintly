@@ -5,6 +5,8 @@ import { createSession, listStudies, type Study } from './api';
 import { openSignInModal } from './auth-modal';
 import { renderCalibration } from './calibration';
 import { runCalibration } from './calibration-onboarding';
+import { hasChosenInputMode } from './input-mode';
+import { chooseInputMode } from './mode-chooser';
 import { detectCodecs, jxlEnableHint } from './codec-probe';
 import {
   captureSession,
@@ -245,6 +247,9 @@ function profileForm(support: { supported: Set<string>; cached: boolean }): void
   });
   root.querySelector<HTMLButtonElement>('#start')!.addEventListener('click', async () => {
     saveProfile(profile);
+    // Last screen before the first trial, which is the only place a how-to for
+    // the gesture is actually read.
+    if (!hasChosenInputMode()) await chooseInputMode(root);
     await beginSession(profile, support);
   });
 }
@@ -348,6 +353,11 @@ async function boot(): Promise<void> {
     await welcome();
     return;
   }
+  // Everyone who onboarded before the chooser existed had a mode picked for
+  // them by device class. Asking here rather than never is the whole reason
+  // `hasChosenInputMode` is separate from "which mode are we in" — and it is a
+  // one-off, because answering it is what makes it stop.
+  if (!hasChosenInputMode()) await chooseInputMode(root);
   // Straight back into trials. A new session row is correct rather than
   // resuming the old one: conditions are re-captured, and the screen, lighting
   // or device may well have changed since last time — pretending otherwise

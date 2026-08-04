@@ -124,7 +124,12 @@ test.describe('the seen-both gate', () => {
       return;
     }
     await expect(page.locator('#panel')).toHaveAttribute('data-gated', 'yes');
-    await expect(page.locator('#gate-hint')).toContainText(/press and hold to see the compressed/i);
+    // Either wording, but never one naming a half or an arm: on a single trial
+    // there is no left/right split and no B, so "hold the left button to see A"
+    // sends someone to press a side for something that does not exist.
+    await expect(page.locator('#gate-hint')).toContainText(
+      /(press and hold|hold any mouse button) to see the compressed image first/i,
+    );
     await page.locator('.view-switch button[data-view="a"]').click();
     await expect(page.locator('#panel')).toHaveAttribute('data-gated', 'no');
   });

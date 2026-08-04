@@ -2,7 +2,48 @@
 
 ## [Unreleased]
 
+### Fixed
+- **A held touch snapped back to the original about a second in.** Android's
+  long-press recogniser fires `pointercancel` *before* `contextmenu`, and it is
+  not cancellable — so suppressing the context menu was not enough, and the
+  cancel released the hold mid-press. Under `hold`, which is now the only touch
+  mode, that broke the primary gesture. Fixed by preventing the default action
+  of `touchstart` (`passive: false`), which stops the recogniser before it
+  starts; pointer events are generated independently, so nothing is lost.
+- **`main.ts` carried three byte-identical copies of `boot()`**, two of them
+  spliced into the middle of an expression (between `void ` and `boot();`, so
+  the calibration callback and the profile screen each ran their own shadowed
+  re-declaration). Legal TypeScript, which is why tsc, the build and the whole
+  e2e suite never noticed. Nothing misbehaved — the copies agreed — but they
+  could not stay that way: an edit to onboarding lands in one copy while the
+  other two keep running the old flow. 94 lines removed, no behaviour change.
+
 ### Added
+- **The observer picks a comparison mode before the first trial.** The mode
+  decides what the task physically is — whether the reference is what you see at
+  rest, and what your hand does to switch — and it was picked by device class
+  and reachable only from a dropdown on the trial screen labelled "Interaction
+  mode". Anyone not already fluent in the UI rated a whole session without
+  knowing the alternatives existed. Now a one-off screen, shown last before the
+  first trial (the only place a how-to about a gesture is read), with the hand
+  movement spelled out per mode. Asked once; observers already in the study get
+  it on their next visit, since "has chosen" is tracked separately from "has a
+  mode".
+- **An edge frame shows which variant is live even when the picture covers the
+  frame.** The tiled letterbox surround only paints where the stimulus does not
+  reach, so it disappeared exactly when someone magnified. The frame sits
+  *outside* the stimulus (padding on `.stage`, never overlapping it) and uses
+  position for identity: A lights the left edge, B the right, the original the
+  top — matching `hold` mode's halves. Strictly neutral grey, one bar glyphed at
+  a time, so the frame's luminance does not move between views.
+- **After a long comparison, the UI says a tie is a real answer.** At threshold
+  the truthful answer is "can't tell", but the button reads as giving up, so
+  people grind on and eventually guess — and a guess recorded as a preference is
+  worse data than a recorded tie. The tie button breathes slowly after ~9s of
+  *held* time (time on a non-resting view, so it means the same thing in all
+  three modes). Because this nudges one specific answer on exactly the hardest
+  trials, `responses.cant_tell_hint_ms` (migration 0021) records when it fired;
+  `responses` schema_version 7 → 8 (64 columns).
 - **An answer can be taken back.** One stray tap used to record a judgement the
   observer knew was wrong, permanently — and the trial screen is now driven by
   thumb-sized buttons, held mouse buttons and single keystrokes, so stray taps
@@ -18,6 +59,20 @@
   `responses` schema_version 6 → 7 (63 columns). (dc3bfc7)
 
 ### Changed
+- **Touch devices are offered `hold` and nothing else.** `tap` works with a
+  thumb but is the wrong instrument on a phone — three ~44px targets below the
+  picture, and a look away from the stimulus on every switch, on the device
+  where the picture is already smallest. It also split the mobile data across
+  two interaction modes for no analytic gain. The trial screen's mode select is
+  absent there rather than showing one dead option, and a phone with `tap`
+  stored is moved to `hold` instead of being stranded in a UI the device no
+  longer offers.
+- **The mouse default is `buttons`, not `tap`.** Both defaults now keep the eye
+  on the picture and change it underneath — a thumb on one half of the glass, or
+  the two buttons already under the hand. `tap` asks for a click on a 44px
+  target below the frame per switch, which is a look away from the stimulus on
+  every comparison: the exact cost `hold` exists to avoid on touch. Still
+  available, and still what an explicit choice selects.
 - **Answering now requires having seen both arms.** The panel was locked until
   the images *arrived*, which says nothing about whether anyone looked at them:
   under `tap`, A is the resting view, so B could be rated having never been on

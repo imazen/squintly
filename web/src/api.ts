@@ -121,6 +121,9 @@ export interface ResponseReq {
   ms_on_a: number;
   ms_on_b: number;
   ms_on_ref: number;
+  /// ms into the trial when the UI suggested "can't tell"; null if it never
+  /// did. A nudge toward one answer has to be conditionable in analysis.
+  cant_tell_hint_ms: number | null;
   viewport_w_css: number;
   viewport_h_css: number;
   orientation: 'portrait' | 'landscape';

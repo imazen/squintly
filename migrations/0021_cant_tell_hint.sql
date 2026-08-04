@@ -1,0 +1,24 @@
+-- Record when the UI suggested "can't tell", because suggesting an answer is a
+-- response bias and has to be measurable.
+--
+-- An observer who has been holding A and B against each other for a long time
+-- is usually at their discrimination threshold, and the honest answer there is
+-- "can't tell" — but the tie button reads as giving up, so people grind instead
+-- and eventually guess. A guess entered as a preference is worse data than a
+-- recorded tie: Davidson's model has a tie term precisely so that "these look
+-- the same to me" is a real outcome rather than noise on a forced choice.
+--
+-- The intervention is a slow pulse on the tie button after a dwell threshold.
+-- That is still a nudge toward one specific response, correlated with exactly
+-- the trials where the answer is hardest — so it cannot be invisible in the
+-- data. This column is what makes it conditionable: an analyst can compare
+-- tie rates on hinted vs unhinted trials, or drop hinted trials entirely, and
+-- see whether the nudge moved the answer.
+--
+--   cant_tell_hint_ms  ms into the trial when the hint first appeared;
+--                      NULL means it never did (the great majority of trials)
+--
+-- NULL rather than 0 for "never": 0 is a legitimate value if the threshold is
+-- ever set low enough to fire immediately, and a sentinel that collides with a
+-- real reading is how a column stops meaning anything.
+ALTER TABLE responses ADD COLUMN cant_tell_hint_ms INTEGER;

@@ -4,6 +4,7 @@ import {
   awaitAnyTrialPanel,
   clickBegin,
   completeProfileAndStart,
+  deviceModes,
   gotoFresh,
   submitOneTrial,
 } from './helpers';
@@ -146,15 +147,17 @@ test.describe('trial loop', () => {
 
   /// Panning must survive the encoded<->reference swap, or the observer is
   /// comparing two different parts of the picture.
-  test('pan offset is preserved when swapping to the reference', async ({ page }) => {
+  test('pan offset is preserved when swapping the view', async ({ page }, testInfo) => {
     await gotoFresh(page);
-    // Pin `tap`: this test drives press-and-hold-reveals-the-reference, which is
-    // tap-mode semantics. Touch devices default to `hold`, where the reference
-    // is the resting view and pressing shows A — the same gesture, inverted.
-    // The property under test (pan survives a view swap) is mode-independent;
-    // the gesture used to trigger it is not.
-    await page.evaluate(() => localStorage.setItem('squintly_input_mode', 'tap'));
-    await page.reload();
+    // The property under test — pan survives a view swap — is mode-independent;
+    // the gesture is not. Under `tap` a press reveals the reference, under
+    // `hold` the reference is the resting view and a press shows A. So pin
+    // `tap` where it exists, and on touch (which drives `hold` only) assert on
+    // "the view changed" rather than on which view it changed to.
+    if (deviceModes(testInfo).includes('tap')) {
+      await page.evaluate(() => localStorage.setItem('squintly_input_mode', 'tap'));
+      await page.reload();
+    }
     await clickBegin(page);
     await page.getByRole('button', { name: /^Skip$/ }).click();
     await completeProfileAndStart(page);
@@ -190,19 +193,22 @@ test.describe('trial loop', () => {
     const box = (await page.locator('#viewport').boundingBox())!;
     const cx = box.x + box.width / 2;
     const cy = box.y + box.height / 2;
+    const resting = await page.evaluate(
+      () => document.querySelector<HTMLElement>('#viewport')!.dataset.view,
+    );
     await page.mouse.move(cx, cy);
     await page.mouse.down();
     for (let s = 1; s <= 5; s++) await page.mouse.move(cx + s * 16, cy);
     const held = await page.evaluate(() => ({
       transform: document.querySelector<HTMLImageElement>('#stimulus')!.style.transform,
-      showingReference: !!document.querySelector('.trial.revealing'),
+      view: document.querySelector<HTMLElement>('#viewport')!.dataset.view,
     }));
     await page.mouse.up();
     const released = await page.evaluate(
       () => document.querySelector<HTMLImageElement>('#stimulus')!.style.transform,
     );
 
-    expect(held.showingReference, 'press-and-hold should reveal the reference').toBe(true);
+    expect(held.view, 'press-and-hold must swap the view').not.toBe(resting);
     expect(held.transform).not.toBe('translate(0px, 0px)');
     expect(released, 'pan reset on release — the two views show different regions').toBe(
       held.transform,

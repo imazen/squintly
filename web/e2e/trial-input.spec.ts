@@ -1,6 +1,13 @@
 import { expect, test } from '@playwright/test';
 
-import { clickBegin, completeProfileAndStart, gotoFresh, satisfyGate } from './helpers';
+import {
+  clickBegin,
+  completeProfileAndStart,
+  deviceModes,
+  gotoFresh,
+  satisfyGate,
+  useMode,
+} from './helpers';
 
 /// Get onto a trial screen with the images decoded.
 async function toTrial(page: import('@playwright/test').Page) {
@@ -199,18 +206,24 @@ test.describe('hold-to-compare mode', () => {
   // Splitting by half rather than by mouse button is what makes this work with
   // a thumb, so it must be offered on every device — including the phone
   // projects, which are the ones the study actually runs on.
-  test('the mode is offered on every device', async ({ page }) => {
+  test('the mode is available on every device', async ({ page }, testInfo) => {
     await toTrial(page);
-    await expect(page.locator('#input-mode')).toHaveCount(1);
-    await expect(page.locator('#input-mode option[value="hold"]')).toHaveCount(1);
+    expect(deviceModes(testInfo)).toContain('hold');
+    if (deviceModes(testInfo).length === 1) {
+      // Touch drives `hold` and nothing else, so the trial screen carries no
+      // mode select — a one-option control cannot do anything.
+      await expect(page.locator('#input-mode')).toHaveCount(0);
+      await expect(page.locator('.trial')).toHaveAttribute('data-input-mode', 'hold');
+    } else {
+      await expect(page.locator('#input-mode option[value="hold"]')).toHaveCount(1);
+    }
   });
 
   test('left half shows A, right half shows B, release shows the original', async ({ page }) => {
     await toTrial(page);
     expect(await toKind(page, 'pair'), 'needed a pair trial').toBe(true);
 
-    await page.locator('#input-mode').selectOption('hold');
-    await page.waitForSelector('.trial[data-input-mode="hold"]');
+    await useMode(page, 'hold');
     await page.waitForSelector('.viewport:not(.is-loading)');
 
     const shown = () =>
@@ -247,8 +260,7 @@ test.describe('hold-to-compare mode', () => {
   test('the half is decided on press and survives a drag across the midline', async ({ page }) => {
     await toTrial(page);
     expect(await toKind(page, 'pair'), 'needed a pair trial').toBe(true);
-    await page.locator('#input-mode').selectOption('hold');
-    await page.waitForSelector('.trial[data-input-mode="hold"]');
+    await useMode(page, 'hold');
     await page.waitForSelector('.viewport:not(.is-loading)');
 
     const shown = () =>
@@ -275,8 +287,7 @@ test.describe('hold-to-compare mode', () => {
   test('on a single-stimulus trial either half shows the compressed image', async ({ page }) => {
     await toTrial(page);
     expect(await toKind(page, 'single'), 'needed a rating trial').toBe(true);
-    await page.locator('#input-mode').selectOption('hold');
-    await page.waitForSelector('.trial[data-input-mode="hold"]');
+    await useMode(page, 'hold');
     await page.waitForSelector('.viewport:not(.is-loading)');
 
     const shown = () =>
@@ -300,12 +311,9 @@ test.describe('hold-to-compare mode', () => {
 test.describe('mouse-button mode', () => {
   test('is offered only where a mouse exists', async ({ page }, testInfo) => {
     await toTrial(page);
-    const desktop = testInfo.project.name === 'chromium-desktop';
     await expect(page.locator('#input-mode option[value="buttons"]')).toHaveCount(
-      desktop ? 1 : 0,
+      deviceModes(testInfo).includes('buttons') ? 1 : 0,
     );
-    // `hold` covers the same idea with a thumb, so it is offered everywhere.
-    await expect(page.locator('#input-mode option[value="hold"]')).toHaveCount(1);
   });
 
   test('left button shows A, right shows B, release shows the original', async ({
@@ -314,8 +322,7 @@ test.describe('mouse-button mode', () => {
     test.skip(testInfo.project.name !== 'chromium-desktop', 'needs a mouse');
     await toTrial(page);
     expect(await toKind(page, 'pair'), 'needed a pair trial').toBe(true);
-    await page.locator('#input-mode').selectOption('buttons');
-    await page.waitForSelector('.trial[data-input-mode="buttons"]');
+    await useMode(page, 'buttons');
     await page.waitForSelector('.viewport:not(.is-loading)');
 
     const shown = () =>
@@ -533,24 +540,28 @@ test.describe('default input mode', () => {
   // On a phone the segmented control is three small targets below the picture,
   // and every switch is a look away from the thing being compared. Holding one
   // half keeps the eye on the stimulus and changes the picture under it.
-  test('touch devices start in hold mode, mouse devices in tap', async ({ page }, testInfo) => {
+  // Both defaults keep the eye on the picture and change it underneath: a thumb
+  // on one half of the glass, or the two buttons already under the hand. `tap`
+  // is neither default any more — it asks for a click on a 44px target below
+  // the frame per switch, which is a look away on every comparison.
+  test('touch devices start in hold mode, mouse devices in buttons', async ({ page }, testInfo) => {
     await toTrial(page);
     const mode = await page.evaluate(
       () => document.querySelector<HTMLElement>('.trial')!.dataset.inputMode,
     );
     const coarse = testInfo.project.name !== 'chromium-desktop';
-    expect(mode, coarse ? 'touch should default to hold' : 'mouse should default to tap').toBe(
-      coarse ? 'hold' : 'tap',
+    expect(mode, coarse ? 'touch should default to hold' : 'mouse should default to buttons').toBe(
+      coarse ? 'hold' : 'buttons',
     );
   });
 
   // An explicit choice is what makes the setting stick — it must outrank the
   // device default on every later visit.
   test('an explicit choice outlives a reload', async ({ page }, testInfo) => {
+    test.skip(deviceModes(testInfo).length < 2, 'this device drives only one mode');
     await toTrial(page);
-    const other = testInfo.project.name === 'chromium-desktop' ? 'hold' : 'tap';
-    await page.locator('#input-mode').selectOption(other);
-    await page.waitForSelector(`.trial[data-input-mode="${other}"]`);
+    const other = 'hold';
+    await useMode(page, other);
 
     await page.reload();
     await page.waitForSelector('.trial[data-trial-id]', { timeout: 30_000 });
@@ -571,8 +582,7 @@ test.describe('hold ordering through the UI', () => {
       test.skip(testInfo.project.name !== 'chromium-desktop', 'needs mouse buttons');
       await toTrial(page);
       expect(await toKind(page, 'pair'), 'needed a pair trial').toBe(true);
-      await page.locator('#input-mode').selectOption(mode);
-      await page.waitForSelector(`.trial[data-input-mode="${mode}"]`);
+      await useMode(page, mode);
       await page.waitForSelector('.viewport.all-ready');
 
       const shown = () =>
@@ -610,8 +620,7 @@ test.describe('hold ordering through the UI', () => {
     test.skip(testInfo.project.name !== 'chromium-desktop', 'needs mouse buttons');
     await toTrial(page);
     expect(await toKind(page, 'pair'), 'needed a pair trial').toBe(true);
-    await page.locator('#input-mode').selectOption('buttons');
-    await page.waitForSelector('.trial[data-input-mode="buttons"]');
+    await useMode(page, 'buttons');
     await page.waitForSelector('.viewport.all-ready');
 
     const shown = () =>

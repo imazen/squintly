@@ -9,6 +9,7 @@ import {
   buttonForKey,
   diffButtons,
   holdIdFor,
+  restingView,
   viewForPress,
 } from './hold-stack';
 import {
@@ -20,7 +21,7 @@ import {
   inputModeHint,
   loadInputMode,
   saveInputMode,
-  supportsHoldMode,
+
 } from './input-mode';
 
 type View = 'a' | 'b' | 'ref';
@@ -33,6 +34,16 @@ type View = 'a' | 'b' | 'ref';
 /// 6 and 7: they are just as exact. The wheel snaps onto these stops rather
 /// than scaling continuously.
 const ZOOM_LADDER = [1, 2, 3, 4, 5, 6, 7, 8];
+
+/// How long an observer may hold variants up before the UI says a tie is a
+/// real answer.
+///
+/// Cumulative time with something pressed, not wall-clock on the trial — see
+/// `heldMsNow`. Nine seconds is a lot of active flicking: a pair anyone can
+/// separate is settled in one or two looks, so this fires on the tail, not on
+/// ordinary care. Tunable in one place because the right value is an empirical
+/// question — `cant_tell_hint_ms` in the export is what answers it.
+const CANT_TELL_HINT_AFTER_HELD_MS = 9_000;
 
 interface TrialState {
   shownAt: number;
@@ -61,6 +72,10 @@ interface TrialState {
   /// Time from render to the judged image being painted. Kept separable from
   /// `dwell_ms`: waiting for a decode is not deliberation.
   uiReadyMs: number | null;
+  /// When the UI first suggested "can't tell", in ms from the trial appearing.
+  /// `null` means it never did. Recorded because it is a nudge toward one
+  /// specific answer on exactly the hardest trials — see migration 0021.
+  cantTellHintMs: number | null;
 }
 
 export interface TrialController {
@@ -105,6 +120,10 @@ export function startTrials(
   /// Torn down before each render; a stale listener would drive the previous
   /// trial's closure and submit against a trial that is no longer on screen.
   let detachKeys: (() => void) | null = null;
+  /// Same reasoning for the "can't tell" ticker: left running it would keep
+  /// reading the previous trial's state and could mark a hint on a trial the
+  /// observer has already left.
+  let stopNudge: (() => void) | null = null;
 
   const calib = loadCalibration();
 
@@ -141,6 +160,8 @@ export function startTrials(
     currentTrial = trial;
     detachKeys?.();
     detachKeys = null;
+    stopNudge?.();
+    stopNudge = null;
 
     const renderedAt = performance.now();
     const state: TrialState = {
@@ -154,6 +175,7 @@ export function startTrials(
       keyboardUsed: false,
       switchCount: 0,
       msOnView: { a: 0, b: 0, ref: 0 },
+      cantTellHintMs: null,
       uiReadyMs: null,
     };
 
@@ -165,7 +187,9 @@ export function startTrials(
     const srcFor = (v: View) =>
       v === 'ref' ? trial.source_url : v === 'a' ? trial.a.url : trial.b!.url;
 
-    const modePicker = supportsHoldMode()
+    // A one-option select is a control that cannot do anything. On touch there
+    // is exactly one mode, so the picker is simply absent there.
+    const modePicker = availableInputModes().length > 1
       ? `<label class="mode-picker">
            <span class="sr-only">Interaction mode</span>
            <select id="input-mode" aria-label="Interaction mode">
@@ -184,15 +208,20 @@ export function startTrials(
           <span class="trial-license" data-corpus="${escapeAttr(corpus)}" data-license-id="${escapeAttr(licId)}" title="${escapeAttr(licLabel)}">${escapeHtml(corpus)} · ${escapeHtml(licLabel)}</span>
           <button class="menu-btn" id="menu">menu</button>
         </div>
-        <div class="viewport is-loading" id="viewport">
-          ${views
-            .map(
-              (v) =>
-                `<img class="layer" data-layer="${v}" alt="" decoding="async" fetchpriority="high" />`,
-            )
-            .join('')}
-          <div class="viewport-status" id="vp-status">
-            <div class="spinner" role="status" aria-label="Loading images"></div>
+        <div class="stage" id="stage" data-view="${restingView(inputMode)}">
+          <div class="edge edge-left" aria-hidden="true"></div>
+          <div class="edge edge-right" aria-hidden="true"></div>
+          <div class="edge edge-top" aria-hidden="true"></div>
+          <div class="viewport is-loading" id="viewport">
+            ${views
+              .map(
+                (v) =>
+                  `<img class="layer" data-layer="${v}" alt="" decoding="async" fetchpriority="high" />`,
+              )
+              .join('')}
+            <div class="viewport-status" id="vp-status">
+              <div class="spinner" role="status" aria-label="Loading images"></div>
+            </div>
           </div>
         </div>
         <div class="trial-controls">
@@ -222,6 +251,7 @@ export function startTrials(
       </div>
     `;
     const viewport = root.querySelector<HTMLDivElement>('#viewport')!;
+    const stage = root.querySelector<HTMLDivElement>('#stage')!;
     const panel = root.querySelector<HTMLDivElement>('#panel')!;
     const hint = root.querySelector<HTMLDivElement>('#hint')!;
     const status = root.querySelector<HTMLDivElement>('#vp-status')!;
@@ -256,8 +286,8 @@ export function startTrials(
     const panLimit = { x: 0, y: 0 };
     // In `hold` mode the reference is what you see at rest; in `tap` mode the
     // encoding is, and the reference is a peek.
-    const restingView: View = inputMode === 'tap' ? 'a' : 'ref';
-    let currentSrc: View = restingView;
+    const resting: View = restingView(inputMode);
+    let currentSrc: View = resting;
     // Which encoding the observer is judging, independent of whether they are
     // momentarily looking at the reference. Kept separate so flipping to the
     // original and back cannot lose their place in an A/B comparison.
@@ -409,6 +439,10 @@ export function startTrials(
       currentSrc = which;
       seen.add(which);
       viewport.dataset.view = which;
+      // The letterbox tiling disappears the moment the stimulus covers the
+      // frame — which is most of the time once someone magnifies — so the edge
+      // frame carries the same signal somewhere it cannot be covered.
+      stage.dataset.view = which;
       // Marks "you are looking at the original" — accents the hint pill, and is
       // what the e2e suite reads to tell the two states apart. Correct in both
       // modes: under `hold` the reference is the resting view, so it is on
@@ -492,7 +526,7 @@ export function startTrials(
       });
       el.src = srcFor(v);
     }
-    showView(restingView);
+    showView(resting);
     // Anything already in cache resolves before the listener attached above.
     for (const v of views) {
       const el = layers[v];
@@ -744,6 +778,29 @@ export function startTrials(
       if ('buttons' in e) syncButtons(e as PointerEvent);
     });
 
+    // Suppress the native long-press gesture on touch.
+    //
+    // Cancelling `contextmenu` is not enough on Android: the long-press
+    // recogniser fires **`pointercancel` first**, and that is not cancellable.
+    // `endPointer` is bound to it — correctly, since a genuinely cancelled
+    // pointer must not leave a stuck hold — so the variant snapped back to the
+    // resting view about a second into a press that was still held. In `hold`
+    // mode that is the primary gesture, so the comparison broke on exactly the
+    // interaction the mode exists for.
+    //
+    // Preventing the default action of `touchstart` stops the recogniser
+    // before it starts. Pointer events are generated independently of it, so
+    // nothing this code listens to is lost; `touch-action: none` already
+    // handles scroll and pinch-zoom, and `passive: false` is required or the
+    // preventDefault is ignored.
+    viewport.addEventListener(
+      'touchstart',
+      (e) => {
+        e.preventDefault();
+      },
+      { passive: false },
+    );
+
     viewport.addEventListener('pointerdown', (e: PointerEvent) => {
       // A mouse fires `pointerdown` again for a second button on the SAME
       // pointer id. Restarting the drag record under it would zero an
@@ -947,6 +1004,16 @@ export function startTrials(
     function gateHintFor(missing: View[]): string {
       const names = missing.map((v) => (v === 'a' ? 'A' : 'B'));
       if (inputMode === 'tap') return `look at ${names.join(' and ')} first`;
+      // A single-stimulus trial has no left/right split to describe — under
+      // `hold` either half shows the one image, and under `buttons` either
+      // button does. Naming a side here would send someone to press a
+      // particular half for an arm that does not exist. Checked before the
+      // per-mode wording, because it applies to both.
+      if (!isPair) {
+        return inputMode === 'buttons'
+          ? 'hold any mouse button to see the compressed image first'
+          : 'press and hold to see the compressed image first';
+      }
       if (inputMode === 'buttons') {
         // One arm per mouse button, so name the button rather than the arm.
         const how = missing
@@ -954,9 +1021,6 @@ export function startTrials(
           .join(' and the ');
         return `hold the ${how} button to see ${names.join(' and ')} first`;
       }
-      // hold: halves of the frame. On a single-stimulus trial there is no
-      // left/right split to describe, so say what the press is for instead.
-      if (!isPair) return 'press and hold to see the compressed image first';
       const how = missing.map((v) => (v === 'a' ? 'left' : 'right')).join(' and ');
       return `press and hold the ${how} half to see ${names.join(' and ')} first`;
     }
@@ -965,12 +1029,65 @@ export function startTrials(
     // at, which is what `refreshGate` adds.
     setPanelEnabled(false);
 
+    /// How long the observer has spent actively holding a variant up.
+    ///
+    /// Not total trial time, and not `msOnView.a + .b`: under `tap` A *is* the
+    /// resting view, so that sum grows while someone sits doing nothing. What
+    /// this measures is time on any view that is not the resting one — i.e.
+    /// time with something pressed — which is the same quantity in all three
+    /// modes even though the resting view differs.
+    function heldMsNow(): number {
+      let held = 0;
+      for (const v of views) if (v !== resting) held += state.msOnView[v];
+      // The interval still open counts, or one long unbroken press would never
+      // register — which is precisely the observer this is meant to catch.
+      if (viewShownAt !== null && currentSrc !== resting) {
+        held += performance.now() - viewShownAt;
+      }
+      return held;
+    }
+
+    /// After a long comparison, say that "can't tell" is a real answer.
+    ///
+    /// Someone still flicking A against B after this much holding is at their
+    /// discrimination threshold, where the truthful answer is a tie. But the
+    /// button reads as giving up, so people grind on and eventually guess — and
+    /// a guess recorded as a preference is worse data than a recorded tie.
+    /// Davidson's model has a tie term precisely so "these look the same to me"
+    /// is an outcome rather than noise.
+    ///
+    /// This is still a nudge toward one specific response, on exactly the
+    /// trials where the answer is hardest, so it is recorded per response
+    /// (`cant_tell_hint_ms`, migration 0021) and never fired twice.
+    let nudgeTimer: number | null = null;
+    const stopNudgeTimer = () => {
+      if (nudgeTimer !== null) {
+        clearInterval(nudgeTimer);
+        nudgeTimer = null;
+      }
+    };
+    stopNudge = stopNudgeTimer;
+    if (isPair) {
+      nudgeTimer = window.setInterval(() => {
+        if (submitted || state.cantTellHintMs !== null) return stopNudgeTimer();
+        // Not before the trial is up, and not before they have seen both arms
+        // — suggesting a tie to someone who has not looked at B yet is telling
+        // them to give up on a comparison they have not made.
+        if (state.shownAt === 0 || !allSeen()) return;
+        if (heldMsNow() < CANT_TELL_HINT_AFTER_HELD_MS) return;
+        state.cantTellHintMs = Math.round(performance.now() - state.shownAt);
+        panel.querySelector<HTMLButtonElement>('button[data-c="tie"]')?.classList.add('nudge');
+        stopNudgeTimer();
+      }, 500);
+    }
+
     const commit = (choice: string) => {
       if (submitted || state.shownAt === 0) return;
       // The keyboard bypasses the disabled buttons, so the gate is enforced
       // here too rather than only in the UI.
       if (!allSeen()) return;
       submitted = true;
+      stopNudgeTimer();
       detachKeys?.();
       detachKeys = null;
       closeViewAccounting(performance.now());
@@ -1162,6 +1279,7 @@ export function startTrials(
         ms_on_a: Math.round(state.msOnView.a),
         ms_on_b: Math.round(state.msOnView.b),
         ms_on_ref: Math.round(state.msOnView.ref),
+        cant_tell_hint_ms: state.cantTellHintMs,
         ...panGeometry(img, viewport),
         ...cond,
       });
@@ -1328,6 +1446,8 @@ export function startTrials(
       aborted = true;
       detachKeys?.();
       detachKeys = null;
+      stopNudge?.();
+      stopNudge = null;
       renderDone();
     },
   };

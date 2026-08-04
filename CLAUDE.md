@@ -110,6 +110,51 @@ web component from `~/work/efficient-ui/`. No framework.
   two-second answer. Stored raw and normalised in analysis — the useful form is
   relative to that observer's other trials, and the session is not finished when
   the row is written.
+- **The comparison mode is chosen by the observer, once, before the first
+  trial.** `web/src/mode-chooser.ts`; `hasChosenInputMode` is deliberately
+  separate from "which mode are we in" — `loadInputMode` always returns
+  something, so a device default silently applied would look like a choice and
+  the prompt would never fire for the observers already in the study. Defaults
+  are `hold` on touch and **`buttons` on mouse** (was `tap`): both keep the eye
+  on the picture and change it underneath, which is the comparison being asked
+  for. **Touch offers `hold` alone** — `tap` costs a look away from the stimulus
+  per switch on the smallest screen, and splitting mobile data across two modes
+  bought nothing — so `availableInputModes()` returns one entry there and the
+  chooser renders a how-to instead of a one-option "choice". `loadInputMode`
+  demotes a stored mode the device no longer offers, or a phone that picked
+  `tap` earlier would be stranded in an unavailable UI.
+- **On touch, `touchstart` must keep its `preventDefault()`.** Android's
+  long-press recogniser fires **`pointercancel` before `contextmenu`**, and that
+  cancel is not cancellable — `endPointer` is bound to it (rightly: a genuinely
+  cancelled pointer must not leave a stuck hold), so a press held for about a
+  second snapped back to the resting view. Suppressing `contextmenu` alone does
+  not help. Pointer events are generated independently of the touch default
+  action, so preventing it costs nothing and `touch-action: none` still handles
+  scroll/pinch. Note this reproduces on real devices only — headless Chromium
+  does not run the gesture recogniser, so an e2e test (synthetic *or* CDP touch)
+  will not catch a regression here.
+- **The variant indicator must survive the stimulus covering the frame.** The
+  tiled letterbox surround only paints where the picture does not reach, so it
+  vanishes exactly when someone magnifies — most of a careful session. The edge
+  frame (`.stage` + `.edge-*`) is the durable cue: **outside** the stimulus, via
+  padding on `.stage`, so it can never occlude pixels under judgement (same rule
+  the reveal hint had to obey). Position carries identity — A lights the LEFT
+  edge, B the RIGHT, the original the TOP — matching `hold`'s halves and the A/B
+  order of the answer buttons. Only one bar is glyphed at a time, so what
+  changes between views is where a dark-grey texture sits, not the frame's
+  luminance; keep it strictly neutral for the same reason as the surround.
+- **A UI nudge toward a specific answer must be recorded, or it contaminates
+  silently.** After `CANT_TELL_HINT_AFTER_HELD_MS` of *held* time the tie button
+  breathes, because at threshold the truthful answer is a tie but the button
+  reads as giving up — so people grind on and guess, and a guess recorded as a
+  preference is worse data than a recorded tie (Davidson's model has a tie term
+  precisely so it is an outcome, not noise). It fires on exactly the hardest
+  trials, so `responses.cant_tell_hint_ms` (migration 0021) is what lets an
+  analyst compare hinted against unhinted tie rates or drop hinted trials.
+  "Held" means time on any view that is **not** the resting one — under `tap`, A
+  *is* the resting view, so `ms_on_a + ms_on_b` would grow while someone sits
+  doing nothing. Never fires on a single-stimulus trial (no tie to offer) or
+  before the seen-both gate is satisfied.
 - **A response can be revised, never deleted — and the first answer survives.**
   Undo (migration 0020) writes `original_choice` / `revised_at` /
   `revision_count`; `choice` holds the answer that counts. Deleting the first

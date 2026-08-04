@@ -11,6 +11,12 @@ test.describe('HTTP API', () => {
     }
     expect(body.manifest_sources).toBeGreaterThan(0);
     expect(body.manifest_encodings).toBeGreaterThan(0);
+    // build_commit rides here rather than only on the export manifests: this
+    // endpoint is constant-cost, while a manifest computes its export to report
+    // a row count. Anything that just wants "which build is this?" — the trial
+    // screen's identifier panel, a deploy check — reads it from here.
+    expect(typeof body.build_commit).toBe('string');
+    expect(body.build_commit.length).toBeGreaterThan(0);
   });
 
   test('POST /api/session round-trips streak and supported_codecs', async ({ request }) => {

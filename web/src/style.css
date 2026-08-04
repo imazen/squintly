@@ -89,7 +89,9 @@ p, label { line-height: 1.4; color: var(--fg); }
   grid-template-columns: minmax(0, 1fr);
   height: 100dvh;
   gap: 8px;
-  padding: max(8px, env(safe-area-inset-top)) 8px max(8px, env(safe-area-inset-bottom));
+  /* No horizontal gutter: the stage is full-bleed so its edge bars reach the
+     screen edge. Every other row carries its own inline padding instead. */
+  padding: max(8px, env(safe-area-inset-top)) 0 max(8px, env(safe-area-inset-bottom));
   /* The keyboard-help overlay is absolutely positioned against this. */
   position: relative;
 }
@@ -304,7 +306,37 @@ p, label { line-height: 1.4; color: var(--fg); }
   pointer-events: none;
   text-align: center;
 }
-.trial.revealing .reveal-hint { border-color: var(--accent); color: var(--accent); }
+/* The pill used to turn full accent blue whenever the original was on screen —
+   a bright band of text beside a stimulus under judgement, and the loudest
+   thing on a phone screen. The lit edge bar now carries "you are looking at the
+   original" in colour, so the hint does not have to shout it too; it just
+   brightens slightly. `.trial.revealing` itself is unchanged — other code and
+   the e2e suite read that class. */
+.trial.revealing .reveal-hint { border-color: var(--border); color: var(--fg); }
+
+/* A how-to nobody needs after the second trial should be closable. */
+.reveal-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  pointer-events: auto; /* was none — the dismiss control has to be clickable */
+}
+/* `hidden` is only a UA rule (`[hidden] { display: none }`), so any author
+   `display` beats it — setting inline-flex above silently broke the attribute
+   and the dismissed pill stayed on screen. */
+.reveal-hint[hidden] { display: none; }
+.hint-dismiss {
+  background: transparent;
+  border: 0;
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 1.05rem;
+  line-height: 1;
+  padding: 2px 4px;
+  min-height: 0;
+  cursor: pointer;
+}
+.hint-dismiss:hover { color: var(--fg); }
 
 /* Rating panel: 4 big buttons in single column on portrait, two rows on landscape */
 .rating-panel {
@@ -1303,45 +1335,63 @@ input[type="range"] {
    picture is inset by it rather than painted over. Nothing occludes the pixels
    under judgement, which is the same rule the reveal hint had to obey.
 
-   POSITION carries the identity, and the glyph confirms it: A lights the LEFT
-   edge, B the RIGHT, the original the TOP. That matches `hold` mode's halves
-   (left half = A, right half = B) and the A/B order of the answer buttons, so
-   the cue is readable peripherally without reading anything.
+   POSITION carries the identity, and the colour confirms it: A lights the LEFT
+   edge, B the RIGHT, the original the TOP, each in the same colour its button
+   takes when active (`--accent` for A/B, `--good` for the original). That
+   matches `hold` mode's halves and the A/B order of the answer buttons, so the
+   cue is readable peripherally without reading anything.
 
-   Strictly neutral grey at low luminance, exactly as the letterbox surround:
-   this is now the surround immediately adjacent to the stimulus, so tinting it
-   would bias colour judgements and brightening it would shift local
-   adaptation. Only ONE bar is glyphed at a time, so what changes between views
-   is where a dark-grey texture sits, not how bright the frame is. */
+   COLOUR, not neutral grey — a deliberate change. The first version obeyed the
+   letterbox rule (strictly neutral, low luminance, so the surround cannot shift
+   local adaptation or bias a colour judgement) and was, in the operator's
+   words, basically invisible: a dark-grey glyph on near-black at the edge of a
+   phone screen carries no signal at all. The trade taken is a saturated strip
+   ~7px wide at the extreme edge of the frame, far outside the region being
+   judged, in exchange for a cue that actually works. The large-area surround —
+   the letterbox itself — is still strictly neutral, which is where the
+   adaptation argument really bites. Only the ACTIVE bar is coloured; the other
+   two stay near-black, so exactly one edge is lit at a time and the frame's
+   total luminance barely moves between views. */
 .stage {
   position: relative;
   display: grid;
   grid-template-rows: minmax(0, 1fr);
   grid-template-columns: minmax(0, 1fr);
-  padding: var(--edge-w) var(--edge-w) 0;
+  padding: var(--edge-top-w) var(--edge-w) 0;
   background: #000;
-  border-radius: 12px;
   overflow: hidden;
   min-width: 0;
   min-height: 0;
-  --edge-w: 14px;
+  /* Under 8px: wide enough for the letter, narrow enough that the picture —
+     already the smallest thing on a phone — keeps the space. */
+  --edge-w: 7px;
+  --edge-top-w: 6px;
 }
-@media (max-width: 420px) {
-  .stage { --edge-w: 11px; }
-}
-.stage > .viewport { border-radius: 0 0 10px 10px; }
+/* Full-bleed: the bars reach the screen edge, so no page gutter sits outside
+   them wasting the very space they were made narrow to save. Square corners
+   follow — a radius against the screen edge only reintroduces a gap. */
+.stage > .viewport { border-radius: 0; }
 .edge {
   position: absolute;
   background-repeat: repeat;
   background-position: center;
+  background-color: #141418;
   pointer-events: none;
 }
 .edge-left  { left: 0; top: 0; bottom: 0; width: var(--edge-w); }
 .edge-right { right: 0; top: 0; bottom: 0; width: var(--edge-w); }
-.edge-top   { left: 0; right: 0; top: 0; height: var(--edge-w); }
-.stage[data-view="a"]   .edge-left  { background-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2214%22%20height%3D%2240%22%3E%3Ctext%20x%3D%227%22%20y%3D%2220%22%20font-family%3D%22system-ui%2Csans-serif%22%20font-size%3D%2211%22%20font-weight%3D%22700%22%20fill%3D%22%233a3a3a%22%20text-anchor%3D%22middle%22%20dominant-baseline%3D%22central%22%3EA%3C%2Ftext%3E%3C%2Fsvg%3E"); }
-.stage[data-view="b"]   .edge-right { background-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2214%22%20height%3D%2240%22%3E%3Ctext%20x%3D%227%22%20y%3D%2220%22%20font-family%3D%22system-ui%2Csans-serif%22%20font-size%3D%2211%22%20font-weight%3D%22700%22%20fill%3D%22%233a3a3a%22%20text-anchor%3D%22middle%22%20dominant-baseline%3D%22central%22%3EB%3C%2Ftext%3E%3C%2Fsvg%3E"); }
-.stage[data-view="ref"] .edge-top   { background-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2256%22%20height%3D%2214%22%3E%3Ctext%20x%3D%2228%22%20y%3D%227%22%20font-family%3D%22system-ui%2Csans-serif%22%20font-size%3D%2210%22%20font-weight%3D%22700%22%20fill%3D%22%233a3a3a%22%20text-anchor%3D%22middle%22%20dominant-baseline%3D%22central%22%3EORIG%3C%2Ftext%3E%3C%2Fsvg%3E"); }
+.edge-top   { left: 0; right: 0; top: 0; height: var(--edge-top-w); }
+.stage[data-view="a"] .edge-left {
+  background-color: var(--accent);
+  background-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%227%22%20height%3D%2226%22%3E%3Ctext%20x%3D%223.5%22%20y%3D%2213%22%20font-family%3D%22system-ui%2Csans-serif%22%20font-size%3D%228%22%20font-weight%3D%22700%22%20fill%3D%22%2300191f%22%20text-anchor%3D%22middle%22%20dominant-baseline%3D%22central%22%3EA%3C%2Ftext%3E%3C%2Fsvg%3E");
+}
+.stage[data-view="b"] .edge-right {
+  background-color: var(--accent);
+  background-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%227%22%20height%3D%2226%22%3E%3Ctext%20x%3D%223.5%22%20y%3D%2213%22%20font-family%3D%22system-ui%2Csans-serif%22%20font-size%3D%228%22%20font-weight%3D%22700%22%20fill%3D%22%2300191f%22%20text-anchor%3D%22middle%22%20dominant-baseline%3D%22central%22%3EB%3C%2Ftext%3E%3C%2Fsvg%3E");
+}
+/* No glyph on the top bar: at 6px nothing is legible, and vertical space is
+   scarcer than horizontal on a phone. Position plus colour carry it. */
+.stage[data-view="ref"] .edge-top { background-color: var(--good); }
 
 /* ---- "can't tell" is a real answer ----------------------------------------
    After a long comparison (see CANT_TELL_HINT_AFTER_HELD_MS) the tie button
@@ -1349,25 +1399,127 @@ input[type="range"] {
    reads as giving up — so people grind on and eventually guess, and a guess
    recorded as a preference is worse data than a recorded tie.
 
-   Slow and low-contrast on purpose. This sits beside a stimulus under
-   judgement: a fast or bright pulse would drag the eye off the picture and
-   change what is being measured. Border only — no fill, no colour, no motion
-   of the button itself, so nothing reflows and the surround luminance barely
-   moves. */
+   The FILL breathes, not only the border. A 1px inset outline was too small a
+   change to notice while the eye is on the picture, which made the hint
+   useless. Still slow (2.8s) and still low-contrast: this sits beside a
+   stimulus under judgement, so a fast or bright pulse would drag the eye off
+   the picture and change what is being measured. Nothing moves or reflows —
+   only colour — so the surround geometry is untouched. */
 @keyframes cant-tell-breathe {
-  0%, 100% { box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.10); }
-  50%      { box-shadow: inset 0 0 0 2px rgba(255, 255, 255, 0.34); }
+  0%, 100% {
+    background-color: var(--card);
+    box-shadow: inset 0 0 0 1px rgba(74, 209, 255, 0.16);
+  }
+  50% {
+    /* Plain value first so a browser without color-mix still lifts the fill. */
+    background-color: #1d3946;
+    background-color: color-mix(in srgb, var(--accent) 26%, var(--card));
+    box-shadow: inset 0 0 0 2px rgba(74, 209, 255, 0.5);
+  }
 }
 .pair-panel button.nudge {
   animation: cant-tell-breathe 2.8s ease-in-out infinite;
 }
 /* Respecting the preference is not optional here: a repeating animation is
    exactly what it is set to suppress. The hint still needs to be visible, so
-   it becomes a static outline rather than nothing at all — and it is still
+   it becomes a static lifted fill rather than nothing at all — and it is
    recorded either way, so the data stays comparable. */
 @media (prefers-reduced-motion: reduce) {
   .pair-panel button.nudge {
     animation: none;
-    box-shadow: inset 0 0 0 2px rgba(255, 255, 255, 0.28);
+    background-color: #1d3946;
+    background-color: color-mix(in srgb, var(--accent) 26%, var(--card));
+    box-shadow: inset 0 0 0 2px rgba(74, 209, 255, 0.5);
   }
 }
+
+/* The gutter .trial no longer applies, restored per row so only the stage is
+   full-bleed. */
+.trial > .trial-controls,
+.trial > .reveal-hint,
+.trial > .gate-hint,
+.trial > #panel {
+  margin-inline: 8px;
+}
+
+/* ---- the trial header, made small -----------------------------------------
+   It was ~52px of a phone screen — driven by a 40px-tall menu button — to say
+   "Trial 7", name the corpus, and offer a menu. That is a lot of the smallest
+   screen for the least-looked-at row, and the picture is what needs the space.
+   The corpus + license label stays (attribution is a standing commitment, see
+   CLAUDE.md "License posture") but shrinks and truncates rather than pushing
+   the row taller. */
+.trial > .progress {
+  margin-inline: 8px;
+  padding: 0;
+  gap: 6px;
+  font-size: 0.72rem;
+  flex-wrap: nowrap;
+}
+.trial > .progress .menu-btn {
+  min-height: 30px;
+  padding: 4px 12px;
+  font-size: 0.75rem;
+}
+.trial > .progress .trial-license {
+  font-size: 0.62rem;
+  padding: 0 4px;
+}
+
+/* ---- the identifier panel -------------------------------------------------
+   An observer who meets a corrupt encode or an artefact nobody can explain has
+   no way to say *which* image they mean — "the B one with the green band" is
+   not a bug report, an encoding id is. Long ids wrap rather than truncate: a
+   half-copied sha256 is worse than useless. */
+.info-card {
+  max-width: min(560px, 94vw);
+  text-align: left;
+}
+.info-list {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 3px 12px;
+  margin: 6px 0 14px;
+  font-size: 0.8rem;
+  max-height: 55vh;
+  overflow-y: auto;
+}
+.info-list dt {
+  color: var(--muted);
+  white-space: nowrap;
+}
+.info-list dd {
+  margin: 0;
+  min-width: 0;
+}
+.info-list code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.95em;
+  overflow-wrap: anywhere;
+}
+
+/* ---- the reviewer board ---------------------------------------------------
+   Volume and reliability side by side on purpose: answering a lot quickly is
+   only good if the answers are consistent, and a board that ranks on count
+   alone rewards exactly the behaviour the attention checks exist to catch. */
+.board-wrap { margin-top: 10px; }
+.board {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.78rem;
+}
+.board th,
+.board td {
+  padding: 4px 6px;
+  text-align: right;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+.board th:first-child,
+.board td:first-child { text-align: left; }
+.board th { color: var(--muted); font-weight: 600; }
+.board code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.board-note { font-size: 0.7rem; margin-top: 8px; }
+/* The menu is already a modal; the board must scroll inside it rather than
+   pushing "Keep going" off a phone screen. */
+#menu-body { max-height: 42vh; overflow-y: auto; }

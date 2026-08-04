@@ -192,3 +192,33 @@ test.describe('the pause menu', () => {
     expect(await page.locator('.trial').getAttribute('data-trial-id')).toBe(id);
   });
 });
+
+test.describe('the reviewer leaderboard', () => {
+  // The endpoint existed but nothing linked to it, so the board was
+  // unreachable from the app it was built for.
+  test('is reachable from the pause menu and shows reliability beside volume', async ({
+    page,
+  }) => {
+    await onboard(page);
+    await page.locator('#menu').click();
+    await expect(page.getByRole('heading', { name: /^Pause$/ })).toBeVisible();
+    await page.locator('#menu-leaderboard').click();
+
+    const body = page.locator('#menu-body');
+    await expect(body).toBeVisible();
+    // Either a board or an honest empty state — never a silent no-op. Polling
+    // on length alone passed instantly on the "Loading…" placeholder, so wait
+    // for it to be replaced rather than for it to be non-empty.
+    await expect
+      .poll(async () => body.innerText(), { timeout: 15_000 })
+      .not.toMatch(/Loading the board/i);
+    const text = await body.innerText();
+    if (text.match(/No reviewers/i)) return;
+
+    // Volume and reliability together: a board that ranks on count alone
+    // rewards the behaviour the attention checks exist to catch.
+    for (const col of ['Reviewer', 'Trials', 'Self-agree', 'Checks']) {
+      expect(text, `missing column ${col}`).toContain(col);
+    }
+  });
+});

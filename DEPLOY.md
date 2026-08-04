@@ -384,9 +384,13 @@ Provenance check after any deploy — this is the cheap way to confirm the runni
 image is the one you think it is:
 
 ```bash
-curl -s https://squintly.imazen.org/api/export/pareto.manifest.json \
+curl -s https://squintly.imazen.org/api/stats \
   | python3 -c 'import json,sys; print(json.load(sys.stdin)["build_commit"])'
 ```
+
+`/api/stats` rather than an export manifest: a manifest computes its
+export to report a row count, so it gets slower as the study fills up,
+while this endpoint is constant-cost. The manifests still carry it too.
 
 It must print the commit you deployed. `unknown` means the build script didn't
 run (the binary also logs a startup warning in that case); anything else means

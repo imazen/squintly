@@ -169,3 +169,26 @@ export async function authStart(body: AuthStartReq): Promise<AuthStartResp> {
   }
   return r.json();
 }
+
+export interface LeaderboardRow {
+  handle: string;
+  trials: number;
+  sessions: number;
+  active_days: number;
+  /// Attention-check pass rate. `null` when none have been served yet — which
+  /// is NOT the same as 0, a failing reviewer.
+  golden_pass_rate: number | null;
+  /// Agreement with themselves on re-served pairs: the ceiling any metric
+  /// could reach against this reviewer. High volume with low self-agreement is
+  /// noise, not data, which is why it sits beside the trial count.
+  self_agreement: number | null;
+  repeat_pairs: number;
+  median_seconds: number | null;
+  median_switches: number | null;
+}
+
+export async function listLeaderboard(): Promise<LeaderboardRow[]> {
+  const r = await fetch('/api/leaderboard');
+  if (!r.ok) throw new Error(`leaderboard ${r.status}`);
+  return r.json();
+}

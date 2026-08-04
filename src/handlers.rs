@@ -2213,6 +2213,14 @@ pub struct Stats {
     pub responses: i64,
     pub manifest_sources: usize,
     pub manifest_encodings: usize,
+    /// Git SHA this binary was built from (`unknown` for off-tree builds).
+    ///
+    /// Published here as well as on the export manifests because this endpoint
+    /// is cheap and constant-cost, while a manifest computes its export to
+    /// report a row count — so anything that just wants "which build is this?"
+    /// (the trial screen's identifier panel, a deploy check, a bug report) must
+    /// not be paying for an export to find out.
+    pub build_commit: &'static str,
 }
 
 pub async fn stats(State(state): State<SharedState>) -> Result<Json<Stats>, AppError> {
@@ -2228,6 +2236,7 @@ pub async fn stats(State(state): State<SharedState>) -> Result<Json<Stats>, AppE
         responses,
         manifest_sources: m.sources.len(),
         manifest_encodings: m.encodings.len(),
+        build_commit: BUILD_COMMIT,
     }))
 }
 

@@ -2,7 +2,14 @@
 // "A closer / tie / B closer". The reference is always reachable — by button,
 // by press-and-hold, by keyboard, or (in `hold` mode) as the resting state.
 
-import { listStudies, nextTrial, recordResponse, type TrialPayload } from './api';
+import {
+  listLeaderboard,
+  listStudies,
+  nextTrial,
+  recordResponse,
+  type LeaderboardRow,
+  type TrialPayload,
+} from './api';
 import { captureTrial, loadCalibration, loadStudyId, saveStudyId } from './conditions';
 import {
   HoldStack,
@@ -44,6 +51,30 @@ const ZOOM_LADDER = [1, 2, 3, 4, 5, 6, 7, 8];
 /// ordinary care. Tunable in one place because the right value is an empirical
 /// question — `cant_tell_hint_ms` in the export is what answers it.
 const CANT_TELL_HINT_AFTER_HELD_MS = 9_000;
+
+/// Whether the observer has dismissed the how-to pill.
+///
+/// localStorage, deliberately not a response column or a server field: it is a
+/// preference about chrome, it tells us nothing about a judgement, and putting
+/// it in the database would mean a migration and an extra write per session for
+/// a value nothing downstream reads. Losing it on a new device costs one tap.
+const HINT_DISMISSED_KEY = 'squintly_hint_dismissed';
+
+function hintDismissed(): boolean {
+  try {
+    return localStorage.getItem(HINT_DISMISSED_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
+function dismissHint(): void {
+  try {
+    localStorage.setItem(HINT_DISMISSED_KEY, '1');
+  } catch {
+    /* private mode: the tip simply comes back next load */
+  }
+}
 
 interface TrialState {
   shownAt: number;
@@ -243,9 +274,13 @@ export function startTrials(
           ${modePicker}
           <button class="undo-btn" id="undo-btn" aria-label="Take back the previous answer"
                   title="Take back the previous answer (u)"${lastAnswered ? '' : ' hidden'}>↶ undo</button>
+          <button class="keys-btn" id="info-btn" aria-label="Image identifiers" title="Which images am I looking at? (i)">i</button>
           <button class="keys-btn" id="keys-btn" aria-label="Keyboard shortcuts" title="Keyboard shortcuts (?)">⌨</button>
         </div>
-        <div class="reveal-hint" id="hint"></div>
+        <div class="reveal-hint" id="hint" hidden>
+          <span id="hint-text"></span>
+          <button class="hint-dismiss" id="hint-dismiss" aria-label="Hide this tip">&times;</button>
+        </div>
         <p class="gate-hint" id="gate-hint" hidden></p>
         <div id="panel"></div>
       </div>
@@ -254,6 +289,7 @@ export function startTrials(
     const stage = root.querySelector<HTMLDivElement>('#stage')!;
     const panel = root.querySelector<HTMLDivElement>('#panel')!;
     const hint = root.querySelector<HTMLDivElement>('#hint')!;
+    const hintText = root.querySelector<HTMLSpanElement>('#hint-text')!;
     const status = root.querySelector<HTMLDivElement>('#vp-status')!;
     const gateHint = root.querySelector<HTMLParagraphElement>('#gate-hint')!;
     root.querySelector<HTMLButtonElement>('#menu')!.addEventListener('click', () => openMenu());
@@ -393,12 +429,32 @@ export function startTrials(
     };
 
     function updateHint() {
+      // Dismissed for good — the gesture is learned in a trial or two, and after
+      // that the pill is a permanent band of text beside the picture on the
+      // screen with the least room for one.
+      if (hintDismissed()) {
+        hint.hidden = true;
+        return;
+      }
       const bits: string[] = [];
+      // "drag to explore" is never in the gate hint, so it survives: an
+      // oversized stimulus has to advertise panning even while the gate is
+      // still closed, or the observer cannot tell there is more picture.
       if (isPannable()) bits.push('drag to explore');
-      bits.push(inputModeHint(inputMode, isPair));
-      hint.textContent = bits.join(' · ');
+      // The GESTURE line is the duplicate. While the gate is closed
+      // `#gate-hint` is already saying "press and hold the left and right
+      // half" — the same sentence, one line apart, on a phone. The gate's
+      // version wins there because it is the actionable one (it says why the
+      // panel is locked and goes away once you have looked); this one returns
+      // when the gate opens.
+      if (gateHint.hidden) bits.push(inputModeHint(inputMode, isPair));
+      hintText.textContent = bits.join(' · ');
       hint.hidden = bits.length === 0;
     }
+    root.querySelector<HTMLButtonElement>('#hint-dismiss')!.addEventListener('click', () => {
+      dismissHint();
+      updateHint();
+    });
 
     // ---- reveal accounting ----------------------------------------------
     //
@@ -1003,6 +1059,9 @@ export function startTrials(
         gateHint.hidden = ok;
         gateHint.textContent = !ready ? 'loading…' : missing.length ? gateHintFor(missing) : '';
       }
+      // The pill is suppressed while the gate hint is up, so it has to be
+      // re-evaluated whenever the gate changes — not only when zoom or mode do.
+      updateHint();
     }
 
     /// Say how to see the arms that are still unseen, in the vocabulary of the
@@ -1145,6 +1204,11 @@ export function startTrials(
         root.querySelector('.key-help')?.remove();
         return;
       }
+      if (k === 'i' || k === 'I') {
+        e.preventDefault();
+        void toggleInfo();
+        return;
+      }
 
       state.keyboardUsed = true;
 
@@ -1212,6 +1276,108 @@ export function startTrials(
       window.removeEventListener('keyup', onKeyUp);
     };
 
+    /// Everything needed to identify what is on screen, as `label: value` lines.
+    ///
+    /// Exists because an observer who meets a corrupt encode or an artefact
+    /// nobody can explain has no way to say *which* image they mean. "The B one
+    /// with the green band" is not a bug report; an encoding id is. The trial
+    /// id and the build commit are here for the same reason — without them a
+    /// report cannot be located in the data or attributed to a version.
+    const identifiers = (): Array<[string, string]> => {
+      const bytes = (n: number) => `${n} B (${(n / 1024).toFixed(1)} KiB)`;
+      const arm = (tag: string, e: NonNullable<TrialPayload['a']>): Array<[string, string]> => [
+        [`${tag} encoding`, e.encoding_id],
+        [`${tag} codec`, `${e.codec}${e.quality === null ? '' : ` q${e.quality}`}`],
+        [`${tag} bytes`, bytes(e.bytes)],
+        [`${tag} url`, new URL(e.url, location.origin).href],
+      ];
+      return [
+        ['trial', trial.trial_id],
+        ['kind', trial.kind],
+        ['session', sessionId],
+        ['study', loadStudyId() ?? '(default)'],
+        ['source sha256', trial.source_hash],
+        ['source size', `${trial.source_w} x ${trial.source_h}`],
+        ['corpus', trial.source_corpus ?? 'unknown'],
+        ['license', `${trial.source_license_label} (${trial.source_license_id})`],
+        ['original url', new URL(trial.source_url, location.origin).href],
+        ...arm('A', trial.a),
+        ...(trial.b ? arm('B', trial.b) : []),
+        ['input mode', inputMode],
+        ['magnification', `${zoomFactor}x`],
+        ['device pixel ratio', String(devicePixelRatio)],
+        ['build', buildCommit ?? 'unknown'],
+      ];
+    };
+
+    const toggleInfo = () => {
+      const existing = root.querySelector('.key-help.info-help');
+      if (existing) {
+        existing.remove();
+        return;
+      }
+      const rows = identifiers();
+      const panel = document.createElement('div');
+      panel.className = 'key-help info-help';
+      panel.innerHTML = `
+        <div class="key-help-card info-card">
+          <h3>What am I looking at?</h3>
+          <dl class="info-list">${rows
+            .map(
+              ([k, v]) =>
+                `<dt data-row="${escapeAttr(k)}">${escapeHtml(k)}</dt>` +
+                `<dd data-row="${escapeAttr(k)}"><code>${escapeHtml(v)}</code></dd>`,
+            )
+            .join('')}</dl>
+          <div class="row">
+            <button id="info-copy" class="primary">Copy all</button>
+            <button id="info-close">Close</button>
+          </div>
+        </div>`;
+      root.querySelector('.trial')!.appendChild(panel);
+      // Filled in when it arrives rather than awaited before opening: the panel
+      // is what someone reaches for mid-report, and it must not wait on the
+      // network to appear.
+      if (!buildCommit) {
+        void loadBuildCommit().then((c) => {
+          const cell = panel.querySelector<HTMLElement>('[data-row="build"] code');
+          if (c && cell) cell.textContent = c;
+        });
+      }
+      panel.addEventListener('click', (e) => {
+        if (e.target === panel) panel.remove();
+      });
+      panel.querySelector<HTMLButtonElement>('#info-close')!.addEventListener('click', () =>
+        panel.remove(),
+      );
+      const copyBtn = panel.querySelector<HTMLButtonElement>('#info-copy')!;
+      copyBtn.addEventListener('click', async () => {
+        // Read back from the DOM, not from `rows`: the build commit is patched
+        // in after the panel opens, so copying the captured array would hand
+        // someone a record saying "unknown" while the screen showed the sha.
+        const text = [...panel.querySelectorAll<HTMLElement>('.info-list dt')]
+          .map((dt) => {
+            const dd = dt.nextElementSibling as HTMLElement | null;
+            return `${dt.textContent}: ${dd?.textContent ?? ''}`;
+          })
+          .join('\n');
+        try {
+          await navigator.clipboard.writeText(text);
+          copyBtn.textContent = 'Copied';
+        } catch {
+          // Clipboard access is denied on insecure origins and in some
+          // embedded browsers. Select the text so it can still be copied by
+          // hand rather than leaving a button that silently does nothing.
+          const sel = window.getSelection();
+          const range = document.createRange();
+          range.selectNodeContents(panel.querySelector('.info-list')!);
+          sel?.removeAllRanges();
+          sel?.addRange(range);
+          copyBtn.textContent = 'Select + copy';
+        }
+      });
+    };
+
     const toggleKeyHelp = () => {
       const existing = root.querySelector('.key-help');
       if (existing) {
@@ -1247,6 +1413,9 @@ export function startTrials(
     };
     root.querySelector<HTMLButtonElement>('#keys-btn')!.addEventListener('click', toggleKeyHelp);
     showKeyHelp = toggleKeyHelp;
+    root.querySelector<HTMLButtonElement>('#info-btn')!.addEventListener('click', () =>
+      void toggleInfo(),
+    );
     root.querySelector<HTMLButtonElement>('#undo-btn')!.addEventListener('click', () => void undoLast());
   };
 
@@ -1362,8 +1531,14 @@ export function startTrials(
 
         <div class="menu-section">
           <button id="menu-calibrate">Re-measure screen size</button>
+          <button id="menu-leaderboard">Reviewer leaderboard</button>
           <button id="menu-keys">Keyboard shortcuts</button>
         </div>
+
+        <!-- Where the leaderboard renders. Inline rather than a second overlay:
+             the menu is already a modal, and stacking one on another on a phone
+             leaves no obvious way back. -->
+        <div id="menu-body"></div>
 
         <div class="choice-row">
           <button id="continue" class="primary">Keep going</button>
@@ -1425,6 +1600,9 @@ export function startTrials(
       detachKeys = null;
       onRecalibrate();
     });
+    scrim
+      .querySelector<HTMLButtonElement>('#menu-leaderboard')!
+      .addEventListener('click', () => void showLeaderboard(scrim));
     scrim.querySelector<HTMLButtonElement>('#menu-keys')!.addEventListener('click', () => {
       close();
       showKeyHelp?.();
@@ -1463,6 +1641,86 @@ export function startTrials(
       renderDone();
     },
   };
+}
+
+/// Which build is serving this page, for a bug report to be attributable.
+///
+/// Fetched lazily and cached: only needed when someone opens the identifier
+/// panel, so a session that never does pays nothing.
+///
+/// From `/api/stats`, NOT an export manifest. A manifest computes its export to
+/// report a row count, so it gets slower as the study fills up — blocking the
+/// panel on it made opening take seconds once there was real data, which is
+/// exactly when someone is trying to report a bad encode. `/api/stats` is
+/// constant-cost.
+let buildCommit: string | null = null;
+async function loadBuildCommit(): Promise<string | null> {
+  if (buildCommit) return buildCommit;
+  try {
+    const r = await fetch('/api/stats');
+    if (!r.ok) return null;
+    const j = (await r.json()) as { build_commit?: string };
+    buildCommit = j.build_commit ?? null;
+  } catch {
+    /* offline or blocked: the panel says "unknown" rather than failing to open */
+  }
+  return buildCommit;
+}
+
+/// The reviewer board, shown from the pause menu.
+///
+/// Deliberately not a ranking by volume: sorting on trial count alone rewards
+/// clicking through, which is the behaviour the attention checks exist to
+/// catch. Self-agreement sits next to the count for exactly that reason — high
+/// volume with low self-agreement is noise, not data. Handles are derived and
+/// unreversible (see `src/handle.rs`), so a public board leaks no addresses.
+async function showLeaderboard(host: HTMLElement): Promise<void> {
+  const body = host.querySelector<HTMLElement>('#menu-body');
+  if (!body) return;
+  body.innerHTML = `<p class="muted">Loading the board…</p>`;
+  let rows: LeaderboardRow[];
+  try {
+    rows = await listLeaderboard();
+  } catch (e) {
+    body.innerHTML = `<p class="muted">Couldn't load the leaderboard: ${escapeHtml(
+      (e as Error).message,
+    )}</p>`;
+    return;
+  }
+  if (!rows.length) {
+    body.innerHTML = `<p class="muted">No reviewers on the board yet.</p>`;
+    return;
+  }
+  const pct = (v: number | null) => (v === null ? '—' : `${Math.round(v * 100)}%`);
+  const num = (v: number | null, d = 1) => (v === null ? '—' : v.toFixed(d));
+  body.innerHTML = `
+    <div class="board-wrap">
+      <table class="board">
+        <thead><tr>
+          <th>Reviewer</th><th>Trials</th><th>Days</th>
+          <th title="Agreement with themselves on re-served pairs — the ceiling any metric could reach against this reviewer">Self-agree</th>
+          <th title="Attention-check pass rate">Checks</th>
+          <th title="Median seconds per judgement">s/trial</th>
+          <th title="Median view swaps per trial — how much comparing they actually did">Swaps</th>
+        </tr></thead>
+        <tbody>${rows
+          .map(
+            (r) => `<tr>
+              <td><code>${escapeHtml(r.handle)}</code></td>
+              <td>${r.trials}</td>
+              <td>${r.active_days}</td>
+              <td>${pct(r.self_agreement)}${r.repeat_pairs ? '' : ' <span class="muted">(n/a)</span>'}</td>
+              <td>${pct(r.golden_pass_rate)}</td>
+              <td>${num(r.median_seconds)}</td>
+              <td>${num(r.median_switches)}</td>
+            </tr>`,
+          )
+          .join('')}</tbody>
+      </table>
+      <p class="muted board-note">Names are derived from a salted hash and cannot be
+        reversed. Self-agreement is shown beside volume on purpose: answering a lot
+        quickly is only good if the answers are consistent.</p>
+    </div>`;
 }
 
 function escapeHtml(s: string): string {

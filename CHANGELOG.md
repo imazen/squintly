@@ -38,6 +38,46 @@
   movement spelled out per mode. Asked once; observers already in the study get
   it on their next visit, since "has chosen" is tracked separately from "has a
   mode".
+- **The edge frame is colour-coded and full-bleed.** Its first form obeyed the
+  letterbox's neutral-grey rule and was invisible on a phone. The lit bar now
+  takes the same colour its button takes when active (`--accent` for A/B,
+  `--good` for the original), only one bar is lit at a time, and the bars are
+  under 8px and reach the screen edge — `.trial` gives up its horizontal gutter
+  so nothing is wasted outside them. The trial header lost ~20px of height with
+  it (the menu button drove a 52px row); the corpus + license label stays, since
+  attribution is a standing commitment, but truncates instead of pushing the row
+  taller.
+- **The reviewer leaderboard is reachable.** `/api/leaderboard` existed but
+  nothing in the app linked to it, so the board was unreachable from the thing
+  it was built for. Now a pause-menu entry, rendered inline (the menu is already
+  a modal; stacking another on a phone leaves no obvious way back). Self-agreement
+  sits beside the trial count on purpose — a board that ranks on volume alone
+  rewards exactly the behaviour the attention checks exist to catch.
+- **An `i` panel names the images on screen, with a Copy button.** An observer
+  who meets a corrupt encode or an artefact nobody can explain had no way to say
+  *which* image they meant — "the B one with the green band" is not a bug
+  report, an encoding id is. Lists the trial, session and study, the source
+  sha256 / size / corpus / license, and per arm the encoding id, codec+quality,
+  byte size and URL, plus input mode, magnification, DPR and the build commit so
+  a report is attributable to a version. Copy emits `label: value` lines,
+  pasteable into an issue as-is; where the clipboard API is blocked it selects
+  the text instead of silently doing nothing. Opens with the button or `i`.
+- **Only one hint shows at a time.** The how-to pill and the seen-both gate hint
+  both explained the same left/right gesture, one line apart, on the screen with
+  the least room for either. The gate's version wins while the panel is locked
+  (it is the actionable one, and it goes away once you have looked); the pill
+  returns when the gate opens.
+- **The how-to pill can be dismissed.** The gesture is learned in a trial or
+  two; after that it was a permanent band of text beside the picture, on the
+  screen with the least room for one. An ✕ hides it for good
+  (`squintly_hint_dismissed` in localStorage — a preference about chrome, not
+  something the database should carry). It also no longer turns full accent blue
+  whenever the original is up: the lit edge bar carries that in colour now, so
+  the loudest thing on screen does not need to be the help text.
+- **The "can't tell" prompt breathes its fill, not a 1px outline** — the outline
+  was too small a change to notice while the eye is on the picture, which made
+  the hint useless. Still a slow 2.8s cycle at low contrast, and nothing moves
+  or reflows.
 - **An edge frame shows which variant is live even when the picture covers the
   frame.** The tiled letterbox surround only paints where the stimulus does not
   reach, so it disappeared exactly when someone magnified. The frame sits

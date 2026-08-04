@@ -146,9 +146,21 @@ web component from `~/work/efficient-ui/`. No framework.
   padding on `.stage`, so it can never occlude pixels under judgement (same rule
   the reveal hint had to obey). Position carries identity — A lights the LEFT
   edge, B the RIGHT, the original the TOP — matching `hold`'s halves and the A/B
-  order of the answer buttons. Only one bar is glyphed at a time, so what
-  changes between views is where a dark-grey texture sits, not the frame's
-  luminance; keep it strictly neutral for the same reason as the surround.
+  order of the answer buttons.
+  **The lit bar is COLOURED, and that is a deliberate exception to the
+  neutral-surround rule.** The first version obeyed it (dark neutral grey) and
+  was invisible on a phone — a cue nobody can see is not a cue. The bar now
+  takes the same colour that arm's button takes when active (`--accent` for A/B,
+  `--good` for the original), so the two agree. What keeps the psychovisual
+  argument intact: the strip is ~7px at the extreme edge, far outside the
+  judged region; only ONE bar is lit at a time (the others sit near-black), so
+  total frame luminance barely moves between views; and the large-area
+  letterbox surround — where adaptation actually bites — is still strictly
+  neutral. Do not "restore consistency" by neutralising the bars or by
+  colouring the letterbox.
+  `.stage` is full-bleed: `.trial` carries no horizontal padding and each other
+  row re-adds its own, so the bars reach the screen edge. A gutter outside them
+  would waste exactly the space they are kept under 8px to save.
 - **A UI nudge toward a specific answer must be recorded, or it contaminates
   silently.** After `CANT_TELL_HINT_AFTER_HELD_MS` of *held* time the tie button
   breathes, because at threshold the truthful answer is a tie but the button

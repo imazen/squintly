@@ -11,23 +11,24 @@
 // itself is the integration point.
 
 import { expect, test } from './fixtures';
-import { passInstructions } from './helpers';
+import { } from './helpers';
 
 test.describe('public suggestion form', () => {
   test.beforeEach(async ({ page }) => {
     await page.goto('/');
-    await page.evaluate(() => localStorage.clear());
+    await page.evaluate(() => {
+      localStorage.clear();
+      sessionStorage.setItem('squintly:instructions_seen', '1');
+    });
   });
 
   test('welcome tab bar exposes Suggest', async ({ page }) => {
-    await page.goto('/');
-    await passInstructions(page);
+    await page.goto('/rate');
     await expect(page.locator('.squintly-tabs button[data-tab="suggest"]')).toBeVisible();
   });
 
   test('submit a tiny PNG with required fields', async ({ page, request }) => {
-    await page.goto('/');
-    await passInstructions(page);
+    await page.goto('/rate');
     await page.locator('.squintly-tabs button[data-tab="suggest"]').click();
     await expect(page.locator('[data-screen="suggest"]')).toBeVisible();
 
@@ -64,8 +65,7 @@ test.describe('public suggestion form', () => {
   });
 
   test('rejects submission without email', async ({ page }) => {
-    await page.goto('/');
-    await passInstructions(page);
+    await page.goto('/rate');
     await page.locator('.squintly-tabs button[data-tab="suggest"]').click();
     const onePxPng = Buffer.from(
       'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=',

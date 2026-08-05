@@ -92,6 +92,7 @@ export interface Study {
   /// sentence — fine in a picker, useless in the one line of chrome above a
   /// stimulus on a phone.
   short_name: string;
+  is_default: boolean;
   summary: string;
   trial_style: string;
   unlisted: boolean;
@@ -185,6 +186,8 @@ export async function authStart(body: AuthStartReq): Promise<AuthStartResp> {
 
 export interface LeaderboardRow {
   handle: string;
+  /// The caller's own row, when `listLeaderboard` was given an observer id.
+  is_you: boolean;
   trials: number;
   sessions: number;
   active_days: number;
@@ -208,8 +211,43 @@ export interface LeaderboardRow {
   active_seconds: number;
 }
 
-export async function listLeaderboard(): Promise<LeaderboardRow[]> {
-  const r = await fetch('/api/leaderboard');
+export async function listLeaderboard(observerId?: string | null): Promise<LeaderboardRow[]> {
+  const q = observerId ? `?observer_id=${encodeURIComponent(observerId)}` : '';
+  const r = await fetch(`/api/leaderboard${q}`);
   if (!r.ok) throw new Error(`leaderboard ${r.status}`);
+  return r.json();
+}
+
+export interface WhoAmI {
+  signed_in: boolean;
+  email: string | null;
+  observer_id: string | null;
+  is_admin: boolean;
+}
+
+export async function whoami(): Promise<WhoAmI> {
+  const r = await fetch('/api/auth/whoami');
+  if (!r.ok) return { signed_in: false, email: null, observer_id: null, is_admin: false };
+  return r.json();
+}
+
+export async function signOut(): Promise<void> {
+  await fetch('/api/auth/signout', { method: 'POST' });
+}
+
+export interface StudyProgress {
+  id: string;
+  short_name: string;
+  label: string;
+  is_default: boolean;
+  responses: number;
+  min_viable_ratings: number;
+  ideal_ratings: number;
+  observers: number;
+}
+
+export async function studyProgress(): Promise<StudyProgress[]> {
+  const r = await fetch('/api/studies/progress');
+  if (!r.ok) throw new Error(`studyProgress ${r.status}`);
   return r.json();
 }

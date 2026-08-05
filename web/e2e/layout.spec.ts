@@ -18,9 +18,9 @@ import {
   ADMIN_TOKEN,
   clickBegin,
   completeProfileAndStart,
+  gotoFresh,
   gotoFreshAsOperator,
   signInAsAdmin,
-  passInstructions,
 } from './helpers';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -154,8 +154,7 @@ test.describe('no horizontal overflow on any screen', () => {
   });
 
   test('suggest form', async ({ page }) => {
-    await page.goto('/');
-    await passInstructions(page);
+    await gotoFresh(page);
     await page.locator('.squintly-tabs button[data-tab="suggest"]').click();
     await expect(page.locator('[data-screen="suggest"]')).toBeVisible();
     await expectNoViewportExpansion(page, 'suggest');
@@ -172,7 +171,10 @@ test.describe('no horizontal overflow on any screen', () => {
     });
     expect(r.ok()).toBeTruthy();
     await page.goto('/');
-    await page.evaluate(() => localStorage.clear());
+    await page.evaluate(() => {
+      localStorage.clear();
+      sessionStorage.setItem('squintly:instructions_seen', '1');
+    });
     // Curator writes are admin-only; the UI relies on the signed-in cookie.
     await signInAsAdmin(page, coefficientPort);
     await page.goto('/');
@@ -181,8 +183,8 @@ test.describe('no horizontal overflow on any screen', () => {
       // Curator is opt-in per browser now — the same flag `#curator` sets.
       localStorage.setItem('squintly_show_curator', '1');
     });
-    await page.reload();
-    await passInstructions(page);
+    // The tab bar lives on the session route, not the front page.
+    await page.goto('/rate');
     await page.locator('.squintly-tabs button[data-tab="curator"]').click();
     await expect(page.locator('[data-screen="stream"]')).toBeVisible();
     await expect(page.locator('.curator-meta-row')).toBeVisible();

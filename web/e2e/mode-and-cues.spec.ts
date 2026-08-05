@@ -7,7 +7,6 @@ import {
   completeProfileAndStart,
   gotoFresh,
   satisfyGate,
-  passInstructions,
 } from './helpers';
 
 /// Walk a fresh visitor as far as the profile's Start button, stopping on
@@ -118,8 +117,7 @@ test.describe('choosing a comparison mode', () => {
     test.skip(desktop(testInfo), 'this device still offers tap');
     await toTrial(page);
     await page.evaluate(() => localStorage.setItem('squintly_input_mode', 'tap'));
-    await page.goto('/');
-    await passInstructions(page);
+    await page.goto('/rate');
     await page.waitForSelector('.trial[data-trial-id]', { timeout: 30_000 });
     expect(
       await page.evaluate(() => document.querySelector<HTMLElement>('.trial')!.dataset.inputMode),
@@ -153,8 +151,7 @@ test.describe('choosing a comparison mode', () => {
   // which is why "has chosen" is tracked separately from "which mode".
   test('it is not asked again on the next visit', async ({ page }) => {
     await toTrial(page);
-    await page.goto('/');
-    await passInstructions(page);
+    await page.goto('/rate');
     await page.waitForSelector('.trial[data-trial-id]', { timeout: 30_000 });
     await expect(page.locator('#mode-continue')).toHaveCount(0);
   });
@@ -165,8 +162,7 @@ test.describe('choosing a comparison mode', () => {
   test('an observer who never chose is asked on their next visit', async ({ page }) => {
     await toTrial(page);
     await page.evaluate(() => localStorage.removeItem('squintly_input_mode'));
-    await page.goto('/');
-    await passInstructions(page);
+    await page.goto('/rate');
     await expect(page.locator('#mode-continue')).toBeVisible();
     await acceptModeChooser(page);
     await page.waitForSelector('.trial[data-trial-id]', { timeout: 30_000 });
@@ -399,8 +395,7 @@ test.describe('the how-to pill', () => {
     // Nor just this load. localStorage, deliberately not the database — it is a
     // preference about chrome and says nothing about a judgement.
     expect(await page.evaluate(() => localStorage.getItem('squintly_hint_dismissed'))).toBe('1');
-    await page.goto('/');
-    await passInstructions(page);
+    await page.goto('/rate');
     await page.waitForSelector('.trial[data-trial-id]', { timeout: 30_000 });
     await expect(page.locator('#hint')).toBeHidden();
   });
@@ -724,7 +719,6 @@ test.describe('which study am I in', () => {
   // an empty corner rather than failing.
   test('every study carries a short name', async ({ page }) => {
     await page.goto('/');
-    await passInstructions(page);
     const studies = await page.evaluate(async () => (await fetch('/api/studies')).json());
     expect(studies.length).toBeGreaterThan(0);
     for (const s of studies) {
@@ -744,9 +738,11 @@ test.describe('the instructions gate', () => {
       localStorage.clear();
       sessionStorage.clear();
     });
-    // Deliberately NOT passInstructions: this test IS the gate, so clicking
-    // through it first would leave nothing to assert.
     await page.reload();
+    // The gate sits BEHIND the front page now — arriving to read what the app
+    // is should not cost three seconds. Cross deliberately rather than via
+    // ``, which would click through the gate this test is about.
+    await page.locator('#landing-start').click();
 
     await expect(page.locator('[data-screen="instructions"]')).toBeVisible();
     const go = page.locator('#instructions-go');
@@ -767,8 +763,7 @@ test.describe('the instructions gate', () => {
   // the text four minutes ago.
   test('a reload in the same sitting is not gated again', async ({ page }) => {
     await gotoFresh(page); // clears storage and passes the gate once
-    await page.goto('/');
-    await passInstructions(page);
+    await page.goto('/rate');
     await expect(page.getByRole('heading', { name: /Image Discrimination Study/i })).toBeVisible();
     await expect(page.locator('[data-screen="instructions"]')).toHaveCount(0);
   });

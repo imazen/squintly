@@ -28,7 +28,10 @@ test.describe('curator on Z Fold 7', () => {
     });
     expect(r.ok()).toBeTruthy();
     await page.goto('/');
-    await page.evaluate(() => localStorage.clear());
+    await page.evaluate(() => {
+      localStorage.clear();
+      sessionStorage.setItem('squintly:instructions_seen', '1');
+    });
     // Curator writes are admin-only; the UI relies on the signed-in cookie.
     await signInAsAdmin(page, coefficientPort);
     await page.goto('/');
@@ -44,8 +47,7 @@ test.describe('curator on Z Fold 7', () => {
 
   test('cover-display layout: stream and curate stack vertically', async ({ page }, testInfo) => {
     test.skip(testInfo.project.name !== 'zfold7-cover', 'cover only');
-    await page.goto('/');
-    await passInstructions(page);
+    await page.goto('/rate');
     await page.locator('.squintly-tabs button[data-tab="curator"]').click();
     // Single-column layout — confirm the curator-meta sits below (not beside) the viewport.
     const viewportBox = await page.locator('.curator-viewport').boundingBox();
@@ -62,8 +64,7 @@ test.describe('curator on Z Fold 7', () => {
 
   test('inner-display layout: curate uses side-by-side breakpoint', async ({ page }, testInfo) => {
     test.skip(testInfo.project.name !== 'zfold7-inner', 'inner only');
-    await page.goto('/');
-    await passInstructions(page);
+    await page.goto('/rate');
     await page.locator('.squintly-tabs button[data-tab="curator"]').click();
     await page.locator('#take').click();
     await expect(page.locator('[data-screen="curate"]')).toBeVisible();

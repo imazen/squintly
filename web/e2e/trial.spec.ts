@@ -7,8 +7,7 @@ import {
   deviceModes,
   gotoFresh,
   submitOneTrial,
-  passInstructions,
-} from './helpers';
+  passInstructions } from './helpers';
 
 test.describe('trial loop', () => {
   test('records a rating and advances to the next trial', async ({ page, request }) => {

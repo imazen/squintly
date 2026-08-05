@@ -1,12 +1,13 @@
 // Squintly entrypoint. Routes between welcome → calibration → profile → trials.
 // Also hosts the curator-mode tab (corpus development).
 
-import { createSession, listStudies, type Study } from './api';
+import { createSession, listStudies, signOut, type Study } from './api';
 import { openSignInModal } from './auth-modal';
 import { renderCalibration } from './calibration';
 import { runCalibration } from './calibration-onboarding';
 import { hasChosenInputMode } from './input-mode';
 import { maybeShowInstructions } from './instructions';
+import { renderLanding } from './landing';
 import { chooseInputMode } from './mode-chooser';
 import { detectCodecs, jxlEnableHint } from './codec-probe';
 import {
@@ -126,9 +127,18 @@ function openCalibration(): void {
   });
 }
 
+/// Which study is selected: the stored choice, else the one flagged default.
+///
+/// `studies[0]` was the fallback, which is declaration order — so the picker
+/// preselected "Web image quality" while the server's default was
+/// `ssim2-nonphoto`, and an observer who never touched the picker was offered
+/// one study and enrolled in another. `is_default` is asserted unique in
+/// `studies.rs`, so this cannot drift again.
 function pickStudy(studies: Study[], stored: string | null): Study | null {
   if (!studies.length) return null;
-  return studies.find((s) => s.id === stored) ?? studies[0];
+  return (
+    studies.find((s) => s.id === stored) ?? studies.find((s) => s.is_default) ?? studies[0]
+  );
 }
 
 function renderStudyPicker(studies: Study[], chosen: Study | null): string {
@@ -349,11 +359,62 @@ function hasOnboarded(): boolean {
   );
 }
 
+/// Where the session lives.
+///
+/// A separate URL, not a screen behind a button. Two reasons, and the second is
+/// the one that mattered in practice:
+///
+///  * The front page and the study are different things to link to. "Come and
+///    help" wants `/`; "carry on where you left off" wants `/rate`.
+///  * Everything that drives the app — a test, a bookmark, a reload mid-session
+///    — could otherwise only reach the study by simulating a click through the
+///    front page. When the front page moved in front of everything, ~40 e2e
+///    specs broke on exactly that, and the fix was a helper that clicked past
+///    it everywhere. A URL is the honest version of that helper.
+export const RATE_PATH = '/rate';
+
+function onRatePath(): boolean {
+  return location.pathname.replace(/\/+$/, '') === RATE_PATH;
+}
+
+/// Move between the two without a page load, keeping history honest so Back
+/// leaves a session rather than trapping someone in it.
+function go(path: string, replace = false): void {
+  if (location.pathname !== path) {
+    history[replace ? 'replaceState' : 'pushState']({}, '', path);
+  }
+  void boot();
+}
+
 async function boot(): Promise<void> {
-  // Before anything else, on every open. What "closer to the original" means is
-  // the one thing an observer has to hold steady across a session, and a
-  // criterion that has drifted produces answers that look like data and are
-  // not. See `instructions.ts` for why the button is held.
+  if (onRatePath()) {
+    await enterStudy();
+    return;
+  }
+  // The landing page. Opening squintly used to run straight into a session —
+  // for a returning observer, literally into the next trial — so the decision
+  // to take part was made on the one screen with nothing on it to decide from.
+  await renderLanding(root, {
+    onStart: () => go(RATE_PATH),
+    onSignIn: () => openSignInModal(),
+    onSignOut: async () => {
+      await signOut();
+      await boot();
+    },
+    onCalibrate: () => openCalibration(),
+  });
+}
+
+// Back/forward moves between the front page and the session like any other
+// site, rather than leaving whatever screen happened to be mounted.
+window.addEventListener('popstate', () => void boot());
+
+/// From the landing page into the study.
+///
+/// The instructions gate sits here rather than in `boot` so that arriving at
+/// the front door is free — a person reading the page to decide whether to take
+/// part has not agreed to a three-second hold yet.
+async function enterStudy(): Promise<void> {
   const returning = hasOnboarded();
   await maybeShowInstructions(root, { returning });
   if (!returning) {

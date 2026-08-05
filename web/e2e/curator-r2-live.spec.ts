@@ -40,7 +40,10 @@ test.describe('curator with live R2 corpus-builder data', () => {
     expect(data.inserted).toBeGreaterThan(0);
 
     await page.goto('/');
-    await page.evaluate(() => localStorage.clear());
+    await page.evaluate(() => {
+      localStorage.clear();
+      sessionStorage.setItem('squintly:instructions_seen', '1');
+    });
     await page.evaluate(() => {
       localStorage.setItem('squintly:curator_id', crypto.randomUUID());
     });

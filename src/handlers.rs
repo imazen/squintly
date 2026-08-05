@@ -1156,6 +1156,55 @@ pub async fn list_studies() -> Json<Vec<&'static crate::studies::Study>> {
     Json(crate::studies::listed())
 }
 
+#[derive(Debug, Serialize)]
+pub struct StudyProgress {
+    pub id: &'static str,
+    pub short_name: &'static str,
+    pub label: &'static str,
+    pub is_default: bool,
+    /// Responses recorded against this study.
+    pub responses: i64,
+    pub min_viable_ratings: u32,
+    pub ideal_ratings: u32,
+    /// Distinct observers who have contributed to it.
+    pub observers: i64,
+}
+
+/// GET /api/studies/progress
+///
+/// What each study still needs. Published because "how much is left?" is the
+/// question a contributor actually has, and answering it with a raw response
+/// count means nothing without the target beside it — 400 ratings is most of
+/// the way for one study and a rounding error for another.
+pub async fn study_progress(
+    State(state): State<SharedState>,
+) -> Result<Json<Vec<StudyProgress>>, AppError> {
+    let mut out = Vec::new();
+    for st in crate::studies::listed() {
+        let counts: (i64, i64) = sqlx::query_as(
+            "SELECT COUNT(*), COUNT(DISTINCT s.observer_id) \
+             FROM responses r \
+             JOIN trials t ON t.id = r.trial_id \
+             JOIN sessions s ON s.id = t.session_id \
+             WHERE s.study_id = ?",
+        )
+        .bind(st.id)
+        .fetch_one(&state.pool)
+        .await?;
+        out.push(StudyProgress {
+            id: st.id,
+            short_name: st.short_name,
+            label: st.label,
+            is_default: st.is_default,
+            responses: counts.0,
+            min_viable_ratings: st.min_viable_ratings,
+            ideal_ratings: st.ideal_ratings,
+            observers: counts.1,
+        });
+    }
+    Ok(Json(out))
+}
+
 // ---------- export ----------
 
 /// Build-time git commit baked in via `build.rs`. Every export manifest
@@ -1367,6 +1416,13 @@ pub struct LeaderboardRow {
     /// How many of this reviewer's responses carry per-view instrumentation.
     /// Published so a swap figure can be read against the sample it came from.
     pub instrumented_trials: i64,
+    /// Is this the caller's own row?
+    ///
+    /// Set only when `?observer_id=` names this observer. The caller already
+    /// knows their own id, so echoing which handle it maps to leaks nothing —
+    /// and without it a reviewer cannot find themselves on their own board,
+    /// which is most of what a board is for.
+    pub is_you: bool,
     /// Engaged time, in seconds: consecutive answers within a session summed
     /// with each gap capped at `IDLE_CAP_MS`, plus the first answer's dwell.
     /// See the derivation at the call site — it is reproducible from the TSV.
@@ -1416,8 +1472,15 @@ fn encoding_url(state: &AppState, id: &str) -> String {
 /// so a tighter cap would start discarding genuine deliberation on hard pairs.
 const IDLE_CAP_MS: i64 = 5 * 60 * 1000;
 
+#[derive(Debug, Deserialize)]
+pub struct LeaderboardQuery {
+    /// The caller's own observer id, so their row can be marked.
+    pub observer_id: Option<String>,
+}
+
 pub async fn leaderboard(
     State(state): State<SharedState>,
+    Query(q): Query<LeaderboardQuery>,
 ) -> Result<Json<Vec<LeaderboardRow>>, AppError> {
     let salt = crate::handle::salt();
     let rows = sqlx::query(
@@ -1570,6 +1633,7 @@ pub async fn leaderboard(
 
         out.push(LeaderboardRow {
             handle: crate::handle::handle_for(&identity, &salt),
+            is_you: q.observer_id.as_deref() == Some(oid.as_str()),
             trials: row.get("trials"),
             sessions: row.get("sessions"),
             active_days: row.get("days"),
@@ -2404,13 +2468,32 @@ pub async fn refresh_manifest(State(state): State<SharedState>) -> Result<Json<S
 pub async fn serve_static<E: RustEmbed>(uri: axum::http::Uri) -> Response {
     let path = uri.path().trim_start_matches('/');
     let path = if path.is_empty() { "index.html" } else { path };
-    match E::get(path).or_else(|| E::get("index.html")) {
+    // Whether this is a real asset or the SPA falling back decides the type.
+    //
+    // The content-type used to be guessed from the REQUEST path even when the
+    // body was `index.html`, so an app route with no extension
+    // (`/rate`) was served as `application/octet-stream` — and a browser
+    // navigating there downloaded a file instead of rendering the app. The
+    // same bug made `GET /api/nope.json` answer 200 with
+    // `content-type: application/json` and an HTML body, which is why a missing
+    // endpoint read as "present but unparseable" rather than as absent.
+    //
+    // The body determines the type: served `index.html`, say `text/html`.
+    let asset = E::get(path);
+    let fell_back = asset.is_none();
+    match asset.or_else(|| E::get("index.html")) {
         Some(file) => {
-            let mime = mime_guess::from_path(path).first_or_octet_stream();
+            let mime = if fell_back {
+                "text/html; charset=utf-8".to_string()
+            } else {
+                mime_guess::from_path(path)
+                    .first_or_octet_stream()
+                    .to_string()
+            };
             let mut headers = HeaderMap::new();
             headers.insert(
                 header::CONTENT_TYPE,
-                HeaderValue::from_str(mime.as_ref())
+                HeaderValue::from_str(&mime)
                     .unwrap_or(HeaderValue::from_static("application/octet-stream")),
             );
             (StatusCode::OK, headers, Bytes::from(file.data.into_owned())).into_response()

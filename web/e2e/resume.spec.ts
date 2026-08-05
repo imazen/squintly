@@ -1,7 +1,7 @@
 import { expect, test } from './fixtures';
 import { type Page } from '@playwright/test';
 
-import { clickBegin, completeProfileAndStart, gotoFresh, passInstructions } from './helpers';
+import { clickBegin, completeProfileAndStart, gotoFresh, passInstructions, gotoLanding } from './helpers';
 
 /// Walk a fresh visitor all the way through onboarding into trials.
 async function onboard(page: Page) {
@@ -18,27 +18,35 @@ test.describe('reopening the app', () => {
   // observer id, profile and calibration were all already stored — three
   // screens of friction in front of the thing they came back to do.
   //
-  // The property is "no interaction required", not "a particular screen is
-  // visible": resume is fast enough that the interstitial can come and go
-  // between polls, so asserting on it would be timing-dependent.
-  test('a returning observer lands in trials with no interaction', async ({ page }) => {
+  // Reopening used to run a returning observer straight into the next trial.
+  // Zero interaction was the point — but it made the front door unusable for
+  // anything else: no way to read what the app is for, see how far the study
+  // has got, or check the board without first being put to work. Resuming is
+  // one press now, and that press is the whole change.
+  test('a returning observer lands on the front page, then resumes in one press', async ({
+    page,
+  }) => {
     await onboard(page);
 
     await page.goto('/');
+    await expect(page.locator('[data-screen="landing"]')).toBeVisible();
+    await expect(page.locator('.trial[data-trial-id]')).toHaveCount(0);
 
+    await page.locator('#landing-start').click();
     await passInstructions(page);
-    // Deliberately no clicks.
     await page.waitForSelector('.trial[data-trial-id]', { timeout: 30_000 });
     await expect(page.locator('.rating-panel, .pair-panel')).toBeVisible();
-    await expect(
-      page.getByRole('heading', { name: /Image Discrimination Study/i }),
-    ).toHaveCount(0);
   });
 
-  test('a first-time visitor still sees the welcome screen', async ({ page }) => {
-    await gotoFresh(page);
-    await expect(page.getByRole('heading', { name: /Image Discrimination Study/i })).toBeVisible();
+  test('a first-time visitor sees the front page, not onboarding', async ({ page }) => {
+    // `gotoLanding`, not `gotoFresh`: the latter crosses the front page so that
+    // every spec written before it existed still starts on the welcome screen.
+    await gotoLanding(page);
+    await expect(page.locator('[data-screen="landing"]')).toBeVisible();
     await expect(page.locator('.trial[data-trial-id]')).toHaveCount(0);
+    // The things the decision to take part is made from.
+    await expect(page.locator('.lede')).toContainText(/closer/i);
+    await expect(page.locator('#landing-start')).toBeVisible();
   });
 
   // Resuming must not be a trap: there has to be a way back. Hold the session
@@ -54,9 +62,9 @@ test.describe('reopening the app', () => {
       await route.continue();
     });
 
-    await page.goto('/');
-
-    await passInstructions(page);
+    // Straight to the session URL — the resume interstitial lives there, and
+    // there is no front page to click through on the way.
+    await page.goto('/rate');
     await page.locator('#not-now').click();
     await expect(page.getByRole('heading', { name: /Image Discrimination Study/i })).toBeVisible();
     release();
@@ -83,11 +91,10 @@ test.describe('calibration stickiness', () => {
     await expect.poll(async () => (await stored())?.css_px_per_mm ?? 0).toBeGreaterThan(0);
     const first = await stored();
 
-    // Back to the welcome screen (this observer has no profile yet, so a plain
-    // reload lands there) and reopen calibration from the link.
+    // Back to the front page and reopen calibration from its link — which is
+    // where a measurement is reachable from without starting a session.
     await page.goto('/');
-    await passInstructions(page);
-    await page.locator('#calibrate-link').click();
+    await page.locator('#landing-calibrate').click();
     await expect(page.locator('#slider')).toBeVisible();
 
     // It must reopen where it was left, not at a default.
@@ -105,8 +112,13 @@ test.describe('calibration stickiness', () => {
   // Calibrate was a permanent tab; it is a one-off measurement the app
   // remembers, so it lives behind a link that says whether it is already done.
   test('calibration is a link, not a tab', async ({ page }) => {
-    await gotoFresh(page);
+    await gotoLanding(page);
     await expect(page.locator('.squintly-tabs button[data-tab="calibrate"]')).toHaveCount(0);
+    // Reachable from the front page without starting a session, and still from
+    // the welcome screen behind it.
+    await expect(page.locator('#landing-calibrate')).toContainText(/calibrate screen size/i);
+    // And still from the welcome screen behind the session URL.
+    await page.goto('/rate');
     await expect(page.locator('#calibrate-link')).toContainText(/calibrate screen size/i);
   });
 });

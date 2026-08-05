@@ -73,6 +73,20 @@ pub struct Study {
     /// Hidden from the public picker. Still selectable by id — for operator or
     /// single-observer runs that shouldn't be offered to drive-by visitors.
     pub unlisted: bool,
+    /// How many responses this study needs before its result means anything.
+    ///
+    /// Two numbers, not one, because they answer different questions.
+    /// `min_viable_ratings` is the point below which the fit is not worth
+    /// reporting at all — a rank correlation from a handful of pairs is noise
+    /// with a decimal point on it. `ideal_ratings` is where the confidence
+    /// interval is tight enough that the study can be called done and people
+    /// can stop.
+    ///
+    /// Published so an observer can see what they are contributing toward, and
+    /// so "is there enough data yet?" is answered by the study's own
+    /// pre-registered number rather than by whoever is looking at the dashboard.
+    pub min_viable_ratings: u32,
+    pub ideal_ratings: u32,
     /// The one an observer gets without choosing.
     ///
     /// Exactly one study carries this; `default_study` asserts it. A default
@@ -119,6 +133,8 @@ pub const STUDIES: &[Study] = &[
         id: "main",
         label: "Web image quality (main study)",
         short_name: "Web quality",
+        min_viable_ratings: 600,
+        ideal_ratings: 3000,
         is_default: false,
         summary: "Which compression artefacts do people actually notice on real phones? \
                   Trains zensim, an open-source perceptual quality metric.",
@@ -154,6 +170,8 @@ pub const STUDIES: &[Study] = &[
         id: "ssim2-nonphoto",
         label: "Non-photo oracle check (A/B, with photo control)",
         short_name: "Non-photo check",
+        min_viable_ratings: 900,
+        ideal_ratings: 4500,
         is_default: true,
         summary: "Does SSIMULACRA2 rank non-photo content — screenshots, documents, \
                   line-art, charts — the way a human does? Every trial is a forced choice, \
@@ -202,6 +220,8 @@ pub const STUDIES: &[Study] = &[
         id: "ssim2-photo-control",
         label: "Photo control arm (A/B only)",
         short_name: "Photo control",
+        min_viable_ratings: 400,
+        ideal_ratings: 2000,
         is_default: false,
         summary: "The same forced-choice comparison on photographs. Run alongside the \
                   non-photo study so its result has something to be measured against.",
@@ -236,6 +256,8 @@ pub const STUDIES: &[Study] = &[
         id: "zensr-dejpeg",
         label: "JPEG artifact removal (zensr)",
         short_name: "Artifact removal",
+        min_viable_ratings: 400,
+        ideal_ratings: 2000,
         is_default: false,
         summary: "Does removing JPEG artifacts actually get closer to the original, \
                   or only score better? Each pair is one JPEG against zensr's restored \
@@ -557,5 +579,40 @@ mod default_flag_tests {
                 s.short_name
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod target_tests {
+    use super::*;
+
+    /// Both numbers must be present and ordered, or "how far along is this
+    /// study?" has no answer and a progress bar would be drawing a lie.
+    #[test]
+    fn every_study_states_what_it_needs() {
+        for s in STUDIES {
+            assert!(
+                s.min_viable_ratings > 0,
+                "{}: min_viable_ratings must be set",
+                s.id
+            );
+            assert!(
+                s.ideal_ratings > s.min_viable_ratings,
+                "{}: ideal ({}) must exceed minimum viable ({})",
+                s.id,
+                s.ideal_ratings,
+                s.min_viable_ratings
+            );
+        }
+    }
+
+    /// The forced-choice study needs the most: a 2AFC answer carries less
+    /// information than a 4-tier rating, and its repeat arm spends responses on
+    /// measuring the observer rather than the metric.
+    #[test]
+    fn the_pairwise_study_asks_for_more_than_the_rating_study() {
+        let pairwise = by_id("ssim2-nonphoto").expect("study exists");
+        let mixed = by_id("main").expect("study exists");
+        assert!(pairwise.min_viable_ratings > mixed.min_viable_ratings);
     }
 }

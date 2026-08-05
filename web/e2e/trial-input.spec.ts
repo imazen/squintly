@@ -7,8 +7,7 @@ import {
   gotoFresh,
   satisfyGate,
   useMode,
-  passInstructions,
-} from './helpers';
+  passInstructions } from './helpers';
 
 /// Every way a reference image can be requested.
 ///

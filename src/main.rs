@@ -317,6 +317,7 @@ async fn main() -> Result<()> {
         )
         .route("/stats", get(handlers::stats))
         .route("/studies", get(handlers::list_studies))
+        .route("/studies/progress", get(handlers::study_progress))
         .route("/leaderboard", get(handlers::leaderboard))
         .route("/manifest/refresh", post(handlers::refresh_manifest))
         // Curator mode (corpus development).

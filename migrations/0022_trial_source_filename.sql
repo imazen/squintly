@@ -1,0 +1,24 @@
+-- Record the source's filename on the trial, so the canonical train/val/test
+-- split can be recomputed from an export.
+--
+-- imazen-26 splits by ORIGIN: the last digit of the leading numeric stem of the
+-- filename (`zensim/docs/DATA_SPLITS.md` §2a, implemented once in
+-- `origin_split.py::split_of`). Every rendition inherits its origin's bucket.
+--
+-- Squintly's corpus builder was split-blind, so the study served whatever the
+-- pixel ranking surfaced — measured 2026-08-04 on imazen-26-png-v3, that was
+-- 60% TRAIN / 29% val / 11% test. Human judgements collected on training images
+-- cannot be used to score a metric fitted on those same images, so knowing
+-- which bucket a response belongs to is not optional metadata: it decides
+-- whether the row can be used at all.
+--
+-- `source_hash` alone cannot answer that — the split rule reads the filename,
+-- and a sha256 carries no stem. Storing the name on the trial makes every
+-- exported response classifiable after the fact, including the ones already
+-- collected against the mixed corpus.
+--
+-- NULL on rows written before this migration. That is deliberately
+-- distinguishable from a name that is present but unsplittable: "we did not
+-- record it" and "the rule cannot place it" are different facts, and a
+-- DEFAULT '' would have merged them (see the leaderboard's DEFAULT-0 incident).
+ALTER TABLE trials ADD COLUMN source_filename TEXT;

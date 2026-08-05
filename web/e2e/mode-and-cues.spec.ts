@@ -691,3 +691,38 @@ test.describe('images come from the store', () => {
     expect(text).toMatch(/source file\s+\S+/);
   });
 });
+
+test.describe('which study am I in', () => {
+  // The id (`ssim2-nonphoto`) is not a thing to read at a glance, and the full
+  // label is a sentence. Two words, top-left, so an observer who switched
+  // studies mid-run can see which one without opening the menu.
+  test('the study is named in two words, top left', async ({ page }) => {
+    await toTrial(page);
+    const badge = page.locator('#study-badge');
+    await expect
+      .poll(async () => (await badge.innerText()).trim().length, { timeout: 15_000 })
+      .toBeGreaterThan(0);
+    const name = (await badge.innerText()).trim();
+    expect(name.split(/\s+/).length, `"${name}" should be two words`).toBeLessThanOrEqual(2);
+    expect(name, 'not the raw id').not.toMatch(/[_]|ssim2-/);
+
+    // Top-left: before the trial counter in the header.
+    const order = await page.evaluate(() => {
+      const kids = [...document.querySelector('.progress')!.children];
+      return kids.map((k) => k.id || k.className);
+    });
+    expect(order[0]).toBe('study-badge');
+  });
+
+  // Every listed study needs one — a missing short name would silently render
+  // an empty corner rather than failing.
+  test('every study carries a short name', async ({ page }) => {
+    await page.goto('/');
+    const studies = await page.evaluate(async () => (await fetch('/api/studies')).json());
+    expect(studies.length).toBeGreaterThan(0);
+    for (const s of studies) {
+      expect(s.short_name, `${s.id} has no short_name`).toBeTruthy();
+      expect(s.short_name.split(/\s+/).length, `${s.id}: "${s.short_name}"`).toBeLessThanOrEqual(2);
+    }
+  });
+});

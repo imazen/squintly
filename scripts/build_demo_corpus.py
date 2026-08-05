@@ -54,6 +54,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import importlib.util
 import re
 import json
 import shutil
@@ -191,6 +192,40 @@ TEXT_HEAVY = {
 
 DIMS_RE = re.compile(r"_(\d{2,5})x(\d{2,5})\.")
 
+# ---- train / val / test -----------------------------------------------------
+#
+# imazen-26 has a canonical split and this builder ignored it entirely, so the
+# study served whatever the pixel ranking happened to surface: measured
+# 2026-08-04 on imazen-26-png-v3, the picked set was 60% TRAIN / 29% val / 11%
+# test. Collecting human judgements on training images and then scoring a metric
+# against them is exactly the leak the split exists to prevent — the metric has
+# already seen those pictures.
+#
+# The rule is by ORIGIN (last digit of the leading numeric stem) and every
+# rendition inherits its origin's bucket, so a size ladder built from one origin
+# cannot straddle the split.
+#
+# IMPORTED, never re-implemented: `zensim/docs/DATA_SPLITS.md` §2a names
+# `origin_split.py::split_of` the single source of truth. A vendored copy would
+# drift silently, and a drifted split is indistinguishable from a correct one
+# until the results are already wrong — so a missing canonical file is a hard
+# failure here, not a fallback.
+SPLIT_MODULE = Path.home() / "work/zen/zenmetrics/scripts/picker/origin_split.py"
+
+
+def load_split_of():
+    if not SPLIT_MODULE.exists():
+        sys.exit(
+            f"canonical split rule not found at {SPLIT_MODULE}.\n"
+            "It is the source of truth (zensim/docs/DATA_SPLITS.md 2a) and must not "
+            "be re-implemented here. Check out zenmetrics, or pass --split any to "
+            "build a deliberately unsplit corpus."
+        )
+    spec = importlib.util.spec_from_file_location("origin_split", SPLIT_MODULE)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod.split_of
+
 
 def r2_list_keys(remote: str) -> list[str]:
     r = subprocess.run(
@@ -203,7 +238,9 @@ def r2_list_keys(remote: str) -> list[str]:
     return [l.strip() for l in r.stdout.splitlines() if l.strip()]
 
 
-def r2_pick(remote: str, per_stratum: int, cache: Path) -> list[tuple[str, Path, str, bool]]:
+def r2_pick(
+    remote: str, per_stratum: int, cache: Path, split: str = "test"
+) -> list[tuple[str, Path, str, bool]]:
     """Select per stratum from the key listing, then download only those keys.
 
     Prefers the *largest* source in each stratum: every size bucket is produced
@@ -212,14 +249,28 @@ def r2_pick(remote: str, per_stratum: int, cache: Path) -> list[tuple[str, Path,
     """
     keys = r2_list_keys(remote)
     print(f"  listed {len(keys)} keys from {remote}")
+    split_of = None if split == "any" else load_split_of()
     by_stratum: dict[str, list[tuple[int, str]]] = {}
     unparsed = 0
+    wrong_split = 0
+    unsplittable = 0
     for k in keys:
         stratum = k.split("/")[0]
         if stratum in R2_EXCLUDE_STRATA:
             continue
         if stratum not in R2_STRATA:
             continue
+        if split_of is not None:
+            got = split_of(k.rsplit("/", 1)[-1])
+            if got is None:
+                # No leading numeric stem means the rule cannot place it. Serving
+                # it anyway would be assuming it is held out, which is the very
+                # thing being checked.
+                unsplittable += 1
+                continue
+            if got != split:
+                wrong_split += 1
+                continue
         m = DIMS_RE.search(k)
         if not m:
             unparsed += 1
@@ -228,6 +279,11 @@ def r2_pick(remote: str, per_stratum: int, cache: Path) -> list[tuple[str, Path,
         by_stratum.setdefault(stratum, []).append((pixels, k))
     if unparsed:
         print(f"  ! {unparsed} keys had no parseable dimensions; skipped")
+    if split_of is not None:
+        print(
+            f"  split={split}: kept {sum(len(v) for v in by_stratum.values())}, "
+            f"skipped {wrong_split} in other splits and {unsplittable} with no origin stem"
+        )
 
     missing = sorted(set(R2_STRATA) - set(by_stratum))
     if missing:
@@ -251,6 +307,15 @@ def r2_pick(remote: str, per_stratum: int, cache: Path) -> list[tuple[str, Path,
         # Spread evenly across the largest quarter instead: every pick is still
         # big enough that the XL rung is a true downsample rather than an
         # upscale, and the content actually varies.
+        if len(ranked) < want:
+            # Quietly serving fewer would make the corpus silently unbalanced,
+            # and the shortfall would be invisible in every downstream number.
+            raise SystemExit(
+                f"stratum {stratum} has only {len(ranked)} origins in split "
+                f"'{split}' but {want} are wanted. Lower --per-stratum, widen "
+                f"the split, or accept the gap explicitly — do not ship a corpus "
+                f"that silently under-fills a stratum."
+            )
         pool = ranked[: max(want, len(ranked) // 4)]
         if want >= len(pool):
             chosen = pool[:want]
@@ -452,6 +517,17 @@ def main() -> int:
     )
     ap.add_argument("--r2-remote", default=R2_CORPUS)
     ap.add_argument(
+        "--split",
+        default="test",
+        choices=["test", "val", "train", "any"],
+        help=(
+            "Which canonical imazen-26 bucket to draw from. Defaults to TEST: "
+            "human judgements collected on training images cannot be used to "
+            "score a metric that was fitted on them. 'any' reproduces the old "
+            "split-blind behaviour and should be used only deliberately."
+        ),
+    )
+    ap.add_argument(
         "--r2-cache",
         type=Path,
         default=Path("~/tmp/imazen26-v3-cache"),
@@ -478,7 +554,7 @@ def main() -> int:
         d.mkdir(parents=True, exist_ok=True)
 
     if args.source == "r2":
-        picks = r2_pick(args.r2_remote, args.per_stratum, args.r2_cache.expanduser())
+        picks = r2_pick(args.r2_remote, args.per_stratum, args.r2_cache.expanduser(), args.split)
         print(f"selected {len(picks)} origin files across {len(R2_STRATA)} strata")
     else:
         picks = pick_sources(args.include, args.per_bucket)

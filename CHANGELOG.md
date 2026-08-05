@@ -3,6 +3,25 @@
 ## [Unreleased]
 
 ### Changed
+- **The corpus is drawn from the imazen-26 TEST split.** The builder was
+  split-blind — it ranked by pixel count and took what surfaced — so the shipped
+  corpus measured 60% train / 29% val / 11% test (2026-08-04, imazen-26-png-v3).
+  Human judgements collected on training images cannot be used to score a metric
+  that was fitted on those same images. `--split` now defaults to `test` and
+  imports the canonical `origin_split.py::split_of` rather than re-implementing
+  the rule; a stratum that cannot fill from the chosen split is a hard error
+  rather than a silent under-fill. Switching costs nothing: the same 45 origins,
+  every stratum able to fill.
+  - `trials.source_filename` (migration 0022) is exported so the split can be
+    recomputed downstream — `source_hash` cannot answer it, because the rule
+    reads the leading numeric stem of the filename. `responses` schema_version
+    8 → 9 (65 columns). **Data already collected is against the mixed corpus and
+    is NULL here; it needs re-collection against a test-only corpus before it
+    can score a metric.**
+- **Studies carry a two-word short name**, shown top-left on the trial screen.
+  The id is not a thing to read at a glance and the full label is a sentence, so
+  an observer who switched studies mid-run had no way to see which one they were
+  in without opening the menu.
 - **Trial images are fetched straight from the store.** Every stimulus was
   proxied through the server, which paid for the bytes twice — a real source is
   9.5 MB — and added a round trip to the thing the observer is waiting on. The

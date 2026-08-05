@@ -671,8 +671,8 @@ pub async fn next_trial(
                 "INSERT INTO trials (id, session_id, kind, source_hash, a_encoding_id, a_codec, \
                  a_quality, a_bytes, intrinsic_w, intrinsic_h, staircase_target, is_golden, \
                  expected_choice, held_out, served_at, source_corpus, content_class, \
-                 repeat_of_trial_id) \
-                 VALUES (?, ?, 'single', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                 repeat_of_trial_id, source_filename) \
+                 VALUES (?, ?, 'single', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             )
             .bind(&trial_id)
             .bind(&q.session_id)
@@ -694,6 +694,7 @@ pub async fn next_trial(
             .bind(source.corpus.as_deref())
             .bind(crate::content_class::classify(source.corpus.as_deref()).as_str())
             .bind(repeat_of.as_deref())
+            .bind(source.filename.as_deref())
             .execute(&state.pool)
             .await?;
 
@@ -732,8 +733,8 @@ pub async fn next_trial(
                 "INSERT INTO trials (id, session_id, kind, source_hash, a_encoding_id, a_codec, \
                  a_quality, a_bytes, b_encoding_id, b_codec, b_quality, b_bytes, intrinsic_w, \
                  intrinsic_h, is_golden, expected_choice, held_out, served_at, source_corpus, \
-                 content_class, repeat_of_trial_id) \
-                 VALUES (?, ?, 'pair', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                 content_class, repeat_of_trial_id, source_filename) \
+                 VALUES (?, ?, 'pair', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             )
             .bind(&trial_id)
             .bind(&q.session_id)
@@ -758,6 +759,7 @@ pub async fn next_trial(
             .bind(source.corpus.as_deref())
             .bind(crate::content_class::classify(source.corpus.as_deref()).as_str())
             .bind(repeat_of.as_deref())
+            .bind(source.filename.as_deref())
             .execute(&state.pool)
             .await?;
 
@@ -1158,7 +1160,7 @@ fn schema_version(kind: ExportKind) -> u32 {
         // the pan/visible-area telemetry that the 1:1 display rule made
         // necessary. Appended rather than inserted so positional consumers
         // keep working; the bump is here so strict ones can refuse.
-        ExportKind::Responses => 8,
+        ExportKind::Responses => 9,
         ExportKind::Unified => 1,
     }
 }
@@ -2460,11 +2462,13 @@ mod tests {
     fn responses_schema_version_reflects_the_appended_columns() {
         assert_eq!(
             schema_version(ExportKind::Responses),
-            8,
+            9,
             "v2 added study_id + pan/visible telemetry; v3 the participant exclusion \
              disposition; v4 input_mode + keyboard_used + ui_ready_ms; v5 source_corpus + \
              content_class; v6 per-view dwell, switch_count and repeat_of_trial_id; \
-             v7 response revisions; v8 cant_tell_hint_ms. Bump whenever columns change."
+             v7 response revisions; v8 cant_tell_hint_ms; v9 source_filename, which is what makes the \
+             canonical train/val/test split recomputable from an export. Bump \
+             whenever columns change."
         );
         assert_eq!(schema_version(ExportKind::Pareto), 1, "pareto is unchanged");
     }

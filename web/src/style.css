@@ -1585,3 +1585,18 @@ input[type="range"] {
   font-size: 0.85rem;
   border-radius: 999px;
 }
+
+/* Which study you are in, top-left, in two words. The id (`ssim2-nonphoto`) is
+   not a thing to read at a glance, and the full label is a sentence. */
+.study-badge:not(:empty) {
+  font-weight: 600;
+  color: var(--fg);
+  white-space: nowrap;
+  padding-right: 2px;
+}
+.study-badge:not(:empty)::after {
+  content: '·';
+  color: var(--muted);
+  padding-left: 6px;
+  font-weight: 400;
+}

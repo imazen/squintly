@@ -168,6 +168,24 @@ export function startTrials(
 
   const calib = loadCalibration();
 
+  /// Which study this session belongs to, in two words, for the corner of the
+  /// screen. Resolved once and cached: an observer who has switched studies
+  /// mid-run should be able to see which one they are in without opening the
+  /// menu, and the id (`ssim2-nonphoto`) is not a thing to read at a glance.
+  let studyShortName: string | null = null;
+  void (async () => {
+    try {
+      const chosen = loadStudyId();
+      const studies = await listStudies();
+      const s = studies.find((x) => x.id === chosen) ?? studies[0];
+      studyShortName = s?.short_name ?? null;
+      const badge = root.querySelector<HTMLElement>('#study-badge');
+      if (badge && studyShortName) badge.textContent = studyShortName;
+    } catch {
+      /* the corner label is not worth failing a trial over */
+    }
+  })();
+
   const fetchAndRender = async () => {
     if (aborted) return;
     renderLoading();
@@ -249,6 +267,7 @@ export function startTrials(
     root.innerHTML = `
       <div class="trial" data-trial-id="${trial.trial_id}" data-input-mode="${inputMode}">
         <div class="progress">
+          <span class="study-badge" id="study-badge">${escapeHtml(studyShortName ?? '')}</span>
           <span>Trial ${trialCount + 1}</span>
           <span class="trial-license" data-corpus="${escapeAttr(corpus)}" data-license-id="${escapeAttr(licId)}" title="${escapeAttr(`${corpus} · ${licLabel}`)}">${escapeHtml(corpus)}</span>
           <button class="menu-btn" id="menu">menu</button>

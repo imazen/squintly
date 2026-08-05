@@ -82,6 +82,10 @@ export async function nextTrial(session_id: string): Promise<TrialPayload> {
 export interface Study {
   id: string;
   label: string;
+  /// Two words, for the corner of the trial screen. The full `label` is a
+  /// sentence — fine in a picker, useless in the one line of chrome above a
+  /// stimulus on a phone.
+  short_name: string;
   summary: string;
   trial_style: string;
   unlisted: boolean;

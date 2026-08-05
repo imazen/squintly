@@ -252,6 +252,26 @@ web component from `~/work/efficient-ui/`. No framework.
   swap the variant mid-comparison). So `reveal_ms_total` measures
   a peek in one and the default state in the other. Migration 0017; same
   reasoning as `study_id`.
+- **The corpus must come from the imazen-26 TEST split.** The split is by
+  ORIGIN — last digit of the leading numeric filename stem, {0,2,4,6,8} train /
+  {1,3,5} val / {7,9} test — and every rendition inherits its origin's bucket
+  (`zensim/docs/DATA_SPLITS.md` §2a). `build_demo_corpus.py --split` defaults to
+  `test` and **imports** `origin_split.py::split_of` rather than
+  re-implementing it; a missing canonical file is a hard failure, because a
+  drifted copy of a split rule is indistinguishable from a correct one until the
+  results are already wrong.
+  This was missed entirely at first: the builder was split-blind and ranked by
+  pixels, so the shipped corpus measured **60% train / 29% val / 11% test**
+  (2026-08-04, imazen-26-png-v3). Human judgements collected on training images
+  cannot score a metric fitted on them. Switching to test-only costs nothing —
+  the same 45 origins, every stratum able to fill its quota — so there is no
+  trade to reconsider here.
+  `trials.source_filename` (migration 0022) exists so the split is recomputable
+  from `responses.tsv`: `source_hash` cannot answer it, since the rule reads the
+  filename. Rows collected before it are NULL, which is deliberately different
+  from "present but unsplittable".
+  A stratum that cannot fill from the chosen split is a hard error, never a
+  silent under-fill.
 - **Source-informing-sweep rule applies.** Sampling MUST cover all 4 size buckets and
   weight low-q encodings. See `src/sampling.rs`.
 

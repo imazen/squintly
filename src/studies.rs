@@ -58,6 +58,13 @@ pub struct Study {
     pub id: &'static str,
     /// Shown in the picker.
     pub label: &'static str,
+    /// Two words, for the corner of the trial screen.
+    ///
+    /// The full `label` is a sentence — fine in a picker, useless in the one
+    /// line of chrome above a stimulus on a phone. This is what an observer
+    /// glances at to know which study they are in, so it has to survive being
+    /// read sideways: two words, no parentheses, no jargon.
+    pub short_name: &'static str,
     /// One line explaining what the observer is contributing to.
     pub summary: &'static str,
     /// What the trial stream looks like, in plain words, so the picker can say
@@ -104,6 +111,7 @@ pub const STUDIES: &[Study] = &[
     Study {
         id: "main",
         label: "Web image quality (main study)",
+        short_name: "Web quality",
         summary: "Which compression artefacts do people actually notice on real phones? \
                   Trains zensim, an open-source perceptual quality metric.",
         trial_style: "A mix of single-image ratings and A/B comparisons.",
@@ -137,6 +145,7 @@ pub const STUDIES: &[Study] = &[
     Study {
         id: "ssim2-nonphoto",
         label: "Non-photo oracle check (A/B, with photo control)",
+        short_name: "Non-photo check",
         summary: "Does SSIMULACRA2 rank non-photo content — screenshots, documents, \
                   line-art, charts — the way a human does? Every trial is a forced choice, \
                   and every image is non-photographic.",
@@ -183,6 +192,7 @@ pub const STUDIES: &[Study] = &[
     Study {
         id: "ssim2-photo-control",
         label: "Photo control arm (A/B only)",
+        short_name: "Photo control",
         summary: "The same forced-choice comparison on photographs. Run alongside the \
                   non-photo study so its result has something to be measured against.",
         trial_style: "A/B comparisons only. No star ratings.",
@@ -215,6 +225,7 @@ pub const STUDIES: &[Study] = &[
     Study {
         id: "zensr-dejpeg",
         label: "JPEG artifact removal (zensr)",
+        short_name: "Artifact removal",
         summary: "Does removing JPEG artifacts actually get closer to the original, \
                   or only score better? Each pair is one JPEG against zensr's restored \
                   version of that exact file.",

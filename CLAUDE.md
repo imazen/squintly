@@ -197,6 +197,21 @@ web component from `~/work/efficient-ui/`. No framework.
   zero. Pair trials only; a 4-tier rating does not feed η, so counting it would
   move a bar toward a milestone it cannot reach. A revision reads the count back
   instead of incrementing, so undo cannot advance it.
+- **Notifications live in one place, and must stay one line.** `web/src/notify.ts`
+  owns placement, dwell, fade and tap-to-dismiss, and renders into a fixed
+  `#notice-layer` on `document.body` — NOT inside the current screen, because a
+  notice is raised by an answer landing and the app replaces `root.innerHTML`
+  milliseconds later, which destroyed it. `white-space: nowrap` is load-bearing:
+  a wrapped sentence turns a notice pinned to the chrome into a band across the
+  picture (measured at 29–45% of the visible stimulus on a 304px screen). Keep
+  milestone copy short for the same reason.
+  It DOES cross the picture's top edge when the stimulus fills the frame — a
+  deliberate, bounded exception like the coloured edge bars: extreme top edge
+  only, two seconds, tap-dismissable, semi-transparent so the pixels are not
+  replaced, and raised at the START of a trial where the seen-both gate
+  guarantees comparison has not begun. Guarded at <18% of the VISIBLE picture
+  (a magnified stimulus extends past the frame, so its own rect is the wrong
+  denominator).
 - **A UI nudge toward a specific answer must be recorded, or it contaminates
   silently.** After `CANT_TELL_HINT_AFTER_HELD_MS` of *held* time the tie button
   breathes, because at threshold the truthful answer is a tie but the button

@@ -14,6 +14,7 @@ import {
 } from './api';
 import { captureTrial, getObserverId, loadCalibration, loadStudyId, saveStudyId } from './conditions';
 import { showInstructions } from './instructions';
+import { notify } from './notify';
 import { openSignInModal } from './auth-modal';
 import { showAdmin } from './admin';
 import {
@@ -1482,21 +1483,54 @@ export function startTrials(
   /// The first one is the one that means something — it is where this
   /// observer's data becomes screenable — so it says so. Later laps are
   /// momentum, and are not dressed up as more than that.
-  function celebrateLap(done: number, per: number) {
-    const bar = root.querySelector<HTMLElement>('#lap');
-    if (!bar) return;
-    bar.classList.add('celebrate');
-    const note = document.createElement('div');
-    note.className = 'lap-note';
-    note.textContent =
-      done === per
-        ? `${per} comparisons — your ratings can now be reliability-checked`
-        : `${done} comparisons`;
-    bar.after(note);
-    window.setTimeout(() => {
-      note.remove();
-      bar.classList.remove('celebrate');
-    }, 2600);
+  /// Where in a lap a milestone fires.
+  ///
+  /// Front-loaded on purpose: the first one lands almost immediately so a new
+  /// observer learns the threshold exists while they still have the patience to
+  /// care, and the rest cluster near the end where "nearly there" is true. A
+  /// milestone every few answers would be noise, and noise stops being a
+  /// reward.
+  const LAP_MILESTONES = [2, 10, 15, 20];
+
+  /// What to say at each mark on the FIRST lap.
+  ///
+  /// The wording has to stay honest: below 20 comparisons an observer's
+  /// reliability cannot be estimated (`crowd_bt::MIN_OBS_FOR_ETA`), so their
+  /// answers are stored but cannot be weighted or checked. "Your ratings start
+  /// counting at 20" is the plain version of that, and it is true.
+  ///
+  /// And SHORT. On a 304px cover screen a long sentence wraps to four lines,
+  /// which turns a notice pinned to the header band into one reaching down over
+  /// the picture. Brevity is the constraint that keeps it off the stimulus.
+  function milestoneText(into: number, per: number): string {
+    const left = per - into;
+    switch (into) {
+      case 2:
+        return `${left} more and your ratings start counting.`;
+      case 10:
+        return `Halfway — ${left} more to count.`;
+      case 15:
+        return `Nearly there: ${left} more.`;
+      default:
+        return left === 0
+          ? `You're in — your ratings now count.`
+          : `${left} to go.`;
+    }
+  }
+
+  /// A milestone notification.
+  ///
+  /// Placement, timing, fade and tap-to-dismiss all live in `notify.ts` — this
+  /// only decides what to say and when.
+  function showMilestone(into: number, per: number, firstLap: boolean) {
+    const shown = into === 0 ? per : into;
+    notify({
+      badge: `${shown}/${per}`,
+      text: firstLap
+        ? milestoneText(shown, per)
+        : `${shown} more comparisons this round — thank you.`,
+      tone: 'good',
+    });
   }
 
   /// Reopen the previous trial so its answer can be corrected.
@@ -1551,11 +1585,30 @@ export function startTrials(
         // Compared against the previous value rather than tested for equality,
         // so a comparison that lands while the tab was backgrounded still
         // registers instead of being skipped over.
-        const crossed =
-          ack.comparisons_per_lap > 0 &&
-          Math.floor(ack.total_comparisons / ack.comparisons_per_lap) >
-            Math.floor(before / ack.comparisons_per_lap);
-        if (crossed) celebrateLap(ack.total_comparisons, ack.comparisons_per_lap);
+        const per = ack.comparisons_per_lap;
+        if (per > 0 && ack.total_comparisons > before) {
+          // Position within the lap, with a completed lap reading as `per`
+          // rather than snapping back to 0 at the moment it should feel done.
+          const pos = (n: number) => {
+            const into = n % per;
+            return into === 0 && n > 0 ? per : into;
+          };
+          const now = pos(ack.total_comparisons);
+          const was = before === 0 ? 0 : pos(before);
+          // Crossed rather than equalled: an answer that lands while the tab is
+          // backgrounded, or a milestone stepped over by a lap boundary, still
+          // fires instead of being skipped.
+          const hit = LAP_MILESTONES.filter((m) => m > was && m <= now).pop();
+          if (hit !== undefined) {
+            const firstLap = ack.total_comparisons <= per;
+            showMilestone(hit === per ? 0 : hit, per, firstLap);
+            if (hit === per) {
+              const bar = root.querySelector<HTMLElement>('#lap');
+              bar?.classList.add('celebrate');
+              window.setTimeout(() => bar?.classList.remove('celebrate'), 2400);
+            }
+          }
+        }
       }
     } catch (e) {
       console.warn('record failed', e);

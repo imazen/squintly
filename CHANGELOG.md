@@ -3,6 +3,12 @@
 ## [Unreleased]
 
 ### Added
+- **A notifications component** (`web/src/notify.ts`) — one place that knows how
+  a transient message appears, how long it stays, how it leaves and how it is
+  dismissed, rendered into a layer that outlives screen re-renders.
+- **Milestone notices at 2, 10, 15 and 20 comparisons**, showing `x/20` and what
+  the 20 is for. Front-loaded so a new observer learns the threshold exists
+  while they still care; two seconds, fade out, tappable to close.
 - **A progress bar toward the 20-comparison reliability mark.** Twenty is
   `crowd_bt::MIN_OBS_FOR_ETA` — the point at which an observer's reliability
   becomes estimable and their answers become weighable rather than merely

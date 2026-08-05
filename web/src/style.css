@@ -1849,7 +1849,11 @@ button.secondary:hover { background: rgba(74, 209, 255, 0.10); }
   height: 100%;
   width: 0;
   background: var(--accent);
-  transition: width 260ms ease-out, background-color 400ms ease-out;
+  /* Linear, not eased. An ease-out fill decelerates toward its new value, which
+     reads as the bar "settling" somewhere approximate — wrong for a counter of
+     discrete answers, where each step is one comparison and every one is the
+     same size. Constant rate says that. */
+  transition: width 260ms linear, background-color 400ms linear;
 }
 /* Green only on a completed lap. Using the same colour throughout would make
    the fill say "progress" and never "done". */
@@ -1858,16 +1862,76 @@ button.secondary:hover { background: rgba(74, 209, 255, 0.10); }
   .lap-fill { transition: none; }
 }
 .lap.celebrate { box-shadow: 0 0 8px var(--good); }
-.lap-note {
-  text-align: center;
-  font-size: 0.78rem;
-  color: var(--good);
-  padding: 3px 0 0;
+/* ---- notifications --------------------------------------------------------
+   Pinned to the top edge and kept to one short line, so a notice overlays the
+   header band rather than the picture — at most a few pixels of the stage's
+   very top, for two seconds, semi-transparent even there. Same latitude the
+   edge frame takes, and far outside the region anyone is judging. */
+/* The layer outlives every screen re-render; `pointer-events: none` on it so a
+   dead band across the top cannot swallow taps meant for the picture, with the
+   notice itself re-enabling them for tap-to-dismiss. */
+#notice-layer {
+  position: fixed;
+  top: 6px;
+  left: 0;
+  right: 0;
+  z-index: 40;
+  display: flex;
+  justify-content: center;
+  pointer-events: none;
 }
+.notice {
+  pointer-events: auto;
+  max-width: min(92%, 460px);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  text-align: left;
+  padding: 8px 14px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: rgba(14, 16, 20, 0.82);
+  -webkit-backdrop-filter: blur(6px);
+  backdrop-filter: blur(6px);
+  color: var(--fg);
+  font-size: 0.8rem;
+  line-height: 1.3;
+  cursor: pointer;
+  min-height: 0;
+  /* ONE LINE, always. A wrapped sentence turns a notice pinned to the header
+     band into a band across the picture — measured at 29% of a small
+     stimulus's height on a 304px screen. Capping it to a single line keeps the
+     whole notice inside the chrome above the stage, which is the only placement
+     that does not paint over what is being judged. The badge leads, so the
+     count survives even if the sentence is clipped. */
+  white-space: nowrap;
+  overflow: hidden;
+}
+.notice-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.notice-good { border-color: rgba(123, 229, 138, 0.45); background: rgba(18, 34, 22, 0.82); }
+.notice-warn { border-color: rgba(255, 184, 107, 0.45); background: rgba(36, 28, 16, 0.82); }
+.notice-badge {
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.notice-good .notice-badge { color: var(--good); }
+.notice-warn .notice-badge { color: var(--warn); }
+.notice-info .notice-badge { color: var(--accent); }
+
 @media (prefers-reduced-motion: no-preference) {
-  .lap-note { animation: lap-note-in 260ms ease-out; }
+  /* A little overshoot on the way in — this is the one place in the app where
+     something is allowed to be pleased with itself. */
+  .notice { animation: notice-in 260ms cubic-bezier(0.2, 1.4, 0.4, 1); }
 }
-@keyframes lap-note-in {
-  from { opacity: 0; }
-  to { opacity: 1; }
+@keyframes notice-in {
+  from { opacity: 0; transform: translateY(-10px) scale(0.94); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+.notice.out { opacity: 0; transition: opacity 380ms linear; }
+@media (prefers-reduced-motion: reduce) {
+  .notice.out { transition: none; }
 }

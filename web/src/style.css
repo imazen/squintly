@@ -1600,3 +1600,24 @@ input[type="range"] {
   padding-left: 6px;
   font-weight: 400;
 }
+
+/* The picture's own name identifies it; the corpus fragment in front says which
+   collection it came from, but only the part the filename does not already
+   repeat. Muted so the name itself reads first. */
+.src-group { color: var(--muted); }
+/* No rtl-ellipsis trick here: reversing the flow to truncate from the left
+   reorders punctuation in mixed text, and a filename is exactly the kind of
+   string that turns into nonsense when it does. The leading part is the
+   informative part anyway. */
+
+/* The task, before the task. Left-aligned and roomy — this is the one screen
+   that is meant to be read rather than glanced at. */
+.instructions {
+  text-align: left;
+  max-width: 46ch;
+  margin: 4px 0 10px;
+  font-size: 0.92rem;
+  line-height: 1.5;
+}
+.instructions ul { padding-left: 1.1em; margin: 10px 0; }
+.instructions li { margin: 6px 0; }

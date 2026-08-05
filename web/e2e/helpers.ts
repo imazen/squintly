@@ -6,8 +6,44 @@ export async function gotoFresh(page: Page) {
   // Wipe localStorage so each test starts with a clean observer/calibration.
   await page.context().clearCookies();
   await page.goto('/');
-  await page.evaluate(() => localStorage.clear());
+  await page.evaluate(() => {
+    localStorage.clear();
+    sessionStorage.clear();
+    // Land as a visitor who has already read the instructions THIS browser
+    // session — a real, ordinary state, not a test-only door. Every test gets a
+    // fresh context, so without this each of ~640 would pay the 3-second hold
+    // to reach a trial and the suite would take about twice as long to tell us
+    // the same things. The gate itself is covered by its own tests in
+    // `mode-and-cues.spec.ts`, which clear this and walk through it for real.
+    sessionStorage.setItem('squintly:instructions_seen', '1');
+  });
   await page.reload();
+  await passInstructions(page);
+}
+
+/**
+ * Clear the instructions screen, which stands in front of every open.
+ *
+ * Its button is deliberately held for a few seconds, so this waits for it to
+ * enable rather than polling for a selector — the wait IS the behaviour, and
+ * clicking through it faster than a person could would test a path nobody has.
+ */
+export async function passInstructions(page: Page) {
+  // Either the gate or whatever comes after it — the screen is once per browser
+  // session, so a later navigation in the same context correctly skips it.
+  // Waiting on both means this blocks until the app has definitely arrived
+  // somewhere, rather than passing quietly when nothing loaded at all.
+  await page
+    .locator(
+      '#instructions-go, [data-screen="welcome"], [data-screen="mode-choose"], ' +
+        '[data-screen="mode-howto"], [data-screen="resuming"], .trial[data-trial-id]',
+    )
+    .first()
+    .waitFor({ state: 'visible', timeout: 30_000 });
+  const go = page.locator('#instructions-go');
+  if (!(await go.count())) return;
+  await expect(go).toBeEnabled({ timeout: 20_000 });
+  await go.click();
 }
 
 /// Enter as an operator, with the curator tab available.

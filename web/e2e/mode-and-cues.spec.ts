@@ -6,6 +6,7 @@ import {
   completeProfileAndStart,
   gotoFresh,
   satisfyGate,
+  passInstructions,
 } from './helpers';
 
 /// Walk a fresh visitor as far as the profile's Start button, stopping on
@@ -117,6 +118,7 @@ test.describe('choosing a comparison mode', () => {
     await toTrial(page);
     await page.evaluate(() => localStorage.setItem('squintly_input_mode', 'tap'));
     await page.goto('/');
+    await passInstructions(page);
     await page.waitForSelector('.trial[data-trial-id]', { timeout: 30_000 });
     expect(
       await page.evaluate(() => document.querySelector<HTMLElement>('.trial')!.dataset.inputMode),
@@ -151,6 +153,7 @@ test.describe('choosing a comparison mode', () => {
   test('it is not asked again on the next visit', async ({ page }) => {
     await toTrial(page);
     await page.goto('/');
+    await passInstructions(page);
     await page.waitForSelector('.trial[data-trial-id]', { timeout: 30_000 });
     await expect(page.locator('#mode-continue')).toHaveCount(0);
   });
@@ -162,6 +165,7 @@ test.describe('choosing a comparison mode', () => {
     await toTrial(page);
     await page.evaluate(() => localStorage.removeItem('squintly_input_mode'));
     await page.goto('/');
+    await passInstructions(page);
     await expect(page.locator('#mode-continue')).toBeVisible();
     await acceptModeChooser(page);
     await page.waitForSelector('.trial[data-trial-id]', { timeout: 30_000 });
@@ -395,6 +399,7 @@ test.describe('the how-to pill', () => {
     // preference about chrome and says nothing about a judgement.
     expect(await page.evaluate(() => localStorage.getItem('squintly_hint_dismissed'))).toBe('1');
     await page.goto('/');
+    await passInstructions(page);
     await page.waitForSelector('.trial[data-trial-id]', { timeout: 30_000 });
     await expect(page.locator('#hint')).toBeHidden();
   });
@@ -718,11 +723,95 @@ test.describe('which study am I in', () => {
   // an empty corner rather than failing.
   test('every study carries a short name', async ({ page }) => {
     await page.goto('/');
+    await passInstructions(page);
     const studies = await page.evaluate(async () => (await fetch('/api/studies')).json());
     expect(studies.length).toBeGreaterThan(0);
     for (const s of studies) {
       expect(s.short_name, `${s.id} has no short_name`).toBeTruthy();
       expect(s.short_name.split(/\s+/).length, `${s.id}: "${s.short_name}"`).toBeLessThanOrEqual(2);
     }
+  });
+});
+
+test.describe('the instructions gate', () => {
+  // A button that is clickable on arrival gets clicked on arrival, before the
+  // text under it has been looked at. The hold breaks that reflex.
+  test('the continue button is held, then opens', async ({ page }) => {
+    await page.context().clearCookies();
+    await page.goto('/');
+    await page.evaluate(() => {
+      localStorage.clear();
+      sessionStorage.clear();
+    });
+    // Deliberately NOT passInstructions: this test IS the gate, so clicking
+    // through it first would leave nothing to assert.
+    await page.reload();
+
+    await expect(page.locator('[data-screen="instructions"]')).toBeVisible();
+    const go = page.locator('#instructions-go');
+    await expect(go).toBeDisabled();
+    // The countdown says the wait is deliberate rather than the page being slow.
+    await expect(go).toHaveText(/\d/);
+
+    const started = Date.now();
+    await expect(go).toBeEnabled({ timeout: 20_000 });
+    expect(Date.now() - started, 'held for roughly the stated time').toBeGreaterThan(1500);
+
+    await go.click();
+    await expect(page.locator('[data-screen="instructions"]')).toHaveCount(0);
+  });
+
+  // Per OPEN, not per page load: a reload mid-sitting is not somebody arriving
+  // to do a session, and gating it would spend the hold on a person who read
+  // the text four minutes ago.
+  test('a reload in the same sitting is not gated again', async ({ page }) => {
+    await gotoFresh(page); // clears storage and passes the gate once
+    await page.goto('/');
+    await passInstructions(page);
+    await expect(page.getByRole('heading', { name: /Image Discrimination Study/i })).toBeVisible();
+    await expect(page.locator('[data-screen="instructions"]')).toHaveCount(0);
+  });
+
+  // Once-per-session exists to stop it appearing unbidden, not to make it
+  // unreachable.
+  test('it can be re-read from the pause menu', async ({ page }) => {
+    await toTrial(page);
+    await page.locator('#menu').click();
+    await page.locator('#menu-instructions').click();
+    await expect(page.locator('[data-screen="instructions"]')).toBeVisible();
+    const go = page.locator('#instructions-go');
+    await expect(go).toBeEnabled({ timeout: 20_000 });
+    await go.click();
+    // And back to the trial that was on screen, not to a fresh one.
+    await page.waitForSelector('.trial[data-trial-id]', { timeout: 30_000 });
+  });
+});
+
+test.describe('naming the picture', () => {
+  // The corpus name alone never identified anything — a corpus holds dozens of
+  // pictures — so "this one has a green band" could not be acted on.
+  test('the header names the image, without repeating the corpus', async ({ page }) => {
+    await toTrial(page);
+    const label = page.locator('.trial-license');
+    const text = (await label.innerText()).trim();
+    expect(text.length).toBeGreaterThan(0);
+
+    const trial = await page.evaluate(async () => {
+      const el = document.querySelector<HTMLElement>('.trial')!;
+      return el.dataset.trialId;
+    });
+    expect(trial).toBeTruthy();
+
+    // Whatever the corpus contributes must not already be in the filename part.
+    const group = await page.locator('.src-group').count();
+    if (group) {
+      const g = (await page.locator('.src-group').innerText()).trim().toLowerCase();
+      const rest = text.toLowerCase().slice(g.length);
+      for (const word of g.split(/\s+/)) {
+        expect(rest, `"${word}" is repeated from the corpus`).not.toContain(word);
+      }
+    }
+    // The full name is still recoverable without opening anything.
+    expect(await label.getAttribute('title')).toContain('·');
   });
 });

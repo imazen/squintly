@@ -18,6 +18,23 @@
     8 → 9 (65 columns). **Data already collected is against the mixed corpus and
     is NULL here; it needs re-collection against a test-only corpus before it
     can score a metric.**
+- **An instructions screen stands in front of every open**, with its continue
+  button held for 3 seconds. A button that is clickable on arrival gets clicked
+  on arrival, before the text under it has been read — and what "closer to the
+  original" means is the one thing an observer has to hold steady across a
+  session. Once per browser session, not per page load (a reload mid-sitting is
+  not somebody arriving to work), and re-readable from the pause menu.
+- **The trial header names the picture, not just the collection.** The corpus
+  alone identified nothing — it holds dozens of images — so "this one has a
+  green band" could not be acted on. It now shows the filename, trimmed of
+  extension, size rung and trailing dimensions, prefixed only by the part of the
+  corpus name the filename does not already repeat (`source_label.rs`, unit
+  tested): `imazen26-6600-ia-scans-manuscript-illustrations` beside
+  `6605_scans-illustrations_haeckel-...` contributes just "ia manuscript".
+- **Exactly one study is marked the default**, asserted against
+  `DEFAULT_STUDY_ID`. "Whichever is listed first" moves the moment a study is
+  added or reordered, and every session recorded under the old one becomes hard
+  to interpret afterwards.
 - **Studies carry a two-word short name**, shown top-left on the trial screen.
   The id is not a thing to read at a glance and the full label is a sentence, so
   an observer who switched studies mid-run had no way to see which one they were

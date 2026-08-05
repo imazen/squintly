@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 
 import { COEFFICIENT_PORT } from '../playwright.config';
-import { ADMIN_TOKEN, signInAsAdmin } from './helpers';
+import { ADMIN_TOKEN, signInAsAdmin, passInstructions } from './helpers';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const FIXTURE_BODY = readFileSync(resolve(HERE, 'curator-fixture.jsonl'), 'utf-8');
@@ -38,11 +38,13 @@ test.describe('curator on Z Fold 7', () => {
       localStorage.setItem('squintly_show_curator', '1');
     });
     await page.reload();
+    await passInstructions(page);
   });
 
   test('cover-display layout: stream and curate stack vertically', async ({ page }, testInfo) => {
     test.skip(testInfo.project.name !== 'zfold7-cover', 'cover only');
     await page.goto('/');
+    await passInstructions(page);
     await page.locator('.squintly-tabs button[data-tab="curator"]').click();
     // Single-column layout — confirm the curator-meta sits below (not beside) the viewport.
     const viewportBox = await page.locator('.curator-viewport').boundingBox();
@@ -60,6 +62,7 @@ test.describe('curator on Z Fold 7', () => {
   test('inner-display layout: curate uses side-by-side breakpoint', async ({ page }, testInfo) => {
     test.skip(testInfo.project.name !== 'zfold7-inner', 'inner only');
     await page.goto('/');
+    await passInstructions(page);
     await page.locator('.squintly-tabs button[data-tab="curator"]').click();
     await page.locator('#take').click();
     await expect(page.locator('[data-screen="curate"]')).toBeVisible();

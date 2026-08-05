@@ -25,6 +25,7 @@ pub mod handlers;
 pub mod jpeg_q;
 pub mod licensing;
 pub mod sampling;
+pub mod source_label;
 pub mod staircase;
 pub mod stats;
 pub mod streaks;

@@ -20,6 +20,7 @@ import {
   completeProfileAndStart,
   gotoFreshAsOperator,
   signInAsAdmin,
+  passInstructions,
 } from './helpers';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -152,6 +153,7 @@ test.describe('no horizontal overflow on any screen', () => {
 
   test('suggest form', async ({ page }) => {
     await page.goto('/');
+    await passInstructions(page);
     await page.locator('.squintly-tabs button[data-tab="suggest"]').click();
     await expect(page.locator('[data-screen="suggest"]')).toBeVisible();
     await expectNoViewportExpansion(page, 'suggest');
@@ -178,6 +180,7 @@ test.describe('no horizontal overflow on any screen', () => {
       localStorage.setItem('squintly_show_curator', '1');
     });
     await page.reload();
+    await passInstructions(page);
     await page.locator('.squintly-tabs button[data-tab="curator"]').click();
     await expect(page.locator('[data-screen="stream"]')).toBeVisible();
     await expect(page.locator('.curator-meta-row')).toBeVisible();

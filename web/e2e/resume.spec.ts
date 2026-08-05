@@ -1,6 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
 
-import { clickBegin, completeProfileAndStart, gotoFresh } from './helpers';
+import { clickBegin, completeProfileAndStart, gotoFresh, passInstructions } from './helpers';
 
 /// Walk a fresh visitor all the way through onboarding into trials.
 async function onboard(page: Page) {
@@ -24,6 +24,8 @@ test.describe('reopening the app', () => {
     await onboard(page);
 
     await page.goto('/');
+
+    await passInstructions(page);
     // Deliberately no clicks.
     await page.waitForSelector('.trial[data-trial-id]', { timeout: 30_000 });
     await expect(page.locator('.rating-panel, .pair-panel')).toBeVisible();
@@ -52,6 +54,8 @@ test.describe('reopening the app', () => {
     });
 
     await page.goto('/');
+
+    await passInstructions(page);
     await page.locator('#not-now').click();
     await expect(page.getByRole('heading', { name: /Image Discrimination Study/i })).toBeVisible();
     release();
@@ -81,6 +85,7 @@ test.describe('calibration stickiness', () => {
     // Back to the welcome screen (this observer has no profile yet, so a plain
     // reload lands there) and reopen calibration from the link.
     await page.goto('/');
+    await passInstructions(page);
     await page.locator('#calibrate-link').click();
     await expect(page.locator('#slider')).toBeVisible();
 

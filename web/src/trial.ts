@@ -11,6 +11,7 @@ import {
   type TrialPayload,
 } from './api';
 import { captureTrial, loadCalibration, loadStudyId, saveStudyId } from './conditions';
+import { showInstructions } from './instructions';
 import {
   HoldStack,
   buttonForKey,
@@ -269,7 +270,9 @@ export function startTrials(
         <div class="progress">
           <span class="study-badge" id="study-badge">${escapeHtml(studyShortName ?? '')}</span>
           <span>Trial ${trialCount + 1}</span>
-          <span class="trial-license" data-corpus="${escapeAttr(corpus)}" data-license-id="${escapeAttr(licId)}" title="${escapeAttr(`${corpus} · ${licLabel}`)}">${escapeHtml(corpus)}</span>
+          <span class="trial-license" data-corpus="${escapeAttr(corpus)}" data-license-id="${escapeAttr(licId)}" title="${escapeAttr(`${trial.source_filename ?? corpus} · ${corpus} · ${licLabel}`)}">${
+            trial.source_group ? `<span class="src-group">${escapeHtml(trial.source_group)}</span> ` : ''
+          }${escapeHtml(trial.source_label ?? corpus)}</span>
           <button class="menu-btn" id="menu">menu</button>
         </div>
         <div class="stage" id="stage" data-view="${restingView(inputMode)}">
@@ -1587,6 +1590,7 @@ export function startTrials(
 
         <div class="menu-section">
           <button id="menu-calibrate">Re-measure screen size</button>
+          <button id="menu-instructions">Re-read the instructions</button>
           <button id="menu-leaderboard">Reviewer leaderboard</button>
           <button id="menu-keys">Keyboard shortcuts</button>
         </div>
@@ -1656,6 +1660,16 @@ export function startTrials(
       detachKeys = null;
       onRecalibrate();
     });
+    scrim
+      .querySelector<HTMLButtonElement>('#menu-instructions')!
+      .addEventListener('click', () => {
+        close();
+        // `force`, because this IS the deliberate re-read: the once-per-session
+        // rule exists to stop it appearing unbidden, not to make it unreachable.
+        void showInstructions(root, { returning: true }).then(() => {
+          if (currentTrial) renderTrial(currentTrial);
+        });
+      });
     scrim
       .querySelector<HTMLButtonElement>('#menu-leaderboard')!
       .addEventListener('click', () => void showLeaderboard(scrim));

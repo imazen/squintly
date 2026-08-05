@@ -6,6 +6,7 @@ import { openSignInModal } from './auth-modal';
 import { renderCalibration } from './calibration';
 import { runCalibration } from './calibration-onboarding';
 import { hasChosenInputMode } from './input-mode';
+import { maybeShowInstructions } from './instructions';
 import { chooseInputMode } from './mode-chooser';
 import { detectCodecs, jxlEnableHint } from './codec-probe';
 import {
@@ -349,7 +350,13 @@ function hasOnboarded(): boolean {
 }
 
 async function boot(): Promise<void> {
-  if (!hasOnboarded()) {
+  // Before anything else, on every open. What "closer to the original" means is
+  // the one thing an observer has to hold steady across a session, and a
+  // criterion that has drifted produces answers that look like data and are
+  // not. See `instructions.ts` for why the button is held.
+  const returning = hasOnboarded();
+  await maybeShowInstructions(root, { returning });
+  if (!returning) {
     await welcome();
     return;
   }

@@ -357,6 +357,13 @@ pub struct TrialPayload {
     /// meaningful one, and it is what a person uses to find the picture again —
     /// a sha256 identifies it but says nothing about what it is.
     pub source_filename: Option<String>,
+    /// Header-width form of the filename: no extension, size rung or trailing
+    /// dimensions. See `source_label`.
+    pub source_label: Option<String>,
+    /// The part of the corpus name the filename does not already say. `None`
+    /// when it says all of it — repeating it would spend the header's scarcest
+    /// resource on a duplication.
+    pub source_group: Option<String>,
     pub source_w: u32,
     pub source_h: u32,
     /// Corpus name from the manifest (`SourceMeta::corpus`). Used by the
@@ -705,6 +712,14 @@ pub async fn next_trial(
                 source_hash: source.hash.clone(),
                 source_url: source_url(&state, &source.hash),
                 source_filename: source.filename.clone(),
+                source_label: source
+                    .filename
+                    .as_deref()
+                    .map(crate::source_label::short_filename),
+                source_group: crate::source_label::corpus_remainder(
+                    source.corpus.as_deref().unwrap_or(""),
+                    source.filename.as_deref(),
+                ),
                 source_w: source.width,
                 source_h: source.height,
                 source_corpus: source.corpus.clone(),
@@ -770,6 +785,14 @@ pub async fn next_trial(
                 source_hash: source.hash.clone(),
                 source_url: source_url(&state, &source.hash),
                 source_filename: source.filename.clone(),
+                source_label: source
+                    .filename
+                    .as_deref()
+                    .map(crate::source_label::short_filename),
+                source_group: crate::source_label::corpus_remainder(
+                    source.corpus.as_deref().unwrap_or(""),
+                    source.filename.as_deref(),
+                ),
                 source_w: source.width,
                 source_h: source.height,
                 source_corpus: source.corpus.clone(),

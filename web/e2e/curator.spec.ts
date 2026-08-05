@@ -11,7 +11,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 
 import { COEFFICIENT_PORT } from '../playwright.config';
-import { ADMIN_TOKEN, gotoFreshAsOperator, signInAsAdmin } from './helpers';
+import { ADMIN_TOKEN, gotoFreshAsOperator, signInAsAdmin, passInstructions } from './helpers';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const FIXTURE_PATH = resolve(HERE, 'curator-fixture.jsonl');
@@ -41,6 +41,7 @@ test.describe('curator mode', () => {
       localStorage.setItem('squintly_show_curator', '1');
     });
     await page.reload();
+    await passInstructions(page);
     // Curator writes are admin-only. The UI has no shared token — it relies on
     // the signed-in admin cookie, which is the actual operator path.
     await signInAsAdmin(page, COEFFICIENT_PORT);
@@ -50,6 +51,7 @@ test.describe('curator mode', () => {
       localStorage.setItem('squintly_show_curator', '1');
     });
     await page.reload();
+    await passInstructions(page);
   });
 
   test('welcome screen surfaces license credits and tab bar', async ({ page }) => {
@@ -82,12 +84,14 @@ test.describe('curator mode', () => {
     await page.goto('/');
     await page.evaluate(() => localStorage.clear());
     await page.reload();
+    await passInstructions(page);
     await expect(page.locator('.squintly-tabs button[data-tab="rate"]')).toBeVisible();
     await expect(page.locator('.squintly-tabs button[data-tab="curator"]')).toHaveCount(0);
   });
 
   test('stream renders first candidate with license badge and corpus label', async ({ page }) => {
     await page.goto('/');
+    await passInstructions(page);
     await page.locator('.squintly-tabs button[data-tab="curator"]').click();
     await expect(page.locator('[data-screen="stream"]')).toBeVisible();
     await expect(page.locator('.curator-corpus')).toContainText(/unsplash-webp|source_jpegs|wikimedia-webshapes/);
@@ -103,6 +107,7 @@ test.describe('curator mode', () => {
     const curatorId = await page.evaluate(() => localStorage.getItem('squintly:curator_id'));
     expect(curatorId).toBeTruthy();
     await page.goto('/');
+    await passInstructions(page);
     await page.locator('.squintly-tabs button[data-tab="curator"]').click();
     await expect(page.locator('.curator-corpus')).toBeVisible();
     const firstCorpus = await page.locator('.curator-corpus').textContent();
@@ -117,6 +122,7 @@ test.describe('curator mode', () => {
   test('take → curate → threshold round-trip persists to export.tsv', async ({ page, request }) => {
     const curatorId = await page.evaluate(() => localStorage.getItem('squintly:curator_id'));
     await page.goto('/');
+    await passInstructions(page);
     await page.locator('.squintly-tabs button[data-tab="curator"]').click();
     await expect(page.locator('.curator-corpus')).toBeVisible();
     await page.locator('#take').click();
@@ -185,6 +191,7 @@ test.describe('curator mode', () => {
     // and the threshold screen stays black. The mock is deliberately CORS-less
     // too, so routing these loads anywhere but /api/curator/blob/{sha} fails here.
     await page.goto('/');
+    await passInstructions(page);
     await page.locator('.squintly-tabs button[data-tab="curator"]').click();
     await expect(page.locator('.curator-corpus')).toBeVisible();
     await page.locator('#take').click();
@@ -214,6 +221,7 @@ test.describe('curator mode', () => {
 
   test('exit button returns to welcome with curator progress summary', async ({ page }) => {
     await page.goto('/');
+    await passInstructions(page);
     await page.locator('.squintly-tabs button[data-tab="curator"]').click();
     await page.locator('#reject').click();
     await page.locator('.curator-exit').click();

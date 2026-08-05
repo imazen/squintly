@@ -73,6 +73,13 @@ pub struct Study {
     /// Hidden from the public picker. Still selectable by id — for operator or
     /// single-observer runs that shouldn't be offered to drive-by visitors.
     pub unlisted: bool,
+    /// The one an observer gets without choosing.
+    ///
+    /// Exactly one study carries this; `default_study` asserts it. A default
+    /// that is merely "whichever is listed first" moves the moment a study is
+    /// added or reordered, and every session recorded under the old one becomes
+    /// hard to interpret after the fact.
+    pub is_default: bool,
     /// Probability of re-serving a pair this observer already answered.
     ///
     /// **The control that makes the result interpretable.** Human-vs-ssim2
@@ -112,6 +119,7 @@ pub const STUDIES: &[Study] = &[
         id: "main",
         label: "Web image quality (main study)",
         short_name: "Web quality",
+        is_default: false,
         summary: "Which compression artefacts do people actually notice on real phones? \
                   Trains zensim, an open-source perceptual quality metric.",
         trial_style: "A mix of single-image ratings and A/B comparisons.",
@@ -146,6 +154,7 @@ pub const STUDIES: &[Study] = &[
         id: "ssim2-nonphoto",
         label: "Non-photo oracle check (A/B, with photo control)",
         short_name: "Non-photo check",
+        is_default: true,
         summary: "Does SSIMULACRA2 rank non-photo content — screenshots, documents, \
                   line-art, charts — the way a human does? Every trial is a forced choice, \
                   and every image is non-photographic.",
@@ -193,6 +202,7 @@ pub const STUDIES: &[Study] = &[
         id: "ssim2-photo-control",
         label: "Photo control arm (A/B only)",
         short_name: "Photo control",
+        is_default: false,
         summary: "The same forced-choice comparison on photographs. Run alongside the \
                   non-photo study so its result has something to be measured against.",
         trial_style: "A/B comparisons only. No star ratings.",
@@ -226,6 +236,7 @@ pub const STUDIES: &[Study] = &[
         id: "zensr-dejpeg",
         label: "JPEG artifact removal (zensr)",
         short_name: "Artifact removal",
+        is_default: false,
         summary: "Does removing JPEG artifacts actually get closer to the original, \
                   or only score better? Each pair is one JPEG against zensr's restored \
                   version of that exact file.",
@@ -499,5 +510,52 @@ mod tests {
         unsafe { std::env::set_var("SQUINTLY_DEFAULT_STUDY", "ssim2-nonphoto") };
         assert_eq!(default_study().id, "ssim2-nonphoto");
         unsafe { std::env::remove_var("SQUINTLY_DEFAULT_STUDY") };
+    }
+}
+
+#[cfg(test)]
+mod default_flag_tests {
+    use super::*;
+
+    /// Exactly one study is the default, and it is the one `DEFAULT_STUDY_ID`
+    /// names. Two sources of truth for "which study does someone get without
+    /// choosing" is how sessions end up recorded under a study nobody meant to
+    /// run — and neither the flag nor the constant announces the disagreement.
+    #[test]
+    fn exactly_one_study_is_the_default_and_it_matches_the_id() {
+        let flagged: Vec<&str> = STUDIES
+            .iter()
+            .filter(|s| s.is_default)
+            .map(|s| s.id)
+            .collect();
+        assert_eq!(
+            flagged.len(),
+            1,
+            "expected exactly one is_default study, found {flagged:?}"
+        );
+        assert_eq!(flagged[0], DEFAULT_STUDY_ID);
+    }
+
+    /// The default has to be reachable without typing an id, or "default" means
+    /// nothing to the person it exists for.
+    #[test]
+    fn the_default_is_listed() {
+        let d = by_id(DEFAULT_STUDY_ID).expect("default study exists");
+        assert!(!d.unlisted, "the default study must appear in the picker");
+    }
+
+    /// Two words, checked here as well as in the e2e suite so a new study
+    /// cannot ship with a corner label that wraps or is empty.
+    #[test]
+    fn every_study_has_a_two_word_short_name() {
+        for s in STUDIES {
+            let words: Vec<&str> = s.short_name.split_whitespace().collect();
+            assert!(
+                !words.is_empty() && words.len() <= 2,
+                "{}: short_name {:?} must be one or two words",
+                s.id,
+                s.short_name
+            );
+        }
     }
 }

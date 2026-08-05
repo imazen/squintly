@@ -7,6 +7,7 @@ import {
   gotoFresh,
   satisfyGate,
   useMode,
+  passInstructions,
 } from './helpers';
 
 /// Every way a reference image can be requested.
@@ -573,6 +574,8 @@ test.describe('default input mode', () => {
     await useMode(page, other);
 
     await page.reload();
+
+    await passInstructions(page);
     await page.waitForSelector('.trial[data-trial-id]', { timeout: 30_000 });
     const after = await page.evaluate(
       () => document.querySelector<HTMLElement>('.trial')!.dataset.inputMode,

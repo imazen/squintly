@@ -11,6 +11,7 @@
 // itself is the integration point.
 
 import { expect, test } from '@playwright/test';
+import { passInstructions } from './helpers';
 
 test.describe('public suggestion form', () => {
   test.beforeEach(async ({ page }) => {
@@ -20,11 +21,13 @@ test.describe('public suggestion form', () => {
 
   test('welcome tab bar exposes Suggest', async ({ page }) => {
     await page.goto('/');
+    await passInstructions(page);
     await expect(page.locator('.squintly-tabs button[data-tab="suggest"]')).toBeVisible();
   });
 
   test('submit a tiny PNG with required fields', async ({ page, request }) => {
     await page.goto('/');
+    await passInstructions(page);
     await page.locator('.squintly-tabs button[data-tab="suggest"]').click();
     await expect(page.locator('[data-screen="suggest"]')).toBeVisible();
 
@@ -62,6 +65,7 @@ test.describe('public suggestion form', () => {
 
   test('rejects submission without email', async ({ page }) => {
     await page.goto('/');
+    await passInstructions(page);
     await page.locator('.squintly-tabs button[data-tab="suggest"]').click();
     const onePxPng = Buffer.from(
       'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=',

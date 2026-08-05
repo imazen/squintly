@@ -62,6 +62,12 @@ export interface TrialPayload {
   /// The store's own name for the image. A sha256 identifies it; the filename
   /// is what a person uses to find it again.
   source_filename: string | null;
+  /// Header-width form of the filename — no extension, size rung or trailing
+  /// dimensions.
+  source_label: string | null;
+  /// The part of the corpus name the filename does not already say; null when
+  /// it says all of it.
+  source_group: string | null;
   source_w: number;
   source_h: number;
   source_corpus: string | null;

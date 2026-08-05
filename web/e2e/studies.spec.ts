@@ -8,7 +8,7 @@
 
 import { expect, test } from '@playwright/test';
 
-import { clickBegin, completeProfileAndStart, gotoFresh, submitOneTrial } from './helpers';
+import { clickBegin, completeProfileAndStart, gotoFresh, submitOneTrial, passInstructions } from './helpers';
 
 test.describe('study selection', () => {
   test('GET /api/studies lists selectable studies', async ({ request }) => {
@@ -219,6 +219,7 @@ test.describe('study selection', () => {
     await gotoFresh(page);
     await page.evaluate(() => localStorage.setItem('squintly:study_id', 'ssim2-nonphoto'));
     await page.reload();
+    await passInstructions(page);
 
     await clickBegin(page);
     await page.getByRole('button', { name: /^Skip$/ }).click();

@@ -7,6 +7,7 @@ import {
   deviceModes,
   gotoFresh,
   submitOneTrial,
+  passInstructions,
 } from './helpers';
 
 test.describe('trial loop', () => {
@@ -157,6 +158,7 @@ test.describe('trial loop', () => {
     if (deviceModes(testInfo).includes('tap')) {
       await page.evaluate(() => localStorage.setItem('squintly_input_mode', 'tap'));
       await page.reload();
+      await passInstructions(page);
     }
     await clickBegin(page);
     await page.getByRole('button', { name: /^Skip$/ }).click();
@@ -227,6 +229,7 @@ test.describe('trial loop', () => {
     // picker's layout.
     await page.evaluate(() => localStorage.setItem('squintly:study_id', 'ssim2-nonphoto'));
     await page.reload();
+    await passInstructions(page);
     await clickBegin(page);
     await page.getByRole('button', { name: /^Skip$/ }).click();
     await completeProfileAndStart(page);

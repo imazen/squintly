@@ -170,6 +170,14 @@ export function startTrials(
   /// reading the previous trial's state and could mark a hint on a trial the
   /// observer has already left.
   let stopNudge: (() => void) | null = null;
+  /// Lifetime comparisons and the lap length, both from the server.
+  ///
+  /// The threshold is `crowd_bt::MIN_OBS_FOR_ETA` — the point at which this
+  /// observer's reliability can be estimated at all, and therefore the point at
+  /// which their answers become weighable rather than merely stored. That is
+  /// why the bar counts what it counts: it is showing a real boundary, not a
+  /// made-up one, which is the only kind of progress bar worth drawing.
+  let lapProgress: { done: number; per: number } | null = null;
 
   const calib = loadCalibration();
 
@@ -271,6 +279,9 @@ export function startTrials(
 
     root.innerHTML = `
       <div class="trial" data-trial-id="${trial.trial_id}" data-input-mode="${inputMode}">
+        <div class="lap" id="lap" hidden>
+          <div class="lap-fill" id="lap-fill"></div>
+        </div>
         <div class="progress">
           <span class="study-badge" id="study-badge">${escapeHtml(studyShortName ?? '')}</span>
           <span>Trial ${trialCount + 1}</span>
@@ -623,6 +634,7 @@ export function startTrials(
       el.src = srcFor(v);
     }
     showView(resting);
+    paintLap();
     // Anything already in cache resolves before the listener attached above.
     for (const v of views) {
       const el = layers[v];
@@ -1439,6 +1451,54 @@ export function startTrials(
     root.querySelector<HTMLButtonElement>('#undo-btn')!.addEventListener('click', () => void undoLast());
   };
 
+  /// Paint the lap bar for the trial currently on screen.
+  ///
+  /// Hidden until the first comparison is answered: a full-width empty bar on
+  /// arrival is a demand, and on a rating-only study it would never move at all
+  /// — comparisons are what the threshold counts, so a 4-tier rating correctly
+  /// leaves it alone.
+  function paintLap() {
+    const bar = root.querySelector<HTMLElement>('#lap');
+    const fill = root.querySelector<HTMLElement>('#lap-fill');
+    if (!bar || !fill || !lapProgress || lapProgress.per <= 0) return;
+    const into = lapProgress.done % lapProgress.per;
+    const lap = Math.floor(lapProgress.done / lapProgress.per);
+    // A completed lap reads as full, not as empty: `done % per === 0` right
+    // after crossing would otherwise snap the bar to zero at the exact moment
+    // it should look finished.
+    const shown = into === 0 && lapProgress.done > 0 ? lapProgress.per : into;
+    bar.hidden = lapProgress.done === 0;
+    fill.style.width = `${(shown / lapProgress.per) * 100}%`;
+    fill.classList.toggle('complete', shown === lapProgress.per);
+    const left = lapProgress.per - shown;
+    bar.title =
+      lap === 0
+        ? `${left} more comparisons and your ratings can be reliability-checked`
+        : `${lapProgress.done} comparisons · ${left} to the next mark`;
+  }
+
+  /// Mark a completed lap.
+  ///
+  /// The first one is the one that means something — it is where this
+  /// observer's data becomes screenable — so it says so. Later laps are
+  /// momentum, and are not dressed up as more than that.
+  function celebrateLap(done: number, per: number) {
+    const bar = root.querySelector<HTMLElement>('#lap');
+    if (!bar) return;
+    bar.classList.add('celebrate');
+    const note = document.createElement('div');
+    note.className = 'lap-note';
+    note.textContent =
+      done === per
+        ? `${per} comparisons — your ratings can now be reliability-checked`
+        : `${done} comparisons`;
+    bar.after(note);
+    window.setTimeout(() => {
+      note.remove();
+      bar.classList.remove('celebrate');
+    }, 2600);
+  }
+
   /// Reopen the previous trial so its answer can be corrected.
   ///
   /// Re-renders that trial with its gate reset — the observer has to look at
@@ -1464,7 +1524,7 @@ export function startTrials(
     const dwell = state.shownAt > 0 ? performance.now() - state.shownAt : 0;
     const cond = captureTrial(img, calib.css_px_per_mm, calib.viewing_distance_cm);
     try {
-      await recordResponse(trial.trial_id, {
+      const ack = await recordResponse(trial.trial_id, {
         choice,
         dwell_ms: Math.round(dwell),
         reveal_count: state.revealCount,
@@ -1484,6 +1544,19 @@ export function startTrials(
         ...panGeometry(img, viewport),
         ...cond,
       });
+      if (ack) {
+        const before = lapProgress?.done ?? 0;
+        lapProgress = { done: ack.total_comparisons, per: ack.comparisons_per_lap };
+        // A lap completes when the count crosses a multiple of the threshold.
+        // Compared against the previous value rather than tested for equality,
+        // so a comparison that lands while the tab was backgrounded still
+        // registers instead of being skipped over.
+        const crossed =
+          ack.comparisons_per_lap > 0 &&
+          Math.floor(ack.total_comparisons / ack.comparisons_per_lap) >
+            Math.floor(before / ack.comparisons_per_lap);
+        if (crossed) celebrateLap(ack.total_comparisons, ack.comparisons_per_lap);
+      }
     } catch (e) {
       console.warn('record failed', e);
     }

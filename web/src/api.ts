@@ -147,13 +147,28 @@ export interface ResponseReq {
   pixels_per_degree: number | null;
 }
 
-export async function recordResponse(trial_id: string, body: ResponseReq): Promise<void> {
+export interface ResponseAck {
+  total_trials: number;
+  milestone_badge: string | null;
+  flags: string | null;
+  /// Lifetime comparisons by this observer — server-side, so it survives
+  /// sessions and devices. The lap bar is drawn from it.
+  total_comparisons: number;
+  /// Comparisons per lap, from the server so the threshold lives in one place.
+  comparisons_per_lap: number;
+}
+
+export async function recordResponse(
+  trial_id: string,
+  body: ResponseReq,
+): Promise<ResponseAck | null> {
   const r = await fetch(`/api/trial/${encodeURIComponent(trial_id)}/response`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(body),
   });
   if (!r.ok) throw new Error(`recordResponse ${r.status}`);
+  return (await r.json().catch(() => null)) as ResponseAck | null;
 }
 
 export async function endSession(session_id: string): Promise<void> {

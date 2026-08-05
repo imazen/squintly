@@ -922,6 +922,21 @@ pub struct ResponseAck {
     pub total_trials: u32,
     pub milestone_badge: Option<String>,
     pub flags: Option<String>,
+    /// How many COMPARISONS this observer has answered, ever.
+    ///
+    /// Server-side and lifetime, not a session counter, because the number it
+    /// feeds means something: `crowd_bt::MIN_OBS_FOR_ETA` is the point at which
+    /// an observer's reliability can be estimated at all, and it is reached
+    /// across sessions and devices, not within one sitting. A progress bar
+    /// counting from zero each visit would tell a returning observer they had
+    /// made no progress toward a threshold they had already passed.
+    ///
+    /// Comparisons specifically — a 4-tier rating does not feed η, so counting
+    /// it here would move a bar toward a milestone it cannot reach.
+    pub total_comparisons: u32,
+    /// The threshold the client draws its lap against, so the number lives in
+    /// one place rather than being duplicated into the frontend.
+    pub comparisons_per_lap: u32,
 }
 
 pub async fn record_response(
@@ -998,8 +1013,25 @@ pub async fn record_response(
         .fetch_one(&state.pool)
         .await
         .unwrap_or((0,));
+        // A revision does not add a comparison either, so the lap counter is
+        // read back rather than incremented — taking an answer back and
+        // re-giving it must not advance a progress bar.
+        let comparisons: (i64,) = sqlx::query_as(
+            "SELECT COUNT(*) FROM responses r \
+             JOIN trials t ON t.id = r.trial_id \
+             JOIN sessions s ON s.id = t.session_id \
+             WHERE t.kind = 'pair' AND s.observer_id = \
+               (SELECT observer_id FROM sessions WHERE id = \
+                (SELECT session_id FROM trials WHERE id = ?))",
+        )
+        .bind(&trial_id)
+        .fetch_one(&state.pool)
+        .await
+        .unwrap_or((0,));
         return Ok(Json(ResponseAck {
             total_trials: total.0.max(0) as u32,
+            total_comparisons: comparisons.0.max(0) as u32,
+            comparisons_per_lap: crate::crowd_bt::MIN_OBS_FOR_ETA as u32,
             milestone_badge: None,
             flags: None,
         }));
@@ -1113,8 +1145,20 @@ pub async fn record_response(
         award_badge(&state.pool, &observer.0, slug).await?;
     }
 
+    let total_comparisons: (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM responses r \
+         JOIN trials t ON t.id = r.trial_id \
+         JOIN sessions s ON s.id = t.session_id \
+         WHERE s.observer_id = ? AND t.kind = 'pair'",
+    )
+    .bind(&observer.0)
+    .fetch_one(&state.pool)
+    .await?;
+
     Ok(Json(ResponseAck {
         total_trials: new_total,
+        total_comparisons: total_comparisons.0.max(0) as u32,
+        comparisons_per_lap: crate::crowd_bt::MIN_OBS_FOR_ETA as u32,
         milestone_badge: milestone.map(str::to_string),
         flags: flags.join(),
     }))

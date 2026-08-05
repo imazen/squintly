@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+### Added
+- **A progress bar toward the 20-comparison reliability mark.** Twenty is
+  `crowd_bt::MIN_OBS_FOR_ETA` — the point at which an observer's reliability
+  becomes estimable and their answers become weighable rather than merely
+  stored — so the bar tracks a real boundary. It fills, turns green on the mark,
+  and laps. The count is lifetime and server-side, so a returning observer picks
+  up where they were; it counts comparisons only, since a rating does not feed
+  η; and a revision does not advance it.
+
 ### Changed
 - **AI-generated images are out of the study corpus.** The three `*-ai-*` strata
   are excluded: the study measures how compression artefacts look on real web

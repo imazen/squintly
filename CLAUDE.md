@@ -179,6 +179,24 @@ web component from `~/work/efficient-ui/`. No framework.
   `.stage` is full-bleed: `.trial` carries no horizontal padding and each other
   row re-adds its own, so the bars reach the screen edge. A gutter outside them
   would waste exactly the space they are kept under 8px to save.
+- **A `hidden` grid item is not a grid item.** `hidden` is `display: none`, so a
+  conditionally-hidden child does not occupy its track — every later child
+  shifts up one, and `.stage` lands on an `auto` row instead of the `1fr` one.
+  The viewport then collapses to content height, the stimulus never sizes, and
+  `.viewport.all-ready` never arrives. Adding the lap bar this way cost **257
+  e2e failures**, every one of them timing out somewhere that looked nothing
+  like a layout bug — and the suite ran 25 minutes instead of 2 because each
+  failure burned its timeout. `.lap[hidden]` therefore sets `display: block;
+  height: 0` rather than letting `hidden` do it. Any new row in `.trial`'s
+  fixed `grid-template-rows` needs the same treatment.
+- **The lap bar counts what `MIN_OBS_FOR_ETA` counts.** 20 comparisons is the
+  point at which an observer's reliability becomes estimable, so the bar tracks
+  a real boundary rather than an invented one — that is the whole licence for
+  gamifying it. Server-side and lifetime (`ResponseAck.total_comparisons`), not
+  per session: a returning observer who already passed 20 must not be shown
+  zero. Pair trials only; a 4-tier rating does not feed η, so counting it would
+  move a bar toward a milestone it cannot reach. A revision reads the count back
+  instead of incrementing, so undo cannot advance it.
 - **A UI nudge toward a specific answer must be recorded, or it contaminates
   silently.** After `CANT_TELL_HINT_AFTER_HELD_MS` of *held* time the tie button
   breathes, because at threshold the truthful answer is a tie but the button

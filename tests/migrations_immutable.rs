@@ -93,6 +93,10 @@ fn expected() -> BTreeMap<&'static str, &'static str> {
             "7bc23a29a895a3a9ca685f80e500b95c777c54ce03bb83d99df2328c1893d503",
         ),
         (
+            "0023_crowd_bt_eta.sql",
+            "17ff976b51ffa8de9b627ff242085c320de91533ea03bdc029adc4d59e98b645",
+        ),
+        (
             "0022_trial_source_filename.sql",
             "cf08492af7d75a19ccf73aa1988cc7e19cdb15d84344747a72234c7071f2bc77",
         ),

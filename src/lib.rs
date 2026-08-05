@@ -14,6 +14,7 @@ pub mod auth;
 pub mod bt;
 pub mod coefficient;
 pub mod content_class;
+pub mod crowd_bt;
 pub mod curator;
 pub mod db;
 pub mod db_health;

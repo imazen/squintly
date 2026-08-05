@@ -4,14 +4,18 @@
 
 import {
   listLeaderboard,
+  whoami,
+  signOut,
   listStudies,
   nextTrial,
   recordResponse,
   type LeaderboardRow,
   type TrialPayload,
 } from './api';
-import { captureTrial, loadCalibration, loadStudyId, saveStudyId } from './conditions';
+import { captureTrial, getObserverId, loadCalibration, loadStudyId, saveStudyId } from './conditions';
 import { showInstructions } from './instructions';
+import { openSignInModal } from './auth-modal';
+import { showAdmin } from './admin';
 import {
   HoldStack,
   buttonForKey,
@@ -1549,6 +1553,8 @@ export function startTrials(
           <button id="menu-calibrate">Re-measure screen size</button>
           <button id="menu-instructions">Re-read the instructions</button>
           <button id="menu-leaderboard">Reviewer leaderboard</button>
+          <button id="menu-admin" hidden>Admin</button>
+          <button id="menu-account">Sign in</button>
           <button id="menu-keys">Keyboard shortcuts</button>
         </div>
 
@@ -1617,6 +1623,39 @@ export function startTrials(
       detachKeys = null;
       onRecalibrate();
     });
+    // Signing in from the menu, and out again. Kept here rather than only on the
+    // front page because that is where somebody notices they are anonymous —
+    // mid-session, looking at the board, wondering why they are not on it.
+    void (async () => {
+      const btn = scrim.querySelector<HTMLButtonElement>('#menu-account');
+      const admin = scrim.querySelector<HTMLButtonElement>('#menu-admin');
+      if (!btn) return;
+      const me = await whoami().catch(() => null);
+      if (me?.signed_in) {
+        btn.textContent = `Sign out (${me.email ?? 'signed in'})`;
+        btn.addEventListener('click', async () => {
+          await signOut();
+          close();
+          if (currentTrial) renderTrial(currentTrial);
+        });
+        if (me.is_admin && admin) {
+          admin.hidden = false;
+          admin.addEventListener('click', () => {
+            close();
+            void showAdmin(root, () => {
+              if (currentTrial) renderTrial(currentTrial);
+            });
+          });
+        }
+      } else {
+        btn.textContent = 'Sign in to keep your reviewer name';
+        btn.addEventListener('click', () => {
+          close();
+          openSignInModal();
+        });
+      }
+    })();
+
     scrim
       .querySelector<HTMLButtonElement>('#menu-instructions')!
       .addEventListener('click', () => {
@@ -1645,14 +1684,76 @@ export function startTrials(
     });
   };
 
+  /// End of session: what you did, and where it sits.
+  ///
+  /// "You contributed N ratings. Close this tab" gave a volunteer no reason to
+  /// come back and no way to tell whether the N was any good. The board answers
+  /// both — and the reliability column beside the count is the honest framing:
+  /// volume alone is not the contribution.
   const renderDone = () => {
     root.innerHTML = `
-      <div class="screen center">
+      <div class="screen center done">
         <h1>Thank you</h1>
-        <p>You contributed <strong>${trialCount}</strong> ratings.</p>
-        <p class="muted">Close this tab when you're ready.</p>
+        <p>You contributed <strong>${trialCount}</strong> ${
+          trialCount === 1 ? 'rating' : 'ratings'
+        } this session.</p>
+        <div id="done-board" class="muted">Loading your stats…</div>
+        <div class="row">
+          <button id="done-again" class="primary">Rate some more</button>
+          <a id="done-home" href="/">Back to the front page</a>
+        </div>
       </div>
     `;
+    root.querySelector<HTMLButtonElement>('#done-again')!.addEventListener('click', () => {
+      location.href = '/rate';
+    });
+    void renderDoneBoard();
+  };
+
+  const renderDoneBoard = async () => {
+    const host = root.querySelector<HTMLElement>('#done-board');
+    if (!host) return;
+    try {
+      const board = await listLeaderboard(getObserverId());
+      const me = board.find((r) => r.is_you);
+      const pct = (v: number | null) => (v === null ? '—' : `${Math.round(v * 100)}%`);
+      const rows = [...board.filter((r) => r.is_you), ...board.filter((r) => !r.is_you)].slice(0, 8);
+      host.innerHTML = `
+        ${
+          me
+            ? `<p class="done-mine">You are <code>${escapeHtml(me.handle)}</code> —
+                 <b>${me.trials.toLocaleString()}</b> ratings all told,
+                 ${pct(me.self_agreement)} agreement with yourself,
+                 ${(me.active_seconds / 3600).toFixed(1)}h engaged.</p>`
+            : '<p class="muted">Your first ratings are in — the board updates as they land.</p>'
+        }
+        ${
+          (await whoami().catch(() => null))?.signed_in
+            ? ''
+            : `<p class="signin-nudge">You are rating as a guest. <button id="done-signin"
+                 class="linkish">Sign in with email</button> to keep this reviewer name
+                 across devices — and so your sessions stay linked to you if we need to ask
+                 about one later.</p>`
+        }
+        <table class="board">
+          <thead><tr><th>Reviewer</th><th>Ratings</th><th>Self-agree</th><th>Hours</th></tr></thead>
+          <tbody>${rows
+            .map(
+              (r) => `<tr class="${r.is_you ? 'me' : ''}">
+                <td><code>${escapeHtml(r.handle)}</code>${r.is_you ? ' <span class="you">you</span>' : ''}</td>
+                <td>${r.trials.toLocaleString()}</td>
+                <td>${pct(r.self_agreement)}</td>
+                <td>${(r.active_seconds / 3600).toFixed(1)}</td>
+              </tr>`,
+            )
+            .join('')}</tbody>
+        </table>`;
+      host
+        .querySelector<HTMLButtonElement>('#done-signin')
+        ?.addEventListener('click', () => openSignInModal());
+    } catch {
+      host.innerHTML = '<p class="muted">Stats are unavailable right now.</p>';
+    }
   };
 
   return {

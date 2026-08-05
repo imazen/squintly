@@ -3,6 +3,28 @@
 ## [Unreleased]
 
 ### Changed
+- **The front page is `/` and the session is `/rate`.** Separate routes, so
+  "come and help" and "carry on where you left off" are different links, a
+  reload mid-session stays in the session, and anything driving the app reaches
+  the study by navigating rather than by clicking through the front page.
+- **The pairwise studies finally have a working reviewer screen.** BT.500
+  kurtosis-2 and peer-mean correlation both need a score per stimulus, so forced
+  choice was skipped entirely and every observer in the default study was filed
+  `insufficient_data`. `crowd_bt.rs` adds Crowd-BT η — per-observer reliability
+  fitted jointly with the latent scores, which is what the reference book's own
+  cheat sheet names for a crowdsourced PC test under active sampling. Recorded
+  per observer (migration 0023), NULL below the minimum observation count.
+- **The pause menu offers sign-in and sign-out**, and an Admin entry for
+  admins. Its dropdowns look like dropdowns — they inherited bare button styling
+  and read as flat text, so people did not know they opened.
+- **Ending a session shows your stats and the board**, not "you contributed N
+  ratings, close this tab" — which gave a volunteer no reason to come back and
+  no way to tell whether the N was any good. A guest is invited to sign in
+  there, once, at the moment they have just seen their handle.
+- **A read-only admin view** (`admin.ts`): corpus and totals, each study against
+  its targets, and every reviewer with reliability beside volume. Read-only on
+  purpose — exclusion is a recorded disposition, and a button that dropped a
+  reviewer would make the decision unauditable.
 - **The live corpus is now the TEST split** (`imazen26-v4-test`, 180 sources /
   4320 encodings — the same scale as the mixed v3 it replaces). Every source was
   cross-checked against its recorded label before publishing: 180/180 test, zero

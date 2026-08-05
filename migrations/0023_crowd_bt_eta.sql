@@ -1,0 +1,29 @@
+-- Per-observer reliability for the pairwise studies.
+--
+-- The screens in `observer_dispositions` were built for ratings: BT.500
+-- kurtosis-2 over an observer's own scores, and correlation to the per-image
+-- mean. Both need a score per stimulus. A forced choice has none, so
+-- `rebuild_dispositions` skipped pairwise responses entirely and every observer
+-- in a pairwise study landed on `insufficient_data` — which was honest, and
+-- meant the DEFAULT study (`ssim2-nonphoto`, forced choice) had no working
+-- screen at all.
+--
+-- Crowd-BT's η is the instrument the reference book's own cheat sheet names for
+-- this design (`ch3-5_sampling_screening_cis.md` §4.6: "Crowdsourcing PC test →
+-- Crowd-BT η_s if active sampling already in use"; squintly's sampler is ASAP).
+-- It is estimated jointly with the latent scores, so it says how much of an
+-- observer's answer is signal rather than whether they are unusual:
+--
+--   η = 1    perfectly reliable
+--   η = 0.5  a coin flip — carries no information about the order
+--   η < 0.5  anti-correlated: a reversed UI, or answering the opposite of what
+--            was meant. A different failure from noise, and one that a
+--            symmetric "is this observer an outlier?" test cannot see.
+--
+-- NULL, not 0, when it was not estimated — an observer below the minimum
+-- observation count keeps no number rather than being handed one that looks
+-- like a measurement. The leaderboard's DEFAULT-0 incident is the precedent:
+-- a column that cannot distinguish "not recorded" from "measured as zero"
+-- silently poisons every aggregate built on it.
+ALTER TABLE observer_dispositions ADD COLUMN crowd_bt_eta REAL;
+ALTER TABLE observer_dispositions ADD COLUMN n_pairwise INTEGER;

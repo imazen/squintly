@@ -236,6 +236,25 @@ web component from `~/work/efficient-ui/`. No framework.
   there and the image being rated is genuinely not on screen yet; that is the
   gate working, not a bug to remove. Note the A/B/Original switch is rendered in
   every mode, which is why `satisfyGate` in the e2e helpers works everywhere.
+- **The front page is `/`; the session is `/rate`.** Two routes, not two screens
+  behind one URL. `/` explains the study, shows each study against its
+  pre-registered targets and the reviewer board, and offers guest-or-sign-in;
+  `/rate` is onboarding + trials. This is also what makes the suite tractable —
+  a test reaches the study by navigating, not by simulating a click through the
+  front page, which is what broke ~40 specs when the page first landed. The SPA
+  fallback must serve `text/html` for extensionless routes, or a browser
+  navigating to `/rate` downloads a file instead of rendering.
+- **The pairwise screen is Crowd-BT η, not BT.500 or peer-mean correlation.**
+  Both of those need a score per stimulus, so `rebuild_dispositions` skipped
+  forced choice and every observer in the DEFAULT study landed on
+  `insufficient_data` — no working screen at all. `crowd_bt.rs` estimates a
+  per-observer reliability jointly with the latent scores: η=1 reliable, η=0.5
+  carries no information, η<0.5 anti-correlated (a reversed UI, or answering the
+  opposite of what was meant — a failure a symmetric outlier test cannot see).
+  Named by `ch3-5_sampling_screening_cis.md` §4.6 for exactly this design
+  (crowdsourced PC + active sampling). NOT for sampling — the same chapter shows
+  its active variant losing to ASAP at every budget, so ASAP still picks pairs.
+  η is NULL below `MIN_OBS_FOR_ETA`, never 0.
 - **Participant exclusion is a recorded disposition, never a delete.**
   `src/exclusion.rs` runs the zenpapers Ch. 4 screens (§4.4 peer-mean
   correlation, §4.2.1 BT.500 kurtosis-2 band) and writes

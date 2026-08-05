@@ -448,7 +448,139 @@ pub async fn rebuild_dispositions(
             written += 1;
         }
     }
+
+    written += screen_pairwise(pool, &mut tx, &policy_for_study, now).await?;
+
     tx.commit().await?;
+    Ok(written)
+}
+
+/// The pairwise screen: Crowd-BT η.
+///
+/// The rating screens above need a score per stimulus, so they skip forced
+/// choice entirely — which left every observer in a pairwise study on
+/// `insufficient_data`, including the whole of the default study. This is the
+/// instrument the reference book names for that case (`crowd_bt.rs` carries the
+/// citation and the reasoning).
+///
+/// Records η rather than only a verdict. A boolean says an observer was
+/// dropped; η says how much of what they contributed was signal, which is what
+/// a weighted refit would need and what makes "why was this one excluded?"
+/// answerable a year from now.
+async fn screen_pairwise(
+    pool: &sqlx::SqlitePool,
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    policy_for_study: &impl Fn(&str) -> ExclusionPolicy,
+    now: i64,
+) -> anyhow::Result<u64> {
+    use sqlx::Row;
+
+    let rows = sqlx::query(
+        "SELECT s.study_id AS study_id, s.observer_id AS observer_id, \
+                t.a_encoding_id AS a, t.b_encoding_id AS b, r.choice AS choice \
+         FROM responses r \
+         JOIN trials t ON t.id = r.trial_id \
+         JOIN sessions s ON s.id = t.session_id \
+         WHERE t.kind = 'pair' AND s.observer_id IS NOT NULL \
+           AND t.b_encoding_id IS NOT NULL",
+    )
+    .fetch_all(pool)
+    .await?;
+
+    /// One study's comparisons plus the index maps they refer into.
+    ///
+    /// `crowd_bt` works in dense indices; the database speaks ids. Keeping the
+    /// two vectors beside the observations is what lets a fitted η be mapped
+    /// back to the observer it belongs to.
+    #[derive(Default)]
+    struct StudyObs {
+        obs: Vec<crate::crowd_bt::Obs>,
+        observers: Vec<String>,
+        items: Vec<String>,
+    }
+
+    let mut by_study: HashMap<String, StudyObs> = HashMap::new();
+    for row in &rows {
+        let study: String = row
+            .try_get::<Option<String>, _>("study_id")
+            .ok()
+            .flatten()
+            .unwrap_or_else(|| crate::studies::DEFAULT_STUDY_ID.to_string());
+        let (Ok(observer), Ok(a), Ok(b), Ok(choice)) = (
+            row.try_get::<String, _>("observer_id"),
+            row.try_get::<String, _>("a"),
+            row.try_get::<String, _>("b"),
+            row.try_get::<String, _>("choice"),
+        ) else {
+            continue;
+        };
+        // A tie is not a preference, so it carries no ordering information and
+        // is dropped rather than being forced into one direction — which would
+        // manufacture a signal the observer did not give.
+        let (winner, loser) = match choice.as_str() {
+            "a" => (a, b),
+            "b" => (b, a),
+            _ => continue,
+        };
+        let entry = by_study.entry(study).or_default();
+        let idx = |v: &mut Vec<String>, k: &str| -> usize {
+            match v.iter().position(|x| x == k) {
+                Some(i) => i,
+                None => {
+                    v.push(k.to_string());
+                    v.len() - 1
+                }
+            }
+        };
+        let o = idx(&mut entry.observers, &observer);
+        let w = idx(&mut entry.items, &winner);
+        let l = idx(&mut entry.items, &loser);
+        entry.obs.push(crate::crowd_bt::Obs {
+            observer: o,
+            winner: w,
+            loser: l,
+        });
+    }
+
+    let mut written = 0u64;
+    for (study_id, entry) in &by_study {
+        let policy = policy_for_study(study_id);
+        let fit = crate::crowd_bt::fit(&entry.obs, entry.items.len(), entry.observers.len());
+        for (i, observer) in entry.observers.iter().enumerate() {
+            let n: i64 = entry.obs.iter().filter(|o| o.observer == i).count() as i64;
+            let estimated = n as usize >= crate::crowd_bt::MIN_OBS_FOR_ETA;
+            let eta = estimated.then(|| fit.eta[i]);
+            let (disposition, reason) = match eta {
+                None => (
+                    Disposition::InsufficientData,
+                    format!("{n} comparisons; need {}", crate::crowd_bt::MIN_OBS_FOR_ETA),
+                ),
+                Some(e) if e < crate::crowd_bt::ETA_USELESS => (
+                    Disposition::Excluded,
+                    format!("crowd-bt eta {e:.3} below {}", crate::crowd_bt::ETA_USELESS),
+                ),
+                Some(e) => (Disposition::Included, format!("crowd-bt eta {e:.3}")),
+            };
+            sqlx::query(
+                "INSERT INTO observer_dispositions \
+                 (observer_id, study_id, n_ratings, n_comparable, disposition, reason, \
+                  policy_enabled, computed_at, crowd_bt_eta, n_pairwise) \
+                 VALUES (?, ?, 0, ?, ?, ?, ?, ?, ?, ?)",
+            )
+            .bind(observer)
+            .bind(study_id)
+            .bind(n)
+            .bind(disposition.as_str())
+            .bind(&reason)
+            .bind(i64::from(policy.enabled))
+            .bind(now)
+            .bind(eta)
+            .bind(n)
+            .execute(&mut **tx)
+            .await?;
+            written += 1;
+        }
+    }
     Ok(written)
 }
 

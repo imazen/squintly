@@ -302,3 +302,32 @@ filter recovers them. Use Meade & Craig's mixture-model approach: 89%
 careful, 9% inconsistent, 2% straight-liners. The Mahalanobis D index is
 the gold-standard sensitive single index for total carelessness; even-odd
 is best for partial carelessness [Meade & Craig Tables 10–11].
+
+## 13. When the whole panel is two people
+
+Everything above assumes a panel: §4.4 peer-mean correlation, BT.500 β₂, the
+CID22 rejection fractions, the mixture-model replay — all of them measure an
+observer against other observers, and all of them spend data to do it.
+
+The live studies expect **two** participants. At that N:
+
+* peer-based screens have no peers. "Outlier versus the mean of one other
+  person" is not a measurement.
+* Crowd-BT's η (`src/crowd_bt.rs`) is weakly identified — the fit can explain
+  disagreement as observer noise or as the items genuinely being close, and
+  with two observers nothing in the data separates those. Do not quote an η at
+  this N without first checking it against the golden pairs, which have an
+  answer independent of both observers and so pin the scale locally.
+* rejecting anybody costs 50% of the dataset.
+
+So the screens keep running and keep being recorded — `ExclusionPolicy::enabled`
+already decides only whether *consumers* act on `excluded` — but they are
+operator diagnostics, not gates. What still measures something at N=2 is
+strictly within-observer: `Study::p_repeat` self-agreement, `p_golden_pair`
+attention checks, and transitivity.
+
+The way to improve the data is then to **calibrate observers rather than drop
+them**, which is also what the literature recommends for small panels
+(zenpapers ch10 §10.2.3, training-as-tuning). The design for that — including
+the two kinds of feedback that would destroy the repeat and golden instruments
+if given during a session — is `docs/OBSERVER-FEEDBACK.md`.

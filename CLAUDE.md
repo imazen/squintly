@@ -102,6 +102,28 @@ web component from `~/work/efficient-ui/`. No framework.
   `Study::p_golden_pair` is the attention check: `p_honeypot`/`p_anchor` are
   necessarily 0 in a forced-choice study (both build single-stimulus trials),
   so before this the study had **no controls at all**.
+- **Feedback to an observer is about PROCESS during a session, and about
+  OUTCOME only in training or in aggregate afterwards.** Two things would
+  destroy instruments we depend on, and neither is recoverable after the fact:
+  telling somebody a trial is a *repeat* makes them recall their previous answer
+  instead of judging again, which measures memory and reports it as the noise
+  ceiling; and telling somebody they got a *golden pair* wrong both identifies
+  the attention checks and trains them toward whatever produced the "correct"
+  answer — which is the metric under test. So a mid-session notice may say
+  "flick between them before answering" (what to do) and never "you are
+  answering too fast" (how you did). See `docs/OBSERVER-FEEDBACK.md` for the
+  full design and the literature it comes from (zenpapers ch10 §10.2.3,
+  training-as-tuning).
+- **At N≈2 observers the screens become operator diagnostics, not gates.**
+  §4.4 peer-mean correlation has no peers to be an outlier against, and
+  Crowd-BT η is weakly identified — with two observers the fit cannot separate
+  "this observer is noisy" from "these items are genuinely close". Acting on a
+  screen would also cost half the dataset. `exclusion.rs` already records
+  without enforcing (`ExclusionPolicy::enabled`); keep it that way and improve
+  the data by calibrating observers instead of dropping them. What still works
+  at N=2 is strictly within-observer: `p_repeat` self-agreement, `p_golden_pair`
+  attention checks, and transitivity. Do NOT quote an η at this N without first
+  checking it against the goldens.
 - **Difficulty is recorded per view, raw.** `reveal_ms_total` only ever measured
   the reference, which under `hold`/`buttons` is the *resting* view — so it
   tracks "not pressing anything", not effort. `switch_count` + `ms_on_a/b/ref`

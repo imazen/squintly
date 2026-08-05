@@ -52,7 +52,7 @@ Required:
 # NOTE: this takes precedence over SQUINTLY_COEFFICIENT_PATH — a stale value
 # here is why the site served zero trials for months.
 railway variables --set \
-  "SQUINTLY_COEFFICIENT_HTTP=https://codec-corpus.r2.imazen.org/squintly/demo-corpus/imazen26-v3"
+  "SQUINTLY_COEFFICIENT_HTTP=https://codec-corpus.r2.imazen.org/squintly/demo-corpus/imazen26-v4-test"
 ```
 
 Optional:
@@ -432,7 +432,7 @@ GET <base>/api/sources/<hash>/image
 GET <base>/api/encodings/<id>/image
 ```
 
-Live: `https://codec-corpus.r2.imazen.org/squintly/demo-corpus/imazen26-v2`,
+Live: `https://codec-corpus.r2.imazen.org/squintly/demo-corpus/imazen26-v4-test`,
 selected via `SQUINTLY_COEFFICIENT_HTTP`.
 
 | | v1 | **v2 (live)** |
@@ -445,9 +445,22 @@ selected via `SQUINTLY_COEFFICIENT_HTTP`.
 
 ```bash
 just build-corpus            # from the canonical R2 corpus
-just publish-corpus imazen26-v3
+just publish-corpus imazen26-v4-test
+
+**The corpus must be the imazen-26 TEST split.** `build_demo_corpus.py --split`
+defaults to `test`; it imports the canonical `origin_split.py::split_of` and
+cross-checks every pick against the recorded labels in
+`/mnt/v/output/imazen-26-features/imazen26_split_evenodd.tsv`, failing the build
+on a single disagreement. Verified 2026-08-05: the rule reproduces all 2,157
+labels exactly, and the shipped v4 corpus is 180/180 test-split.
+
+Versioned prefixes are never mutated — roll forward by publishing a new one and
+changing `SQUINTLY_COEFFICIENT_HTTP`. The variable change alone triggers a
+redeploy; the OLD container keeps serving until the new one is live, so verify
+against a source that exists only in the new prefix rather than against counts,
+which can coincide.
 railway variables --set \
-  "SQUINTLY_COEFFICIENT_HTTP=https://codec-corpus.r2.imazen.org/squintly/demo-corpus/imazen26-v3"
+  "SQUINTLY_COEFFICIENT_HTTP=https://codec-corpus.r2.imazen.org/squintly/demo-corpus/imazen26-v4-test"
 ```
 
 **The prefix is versioned on purpose.** Publishing never mutates what a running

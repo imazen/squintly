@@ -3,6 +3,13 @@
 ## [Unreleased]
 
 ### Changed
+- **The live corpus is now the TEST split** (`imazen26-v4-test`, 180 sources /
+  4320 encodings — the same scale as the mixed v3 it replaces). Every source was
+  cross-checked against its recorded label before publishing: 180/180 test, zero
+  violations. The builder now performs that check itself and fails on a single
+  disagreement, so a corpus whose split cannot be reproduced from the labels
+  cannot be shipped. Verified 2026-08-05: the derived rule reproduces all 2,157
+  recorded labels exactly (1082 train / 657 val / 418 test).
 - **The corpus is drawn from the imazen-26 TEST split.** The builder was
   split-blind — it ranked by pixel count and took what surfaced — so the shipped
   corpus measured 60% train / 29% val / 11% test (2026-08-04, imazen-26-png-v3).

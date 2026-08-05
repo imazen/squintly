@@ -53,6 +53,7 @@ Then publish it: `just publish-corpus <version>` (scripts/publish_corpus_r2.py).
 from __future__ import annotations
 
 import argparse
+import csv
 import hashlib
 import importlib.util
 import re
@@ -212,6 +213,32 @@ DIMS_RE = re.compile(r"_(\d{2,5})x(\d{2,5})\.")
 # failure here, not a fallback.
 SPLIT_MODULE = Path.home() / "work/zen/zenmetrics/scripts/picker/origin_split.py"
 
+# Recorded split labels, one row per origin: `stem  split  ...  original_path`.
+# The rule is derivable, but a derivation that silently disagrees with the
+# labels the rest of the pipeline was built against is worse than no rule at
+# all — every downstream number would be filed under the wrong bucket and
+# nothing would say so. So each pick is cross-checked against its recorded
+# label, and a single disagreement stops the build.
+#
+# Verified 2026-08-05: `split_of` reproduces all 2,157 labels exactly
+# (1082 train / 657 val / 418 test).
+SPLIT_LABELS = Path("/mnt/v/output/imazen-26-features/imazen26_split_evenodd.tsv")
+
+
+def load_split_labels() -> dict[str, str]:
+    """origin stem -> recorded split. Empty when the label file is not present."""
+    if not SPLIT_LABELS.exists():
+        return {}
+    out: dict[str, str] = {}
+    with SPLIT_LABELS.open(encoding="utf-8") as fh:
+        rd = csv.DictReader(fh, delimiter="\t")
+        for row in rd:
+            stem = (row.get("stem") or "").strip()
+            split = (row.get("split") or "").strip()
+            if stem and split:
+                out[stem] = split
+    return out
+
 
 def load_split_of():
     if not SPLIT_MODULE.exists():
@@ -284,6 +311,41 @@ def r2_pick(
             f"  split={split}: kept {sum(len(v) for v in by_stratum.values())}, "
             f"skipped {wrong_split} in other splits and {unsplittable} with no origin stem"
         )
+
+    # Cross-check the derived split against the recorded label for each row.
+    if split_of is not None:
+        labels = load_split_labels()
+        if not labels:
+            print(
+                f"  ! no recorded split labels at {SPLIT_LABELS} — proceeding on the "
+                f"rule alone. The labels are the check that the rule still agrees "
+                f"with what the rest of the pipeline was built against."
+            )
+        else:
+            disagreements = []
+            checked = 0
+            for keys in by_stratum.values():
+                for _, k in keys:
+                    name = k.rsplit("/", 1)[-1]
+                    stem = re.match(r"^(\d+)", name)
+                    if not stem:
+                        continue
+                    recorded = labels.get(stem.group(1))
+                    if recorded is None:
+                        continue
+                    checked += 1
+                    if recorded != split:
+                        disagreements.append((name, split, recorded))
+            if disagreements:
+                sample = "\n  ".join(
+                    f"{n}: rule says {g}, label says {w}" for n, g, w in disagreements[:10]
+                )
+                raise SystemExit(
+                    f"{len(disagreements)} picks disagree with their recorded split "
+                    f"label:\n  {sample}\nThe labels are authoritative. Do NOT ship a "
+                    f"corpus whose split cannot be reproduced from them."
+                )
+            print(f"  split labels agree on all {checked} checked keys")
 
     missing = sorted(set(R2_STRATA) - set(by_stratum))
     if missing:

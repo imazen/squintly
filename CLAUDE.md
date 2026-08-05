@@ -266,6 +266,14 @@ web component from `~/work/efficient-ui/`. No framework.
   cannot score a metric fitted on them. Switching to test-only costs nothing —
   the same 45 origins, every stratum able to fill its quota — so there is no
   trade to reconsider here.
+  The rule is CROSS-CHECKED, not merely applied: every pick is compared against
+  its recorded label in
+  `/mnt/v/output/imazen-26-features/imazen26_split_evenodd.tsv` and a single
+  disagreement fails the build. A derivation that silently diverges from the
+  labels the rest of the pipeline was built against is worse than no rule —
+  every downstream number lands in the wrong bucket and nothing says so.
+  Verified 2026-08-05: `split_of` reproduces all 2,157 labels exactly. Live
+  corpus is `imazen26-v4-test`, 180/180 test-split.
   `trials.source_filename` (migration 0022) exists so the split is recomputable
   from `responses.tsv`: `source_hash` cannot answer it, since the rule reads the
   filename. Rows collected before it are NULL, which is deliberately different

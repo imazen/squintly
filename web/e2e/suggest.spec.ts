@@ -10,7 +10,7 @@
 // admin queue. The submit endpoint is open to the public so the form
 // itself is the integration point.
 
-import { expect, test } from '@playwright/test';
+import { expect, test } from './fixtures';
 import { passInstructions } from './helpers';
 
 test.describe('public suggestion form', () => {

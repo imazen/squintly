@@ -7,7 +7,7 @@
 // blobs/{sha[:2]}/{sha[2:4]}/{sha}. We fetch the first ~50 manifest lines,
 // POST them to /api/curator/manifest with the R2 base, and walk the curator UI.
 
-import { expect, test } from '@playwright/test';
+import { expect, test } from './fixtures';
 
 const R2_BASE = process.env.CURATOR_R2_BASE ?? 'https://pub-7c5c57fd3e0842f0b147946928891d40.r2.dev';
 const LIVE = process.env.CURATOR_R2_LIVE === '1';

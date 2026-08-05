@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { expect, test } from './fixtures';
 
 test.describe('HTTP API', () => {
   test('GET /api/stats returns the expected shape', async ({ request }) => {

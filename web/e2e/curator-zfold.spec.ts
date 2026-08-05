@@ -2,26 +2,27 @@
 // the project name is one of the zfold7-* projects defined in
 // playwright.config.ts.
 
-import { expect, test } from '@playwright/test';
+import { expect, test } from './fixtures';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 
-import { COEFFICIENT_PORT } from '../playwright.config';
 import { ADMIN_TOKEN, signInAsAdmin, passInstructions } from './helpers';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const FIXTURE_BODY = readFileSync(resolve(HERE, 'curator-fixture.jsonl'), 'utf-8');
-const BLOB_BASE = `http://127.0.0.1:${COEFFICIENT_PORT}`;
+// Per worker: `global-setup` runs one mock per worker, so a fixed port would
+// reach another worker's stack (or nothing at all).
+const blobBase = (port: number) => `http://127.0.0.1:${port}`;
 
 test.describe('curator on Z Fold 7', () => {
-  test.beforeEach(async ({ request, page }, testInfo) => {
+  test.beforeEach(async ({ request, page, coefficientPort }, testInfo) => {
     test.skip(!testInfo.project.name.startsWith('zfold7-'), 'Z Fold project only');
     const r = await request.post('/api/curator/manifest', {
       data: {
         kind: 'jsonl',
         body: FIXTURE_BODY,
-        blob_url_base: BLOB_BASE,
+        blob_url_base: blobBase(coefficientPort),
         admin_token: ADMIN_TOKEN,
       },
     });
@@ -29,7 +30,7 @@ test.describe('curator on Z Fold 7', () => {
     await page.goto('/');
     await page.evaluate(() => localStorage.clear());
     // Curator writes are admin-only; the UI relies on the signed-in cookie.
-    await signInAsAdmin(page, COEFFICIENT_PORT);
+    await signInAsAdmin(page, coefficientPort);
     await page.goto('/');
     await page.evaluate(() => {
       localStorage.setItem('squintly:curator_id', crypto.randomUUID());

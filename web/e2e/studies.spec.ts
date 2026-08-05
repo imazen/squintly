@@ -6,7 +6,7 @@
 // choice rides on the session, and every response carries `study_id` so the
 // two can never be pooled in analysis.
 
-import { expect, test } from '@playwright/test';
+import { expect, test } from './fixtures';
 
 import { clickBegin, completeProfileAndStart, gotoFresh, submitOneTrial, passInstructions } from './helpers';
 

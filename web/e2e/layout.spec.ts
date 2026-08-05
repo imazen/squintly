@@ -8,12 +8,12 @@
 // untappable. Assert on every major screen: layout width == device width and
 // no horizontal scroll.
 
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test } from './fixtures';
+import { type Page } from '@playwright/test';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 
-import { COEFFICIENT_PORT } from '../playwright.config';
 import {
   ADMIN_TOKEN,
   clickBegin,
@@ -25,7 +25,9 @@ import {
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const FIXTURE_BODY = readFileSync(resolve(HERE, 'curator-fixture.jsonl'), 'utf-8');
-const BLOB_BASE = `http://127.0.0.1:${COEFFICIENT_PORT}`;
+// Per worker: `global-setup` runs one mock per worker, so a fixed port would
+// reach another worker's stack (or nothing at all).
+const blobBase = (port: number) => `http://127.0.0.1:${port}`;
 
 async function expectNoViewportExpansion(page: Page, screen: string) {
   const m = await page.evaluate(() => {
@@ -159,12 +161,12 @@ test.describe('no horizontal overflow on any screen', () => {
     await expectNoViewportExpansion(page, 'suggest');
   });
 
-  test('curator stream, curate, threshold', async ({ page, request }) => {
+  test('curator stream, curate, threshold', async ({ page, request, coefficientPort }) => {
     const r = await request.post('/api/curator/manifest', {
       data: {
         kind: 'jsonl',
         body: FIXTURE_BODY,
-        blob_url_base: BLOB_BASE,
+        blob_url_base: blobBase(coefficientPort),
         admin_token: ADMIN_TOKEN,
       },
     });
@@ -172,7 +174,7 @@ test.describe('no horizontal overflow on any screen', () => {
     await page.goto('/');
     await page.evaluate(() => localStorage.clear());
     // Curator writes are admin-only; the UI relies on the signed-in cookie.
-    await signInAsAdmin(page, COEFFICIENT_PORT);
+    await signInAsAdmin(page, coefficientPort);
     await page.goto('/');
     await page.evaluate(() => {
       localStorage.setItem('squintly:curator_id', crypto.randomUUID());

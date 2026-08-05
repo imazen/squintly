@@ -5,28 +5,29 @@
 // Threshold and verifies the saved threshold round-trips through the export
 // endpoint.
 
-import { expect, test } from '@playwright/test';
+import { expect, test } from './fixtures';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 
-import { COEFFICIENT_PORT } from '../playwright.config';
 import { ADMIN_TOKEN, gotoFreshAsOperator, signInAsAdmin, passInstructions } from './helpers';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const FIXTURE_PATH = resolve(HERE, 'curator-fixture.jsonl');
 const FIXTURE_BODY = readFileSync(FIXTURE_PATH, 'utf-8');
-const BLOB_BASE = `http://127.0.0.1:${COEFFICIENT_PORT}`;
+// Per worker: `global-setup` runs one mock per worker, so a fixed port would
+// reach another worker's stack (or nothing at all).
+const blobBase = (port: number) => `http://127.0.0.1:${port}`;
 
 test.describe('curator mode', () => {
-  test.beforeEach(async ({ request, page }) => {
+  test.beforeEach(async ({ request, page, coefficientPort }) => {
     // Load the candidate manifest into the DB before each test. Idempotent
     // — the upsert keeps the same set on repeat calls.
     const r = await request.post('/api/curator/manifest', {
       data: {
         kind: 'jsonl',
         body: FIXTURE_BODY,
-        blob_url_base: BLOB_BASE,
+        blob_url_base: blobBase(coefficientPort),
         admin_token: ADMIN_TOKEN,
       },
     });
@@ -44,7 +45,7 @@ test.describe('curator mode', () => {
     await passInstructions(page);
     // Curator writes are admin-only. The UI has no shared token — it relies on
     // the signed-in admin cookie, which is the actual operator path.
-    await signInAsAdmin(page, COEFFICIENT_PORT);
+    await signInAsAdmin(page, coefficientPort);
     await page.goto('/');
     await page.evaluate(() => {
       localStorage.setItem('squintly:curator_id', crypto.randomUUID());

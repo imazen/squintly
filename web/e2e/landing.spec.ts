@@ -23,13 +23,49 @@ test.describe('the front page', () => {
 
   // Both doors, and neither dressed as the lesser one: an anonymous observer's
   // data is worth exactly as much as a signed-in one's.
-  test('offers guest and sign-in, and says what signing in buys', async ({ page }) => {
+  test('offers guest and sign-in as equal-weight buttons', async ({ page }) => {
     await gotoLanding(page);
     await expect(page.locator('#landing-start')).toContainText(/guest/i);
-    await expect(page.locator('#landing-signin')).toBeVisible();
-    await expect(page.locator('[data-screen="landing"]')).toContainText(
-      /carry the same reviewer identity/i,
+    const signin = page.locator('#landing-signin');
+    await expect(signin).toBeVisible();
+    await expect(page.locator('[data-screen="landing"]')).toContainText(/another device/i);
+
+    // Sign-in was 0.85rem underlined text — not a button, and not findable by
+    // someone scanning for one. Both ways in are the same size, because neither
+    // is the lesser option.
+    const [start, sign] = await Promise.all([
+      page.locator('#landing-start').boundingBox(),
+      signin.boundingBox(),
+    ]);
+    // Same type size — not equal height, which differs legitimately when one
+    // label wraps and the other does not on a narrow screen.
+    const size = (l: typeof signin) =>
+      l.evaluate((el) => ({
+        fs: parseFloat(getComputedStyle(el).fontSize),
+        pad: getComputedStyle(el).padding,
+      }));
+    const [a, b] = await Promise.all([size(page.locator('#landing-start')), size(signin)]);
+    expect(b.fs, 'sign-in must not be fine print').toBeGreaterThan(15);
+    expect(b.fs, 'both ways in are the same size').toBeCloseTo(a.fs, 1);
+    expect(b.pad).toBe(a.pad);
+    // Stacked on a narrow screen, they share the width; side by side, neither
+    // is squeezed to a fraction of the other.
+    expect(Math.min(sign!.width, start!.width) / Math.max(sign!.width, start!.width)).toBeGreaterThan(
+      0.5,
     );
+  });
+
+  // The page was set in fine print throughout — a 0.72rem legend under a
+  // 0.72rem bar is unreadable at arm's length on a phone.
+  test('nothing on the front page is fine print', async ({ page }) => {
+    await gotoLanding(page);
+    const smallest = await page.evaluate(() => {
+      const els = [...document.querySelectorAll<HTMLElement>('[data-screen="landing"] *')];
+      return els
+        .filter((e) => (e.textContent ?? '').trim().length > 12 && e.offsetParent !== null)
+        .reduce((m, e) => Math.min(m, parseFloat(getComputedStyle(e).fontSize)), 99);
+    });
+    expect(smallest, 'no body text below 13px').toBeGreaterThanOrEqual(13);
   });
 
   // A raw response count says nothing without the target beside it — 400

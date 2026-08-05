@@ -107,16 +107,23 @@ export async function renderLanding(root: HTMLElement, actions: LandingActions):
       </header>
 
       <div class="landing-cta">
-        <button id="landing-start" class="primary big">${
-          me.signed_in ? 'Continue rating' : 'Take part as a guest'
-        }</button>
+        <div class="cta-row">
+          <button id="landing-start" class="primary big">${
+            me.signed_in ? 'Continue rating' : 'Start rating as a guest'
+          }</button>
+          ${
+            me.signed_in
+              ? ''
+              : '<button id="landing-signin" class="big secondary">Sign in with email</button>'
+          }
+        </div>
         ${
           me.signed_in
-            ? `<div class="signed-in muted">Signed in as <b>${escapeHtml(me.email ?? '')}</b>
-                 <button id="landing-signout" class="linkish">Sign out</button></div>`
-            : `<button id="landing-signin" class="linkish">or sign in with email</button>
-               <p class="muted tiny">Signing in is optional and adds nothing to a rating. It
-                 exists so you can carry the same reviewer identity to another device.</p>`
+            ? `<div class="signed-in">Signed in as <b>${escapeHtml(me.email ?? '')}</b>
+                 <button id="landing-signout" class="secondary">Sign out</button></div>`
+            : `<p class="cta-note">Both start rating straight away. Signing in only means your
+                 reviewer name and totals follow you to another device — and that we can tell
+                 which sessions were yours if we ever need to ask about one.</p>`
         }
       </div>
 

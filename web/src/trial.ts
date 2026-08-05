@@ -277,7 +277,7 @@ export function startTrials(
           <span class="trial-license" data-corpus="${escapeAttr(corpus)}" data-license-id="${escapeAttr(licId)}" title="${escapeAttr(`${trial.source_filename ?? corpus} · ${corpus} · ${licLabel}`)}">${
             trial.source_group ? `<span class="src-group">${escapeHtml(trial.source_group)}</span> ` : ''
           }${escapeHtml(trial.source_label ?? corpus)}</span>
-          <button class="menu-btn" id="menu">menu</button>
+          <button class="menu-btn" id="menu" aria-label="Menu" title="Menu"></button>
         </div>
         <div class="stage" id="stage" data-view="${restingView(inputMode)}">
           <div class="edge edge-left" aria-hidden="true"></div>

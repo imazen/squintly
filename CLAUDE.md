@@ -307,7 +307,16 @@ web component from `~/work/efficient-ui/`. No framework.
   filename. Rows collected before it are NULL, which is deliberately different
   from "present but unsplittable".
   A stratum that cannot fill from the chosen split is a hard error, never a
-  silent under-fill.
+  silent under-fill — and an *excluded* stratum is subtracted from that check,
+  because deliberately dropping one is not the same as one silently vanishing.
+- **No AI-generated images in the study corpus.** `R2_EXCLUDE_STRATA` drops the
+  three `*-ai-*` strata. The study measures how compression artefacts look on
+  real web content: a diffusion model's output is already smooth in ways a
+  camera or a scan never is, carries no sensor noise or scan grain for a codec
+  to spend bits on, and has synthesis artefacts an observer can mistake for
+  compression. Judgements on it generalise to other generated images, not to
+  the photographs, scans, screenshots and documents the metric is pointed at.
+  Costs no coverage — ten non-photo strata remain.
 - **Source-informing-sweep rule applies.** Sampling MUST cover all 4 size buckets and
   weight low-q encodings. See `src/sampling.rs`.
 

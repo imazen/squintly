@@ -1745,3 +1745,71 @@ button.linkish:hover { color: var(--fg); }
 .admin .board td:first-child { white-space: nowrap; }
 .ok { color: var(--good); }
 .warn-cell { color: var(--warn); }
+
+/* ---- front-page sizing ----------------------------------------------------
+   The whole page was set in fine print — a 0.75rem legend under a 0.72rem bar,
+   and sign-in as 0.85rem underlined text. On a phone that is unreadable at
+   arm's length, and an underlined phrase is not a button: someone scanning for
+   how to sign in did not find one. Everything here steps up, and the two ways
+   in are the same size as each other because neither is the lesser option. */
+.landing .lede { font-size: 1.12rem; line-height: 1.55; }
+.landing p { font-size: 1rem; line-height: 1.5; }
+.landing .tiny { font-size: 0.88rem; line-height: 1.5; }
+.landing-panel h2 { font-size: 1.1rem; margin: 0 0 10px; }
+.goal-head { font-size: 0.98rem; }
+.goal-legend { font-size: 0.86rem; }
+.landing .board { font-size: 0.92rem; }
+.landing .board th, .landing .board td { padding: 7px 8px; }
+
+.cta-row { display: flex; flex-wrap: wrap; gap: 10px; }
+button.secondary {
+  background: transparent;
+  border: 1px solid var(--accent);
+  color: var(--accent);
+  font-weight: 600;
+}
+button.secondary:hover { background: rgba(74, 209, 255, 0.10); }
+.cta-note {
+  font-size: 0.92rem;
+  line-height: 1.5;
+  color: var(--muted);
+  max-width: 52ch;
+  margin: 2px 0 0;
+}
+.signed-in { display: flex; align-items: center; gap: 12px; font-size: 0.95rem; }
+
+/* ---- the trial menu button ------------------------------------------------
+   "menu" as a word in a pill read as a label rather than a control. A hamburger
+   is the one icon nobody has to learn, and it frees the width for the study
+   name and the picture's own name beside it. */
+.progress .menu-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0;
+  width: 38px;
+  min-width: 38px;
+  padding: 0;
+  font-size: 0;
+  position: relative;
+}
+.progress .menu-btn::before {
+  content: '';
+  width: 17px;
+  height: 11px;
+  /* Three bars drawn rather than a glyph, so it renders identically wherever
+     the system font falls back. */
+  border-top: 2px solid currentColor;
+  border-bottom: 2px solid currentColor;
+  box-shadow: inset 0 0 0 1px transparent;
+  background:
+    linear-gradient(currentColor, currentColor) center / 100% 2px no-repeat;
+}
+
+/* On a narrow screen the two ways in stack and share the full width, so neither
+   reads as secondary just because its label is shorter. Side by side they wrap
+   to different heights, which is what made one look like the afterthought. */
+@media (max-width: 480px) {
+  .cta-row { flex-direction: column; align-items: stretch; }
+  .cta-row button { width: 100%; }
+}

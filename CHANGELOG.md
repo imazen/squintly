@@ -3,6 +3,21 @@
 ## [Unreleased]
 
 ### Changed
+- **AI-generated images are out of the study corpus.** The three `*-ai-*` strata
+  are excluded: the study measures how compression artefacts look on real web
+  content, and generated output is already smooth where a camera or scan is not,
+  carries no sensor noise or scan grain for a codec to spend bits on, and has
+  synthesis artefacts an observer can mistake for compression. Rebuilt as
+  `imazen26-v5-test-noai` — 168 sources / 4032 encodings across 18 strata, all
+  test-split, ten non-photo strata remaining so nothing is lost in coverage.
+- **The front page is readable.** It was set in fine print throughout — a
+  0.72rem legend under a 0.72rem bar — and sign-in was 0.85rem underlined text
+  rather than a button, so somebody scanning for how to sign in did not find
+  one. Both ways in are now equal-weight buttons at the same type size, stacking
+  full-width on a narrow screen so neither reads as the afterthought.
+- **The trial menu is a hamburger**, drawn rather than a glyph so it renders the
+  same wherever the system font falls back. "menu" as a word in a pill read as a
+  label, not a control, and cost width the study name needs.
 - **The front page is `/` and the session is `/rate`.** Separate routes, so
   "come and help" and "carry on where you left off" are different links, a
   reload mid-session stays in the session, and anything driving the app reaches

@@ -138,7 +138,27 @@ DEFAULT_QUALITIES = [15, 30, 45, 60, 80, 92]
 R2_CORPUS = "r2:codec-corpus/imazen-26-png-v3"
 
 # `nope/` is a reject bin, not a stratum.
-R2_EXCLUDE_STRATA = {"nope"}
+# Strata kept out of the study corpus entirely.
+#
+# The `ai-*` strata are generated images. They are excluded because the study is
+# measuring how compression artefacts look on real web content, and a diffusion
+# model's output is not that: it is already smooth in ways a camera or a scan
+# never is, carries no sensor noise or scan grain for a codec to spend bits on,
+# and has its own synthesis artefacts that an observer can mistake for
+# compression. A judgement about "which is closer to the original" is still
+# well-defined on them — but the answer generalises to other generated images,
+# not to the photographs, scans, screenshots and documents the metric will
+# actually be pointed at.
+#
+# Removing them costs no coverage: ten non-photo strata remain (renders,
+# brochures, EPA/NOAA documents, patent scans, manuscript illustrations and
+# text, plots, mobile and web screenshots).
+R2_EXCLUDE_STRATA = {
+    "nope",
+    "9000-lilith-ai-clipart",
+    "9094-lilith-ai-illustrations",
+    "9226-lilith-ai-products",
+}
 
 # stratum prefix -> (license_id, is_photo). Licensing for imazen-26 is settled
 # and documented with the corpus itself (PROVENANCE.md); this only picks which
@@ -347,7 +367,11 @@ def r2_pick(
                 )
             print(f"  split labels agree on all {checked} checked keys")
 
-    missing = sorted(set(R2_STRATA) - set(by_stratum))
+    # A stratum that is deliberately excluded is not a silent omission — that
+    # distinction is the whole point of the check below, so it has to know
+    # about it. (The guard fired correctly the first time the ai-* strata were
+    # excluded while still listed here; this is the fix, not a relaxation.)
+    missing = sorted(set(R2_STRATA) - set(by_stratum) - R2_EXCLUDE_STRATA)
     if missing:
         raise SystemExit(
             f"strata matched nothing in {remote}: {missing}. Fix R2_STRATA rather "

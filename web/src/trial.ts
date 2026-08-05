@@ -688,8 +688,6 @@ export function startTrials(
     // threshold separates them, otherwise every pan would also fire a reveal or
     // flip A/B.
     const DRAG_THRESHOLD_CSS = 6;
-    const DOUBLE_TAP_MS = 300;
-    const DOUBLE_TAP_SLOP_CSS = 30;
 
     interface Held {
       startX: number;
@@ -714,9 +712,6 @@ export function startTrials(
     let gesture: 'none' | 'pan' | 'pinch' = 'none';
     let pinchStartDist = 0;
     let pinchStartZoom = 1;
-    let lastTapAt = 0;
-    let lastTapX = 0;
-    let lastTapY = 0;
 
     /// Which half of the frame a press landed in.
     const pressedHalf = (x: number): 'left' | 'right' => {
@@ -806,26 +801,6 @@ export function startTrials(
       return Math.hypot(a.lastX - b.lastX, a.lastY - b.lastY);
     };
 
-    /// Largest whole factor at which the entire image still fits the frame.
-    ///
-    /// "Fits" can only ever mean magnifying a small stimulus up to the frame —
-    /// never shrinking a large one down, because display below 1:1 resamples
-    /// the encode and is the one thing this viewer refuses to do. So an
-    /// oversized source resolves to 1x, which is also the useful answer there:
-    /// double-tap becomes "put me back to the start".
-    const fitFactor = (): number => {
-      const el = layers[currentSrc];
-      if (!el.naturalWidth || !el.naturalHeight) return 1;
-      const r = viewport.getBoundingClientRect();
-      let best = 1;
-      for (const z of ZOOM_LADDER) {
-        const w = (el.naturalWidth * z) / dpr;
-        const h = (el.naturalHeight * z) / dpr;
-        if (w <= r.width && h <= r.height) best = z;
-      }
-      return best;
-    };
-
     /// Smallest whole factor at which the image covers the frame in BOTH
     /// dimensions.
     ///
@@ -863,16 +838,6 @@ export function startTrials(
       if (want > zoom) applyZoom(want);
     };
 
-    const resetToFit = () => {
-      state.zoomUsed = true;
-      applyZoom(fitFactor());
-      // Re-centre: "the whole image just fits" is meaningless if it is still
-      // scrolled off to one side.
-      pan.x = 0;
-      pan.y = 0;
-      clampPan();
-      applyPan();
-    };
 
     // A long press over an image raises the callout/context menu on both mobile
     // and desktop, which would interrupt the hold exactly when it is the
@@ -1024,22 +989,14 @@ export function startTrials(
       const wasPinch = gesture === 'pinch';
       if (held.size < 2 && wasPinch) gesture = 'none';
 
-      // A quick, still press is a tap. Two of them in the same place reset the
-      // magnification to "the whole image just fits".
-      const quiet = !h.moved && !wasPinch;
-      if (quiet && performance.now() - h.downAt < DOUBLE_TAP_MS * 2) {
-        const now = performance.now();
-        const near =
-          Math.hypot(e.clientX - lastTapX, e.clientY - lastTapY) < DOUBLE_TAP_SLOP_CSS;
-        if (now - lastTapAt < DOUBLE_TAP_MS && near) {
-          resetToFit();
-          lastTapAt = 0;
-        } else {
-          lastTapAt = now;
-          lastTapX = e.clientX;
-          lastTapY = e.clientY;
-        }
-      }
+      // NO double-tap-to-fit. It read two quick presses in the same place as
+      // "put the whole image back on screen" — but under `hold`, the only touch
+      // mode, two quick presses in the same place is the COMPARISON: press a
+      // half, release, press again. So the magnification kept resetting itself
+      // mid-judgement, which is worse than not having the shortcut at all.
+      // Pinch changes magnification on touch; the digits and the wheel do on a
+      // mouse. A gesture cannot be reserved for a shortcut when the task has
+      // already claimed it.
 
       if (held.size === 0) {
         gesture = 'none';

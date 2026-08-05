@@ -162,75 +162,41 @@ test.describe('multi-touch', () => {
   // ever magnify a small stimulus up to the frame, never shrink a large one
   // down — below 1:1 the browser resamples the encode, which is the thing the
   // viewer exists to prevent. So an oversized source resolves to 1x.
-  test('double tap fits the image at a whole factor and never goes below 1:1', async ({ page }) => {
+  // Double-tap-to-fit is GONE, deliberately. It read two quick presses in the
+  // same place as "put the whole image back on screen" — but under `hold`, the
+  // only touch mode, two quick presses in the same place IS the comparison:
+  // press a half, release, press again. The magnification kept resetting itself
+  // mid-judgement, which is worse than not having the shortcut.
+  test('a repeated tap does not disturb the magnification', async ({ page }) => {
     await toTrial(page);
     const box = (await page.locator('#viewport').boundingBox())!;
     const cx = box.x + box.width / 2;
     const cy = box.y + box.height / 2;
 
-    // What the fit *should* be for this image in this frame. Computed rather
-    // than assumed: the sampler is random, and asserting merely that the zoom
-    // "changed" is wrong whenever the current factor already is the fit.
-    const expectedFit = await page.evaluate(() => {
-      const i = document.querySelector<HTMLImageElement>('#stimulus')!;
-      const r = document.querySelector<HTMLElement>('#viewport')!.getBoundingClientRect();
-      let best = 1;
-      for (const z of [1, 2, 3, 4, 5, 6, 7, 8]) {
-        if ((i.naturalWidth * z) / devicePixelRatio <= r.width &&
-            (i.naturalHeight * z) / devicePixelRatio <= r.height) best = z;
-      }
-      return best;
-    });
-
-    // Magnify away from wherever we are, then double-tap back.
+    // Magnify away from 1x so a reset would be unmistakable. The resulting
+    // factor is READ, not assumed: an undersized stimulus is magnified to cover
+    // the frame and that only ever raises the factor, so asking for 3x can
+    // legitimately land higher. What matters is that it does not move after.
+    // ArrowUp, not a digit: on a single-stimulus trial 1-4 are the RATING, so a
+    // digit would answer the trial and advance instead of magnifying.
     await page.keyboard.press('ArrowUp');
     await page.keyboard.press('ArrowUp');
+    const before = await page.locator('#zoom-readout').textContent();
+    expect(before).not.toBe('1×');
 
-    await touch(page, 'pointerdown', 1, cx, cy);
-    await touch(page, 'pointerup', 1, cx, cy);
-    await touch(page, 'pointerdown', 1, cx, cy);
-    await touch(page, 'pointerup', 1, cx, cy);
-
-    await expect(page.locator('#zoom-readout')).toHaveText(`${expectedFit}×`);
-
-    const m = await page.evaluate(() => {
-      const i = document.querySelector<HTMLImageElement>('#stimulus')!;
-      const vp = document.querySelector<HTMLElement>('#viewport')!;
-      const ir = i.getBoundingClientRect();
-      const vr = vp.getBoundingClientRect();
-      return {
-        factor: (ir.width * window.devicePixelRatio) / i.naturalWidth,
-        fitsW: ir.width <= vr.width + 1,
-        fitsH: ir.height <= vr.height + 1,
-        // Centred means symmetric overhang, not a particular transform string —
-        // the transform now carries a -50% centring term as well as the pan.
-        leftGap: ir.left - vr.left,
-        rightGap: vr.right - ir.right,
-      };
-    });
-    expect(m.factor, 'never below 1:1').toBeGreaterThanOrEqual(0.98);
-    expect(Math.abs(m.factor - Math.round(m.factor)), 'whole factor only').toBeLessThan(0.02);
-    // At the fit factor the image is inside the frame — unless it is an
-    // oversized source, which cannot fit and correctly lands on 1x.
-    if (m.factor > 1) {
-      expect(m.fitsW && m.fitsH, 'at >1x the whole image must fit').toBe(true);
+    // The comparison gesture: press, release, press, release, in one spot.
+    for (let i = 0; i < 2; i++) {
+      await touch(page, 'pointerdown', 1, cx, cy);
+      await touch(page, 'pointerup', 1, cx, cy);
     }
-    expect(
-      Math.abs(m.leftGap - m.rightGap),
-      `fitting re-centres (left ${m.leftGap}, right ${m.rightGap})`,
-    ).toBeLessThan(2);
-  });
-});
+    await expect(page.locator('#zoom-readout')).toHaveText(before!);
 
-test.describe('panning reaches the edges', () => {
-  // `inset: 0; margin: auto` only centres a box SMALLER than its container.
-  // Once the image overflowed, CSS resolved the over-constraint by honouring
-  // `left` and dumping the excess into `margin-right`, so the image sat flush
-  // left while the pan limits still assumed a centred crop (+/- half the
-  // overflow). Horizontal panning therefore reached only halfway to the right
-  // edge — worst on square and landscape sources, where the overflow is
-  // horizontal. The vertical axis was unaffected, because that over-constraint
-  // IS split evenly, which is why the bug looked orientation-dependent.
+    // And a third, faster still — the old rule keyed on a 300ms window.
+    await touch(page, 'pointerdown', 1, cx, cy);
+    await touch(page, 'pointerup', 1, cx, cy);
+    await expect(page.locator('#zoom-readout')).toHaveText(before!);
+  });
+
   test('an oversized stimulus is centred on both axes', async ({ page }) => {
     await toTrial(page);
 

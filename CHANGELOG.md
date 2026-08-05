@@ -58,6 +58,14 @@
   carries a meaningful one, and it is what a person uses to find the picture
   again — a sha256 identifies an image but says nothing about what it is.
 
+### Removed
+- **Double-tap-to-fit.** It read two quick presses in the same place as "put the
+  whole image back on screen", but under `hold` — the only touch mode — two
+  quick presses in the same place is the comparison itself: press a half,
+  release, press again. The magnification kept resetting mid-judgement, which is
+  worse than not having the shortcut at all. Pinch still changes magnification
+  on touch; digits and the wheel do on a mouse.
+
 ### Fixed
 - **The leaderboard reported "0 swaps" for everyone.** Responses written before
   migration 0019 carry that column's `NOT NULL DEFAULT 0`, which means *not

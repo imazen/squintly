@@ -123,6 +123,15 @@ web component from `~/work/efficient-ui/`. No framework.
   chooser renders a how-to instead of a one-option "choice". `loadInputMode`
   demotes a stored mode the device no longer offers, or a phone that picked
   `tap` earlier would be stranded in an unavailable UI.
+- **No double-tap-to-fit; the comparison already owns that gesture.** It reset
+  magnification to "the whole image just fits" on two quick presses in the same
+  place — which under `hold`, the only touch mode, IS the comparison: press a
+  half, release, press again. So the magnification reset itself mid-judgement,
+  worse than not having the shortcut. Removed along with `resetToFit`/
+  `fitFactor`, which existed only for it. Magnification is pinch on touch,
+  digits and the wheel on a mouse. Do not re-add a tap-count shortcut here: a
+  gesture cannot be reserved for a shortcut when the task has already claimed
+  it. (Guarded by "a repeated tap does not disturb the magnification".)
 - **A moving touch is still a touch.** `syncButtons`'s touch branch must
   release only on `pointerup`/`pointercancel`. It was
   `if (pointerdown) press else release`, and `pointermove` routes through it, so

@@ -531,6 +531,46 @@ one this hits hardest.
 
 ## Known Bugs
 
+### ICC profiles are dropped by some encoders and kept by others (2026-08-06)
+
+**Measured on the live corpus build, not inferred.** 16 of 168 sources (9.5%)
+carry an ICC profile. For each of those 16, across the 17-rung ladder:
+
+| encoder | ICC kept? |
+|---|---|
+| jpegli (`cjpegli`) | **yes** — 272 encodings |
+| libjpeg-turbo (Pillow) | **no** — 272 encodings |
+| libwebp (Pillow) | **no** — 272 encodings |
+| libavif (Pillow) | **yes** — 272 encodings |
+
+Two consequences, and the first is a pixels bug:
+
+1. **The observer sees a colour difference that is not compression.** A browser
+   renders the source PNG through its profile and a profile-stripped JPEG as
+   sRGB. On a wide-gamut source that is a visible shift, and it is attributed to
+   the codec. Same class as the desaturated-reds finding below, but this one is
+   an outright loss rather than a subsampling artefact.
+2. **`squintly-score` ignores ICC entirely** (`decode_rgb8` reads raw samples),
+   so its ssim2 is self-consistent but does not measure what the observer saw
+   for those 16 sources. Cross-codec comparisons are the ones affected —
+   within-pair is safe because pairs are same-codec.
+
+This ALSO corrects the investigation note further down that says "Nothing in the
+corpus carries an ICC profile — measured: `icc_profile` is absent on all of
+them". That was true of an older build and is not true now; do not rely on it.
+
+**The right fix is not to patch the hand-rolled paths.** `zenmetrics-cli`
+already does correct decode + colour handling and computes ssim2 (and five other
+metrics) — `squintly-score` re-implemented decoding for PNG/JPEG/WebP/AVIF/JXL
+that zenmetrics already had. Prefer wiring zenmetrics-cli in over extending
+`src/bin/score.rs`. Likewise the corpus builder's encode paths go through Pillow
+rather than zencodec, which is where the ICC inconsistency comes from.
+
+Also unverified: imazen-26 contains ultra-quality JPEGs and HEICs upstream, and
+what the PNG conversion into `imazen-26-png-v3` did to their colour metadata has
+not been checked here.
+
+
 ### Metric scores live in `encoding_metrics`, ingested — never computed here
 
 Squintly does not compute metrics; it ingests them. `POST /api/admin/metrics`

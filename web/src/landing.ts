@@ -13,6 +13,7 @@
 // another device) and it says so.
 
 import { listLeaderboard, studyProgress, whoami, type LeaderboardRow, type StudyProgress } from './api';
+import { detectCodecs, jxlAdvice } from './codec-probe';
 import { getObserverId } from './conditions';
 
 /// Percentage of a study's minimum-viable target, capped for display.
@@ -144,12 +145,60 @@ export async function renderLanding(root: HTMLElement, actions: LandingActions):
         }
       </section>
 
+      <div id="landing-jxl"></div>
+
       <p class="muted tiny landing-foot">
         <a id="landing-calibrate" href="#">Calibrate screen size</a> ·
         ${me?.is_admin ? '<a id="landing-admin" href="#">Operator view</a> · ' : ''}
         <a href="https://github.com/imazen/squintly" target="_blank" rel="noreferrer noopener">Source</a>
       </p>
     </div>`;
+
+  // Codec support, resolved after paint. The probe decodes a tiny test image
+  // per format and is not worth blocking the page on — and the panel it feeds
+  // is advice, not a gate. Deciding whether to take part is exactly the moment
+  // somebody can spare thirty seconds to flip a browser flag; mid-session it
+  // would be an interruption, which is why the terse `jxlEnableHint` stays
+  // where it is and this instructional form lives only here.
+  void (async () => {
+    const host = root.querySelector<HTMLElement>('#landing-jxl');
+    if (!host) return;
+    try {
+      const support = await detectCodecs();
+      const a = jxlAdvice(support.supported);
+      if (a.supported) return;
+      host.innerHTML = `
+        <section class="landing-panel jxl-advice">
+          <h2>${escapeHtml(a.headline)}</h2>
+          <p class="muted">${escapeHtml(a.detail)}</p>
+          ${
+            a.flag
+              ? `<div class="row jxl-flag-row">
+                   <code id="jxl-flag">${escapeHtml(a.flag)}</code>
+                   <button id="jxl-copy">Copy</button>
+                 </div>`
+              : ''
+          }
+        </section>`;
+      // A chrome:// URL cannot be linked — the browser refuses navigation to it
+      // from a page — so copy-to-clipboard is the only followable form.
+      host.querySelector<HTMLButtonElement>('#jxl-copy')?.addEventListener('click', async (e) => {
+        const btn = e.currentTarget as HTMLButtonElement;
+        try {
+          await navigator.clipboard.writeText(a.flag!);
+          btn.textContent = 'Copied';
+        } catch {
+          // Clipboard needs permission in some contexts; select the text so it
+          // can be copied by hand rather than leaving a button that does nothing.
+          const code = host.querySelector('#jxl-flag');
+          if (code) getSelection()?.selectAllChildren(code);
+          btn.textContent = 'Select and copy';
+        }
+      });
+    } catch {
+      /* codec probing is best-effort; the page works without it */
+    }
+  })();
 
   root.querySelector<HTMLButtonElement>('#landing-start')!.addEventListener('click', actions.onStart);
   root.querySelector<HTMLButtonElement>('#landing-signin')?.addEventListener('click', actions.onSignIn);

@@ -2126,3 +2126,30 @@ button.secondary:hover { background: rgba(74, 209, 255, 0.10); }
   margin-bottom: 14px;
   resize: vertical;
 }
+
+/* ---- JXL advice on the front page --------------------------------------- */
+/* Instructional, not a warning: nobody is doing anything wrong by running a
+   browser without the flag, and the study works without it. Toned as accent
+   rather than warn for that reason. */
+.jxl-advice {
+  border-left: 3px solid var(--accent);
+}
+.jxl-flag-row {
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+/* A chrome:// address cannot be a link — browsers refuse navigation to it from
+   a page — so it is rendered as selectable text beside a copy button, which is
+   the only followable form. */
+#jxl-flag {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-x: auto;
+  white-space: nowrap;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: color-mix(in srgb, currentColor 8%, transparent);
+  font-size: 0.85rem;
+  user-select: all;
+}

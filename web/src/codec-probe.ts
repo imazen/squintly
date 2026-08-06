@@ -107,6 +107,70 @@ export function describeMissing(supported: Set<string>): string[] {
   return all.filter((c) => !supported.has(c));
 }
 
+/// Actionable form of the hint, for the front page.
+///
+/// `jxlEnableHint` returns a sentence sized for a one-line onboarding notice.
+/// The front page can afford to be instructional instead: somebody deciding
+/// whether to take part is exactly who can spare thirty seconds to flip a flag,
+/// whereas somebody mid-session cannot. `flag` is a copyable URL when there is
+/// one, so the instruction is followable rather than merely informative.
+export interface JxlAdvice {
+  /// True when the browser already decodes JXL — render nothing.
+  supported: boolean;
+  headline: string;
+  detail: string;
+  /// e.g. `chrome://flags/#enable-jxl-image-format`. Null when no flag exists.
+  flag: string | null;
+}
+
+export function jxlAdvice(supported: Set<string>): JxlAdvice {
+  if (supported.has('jxl')) {
+    return { supported: true, headline: '', detail: '', flag: null };
+  }
+  const ua = navigator.userAgent;
+  if (/Firefox\//.test(ua)) {
+    return {
+      supported: false,
+      headline: 'Firefox cannot show JPEG XL yet',
+      detail:
+        'You can still take part — those comparisons are simply skipped for you. ' +
+        'Chrome with a flag enabled, or Safari on iOS 17+, covers them.',
+      flag: null,
+    };
+  }
+  if (/Chrome\/|Chromium\//.test(ua)) {
+    // Edge and Brave are Chromium and take the same flag, so they are not
+    // special-cased out of it — the earlier version excluded Edg/ and left
+    // those users with the generic "your browser cannot" message despite the
+    // flag working for them.
+    const flag = /Edg\//.test(ua)
+      ? 'edge://flags/#enable-jxl-image-format'
+      : 'chrome://flags/#enable-jxl-image-format';
+    return {
+      supported: false,
+      headline: 'Turn on JPEG XL to rate the newest codec',
+      detail:
+        'Paste the address below into a new tab, set it to Enabled, then restart the ' +
+        'browser and come back. Without it those comparisons are skipped for you.',
+      flag,
+    };
+  }
+  if (/Safari\//.test(ua)) {
+    return {
+      supported: false,
+      headline: 'This Safari cannot show JPEG XL',
+      detail: 'Safari 17 and later can. Until then those comparisons are skipped for you.',
+      flag: null,
+    };
+  }
+  return {
+    supported: false,
+    headline: 'This browser cannot show JPEG XL',
+    detail: 'Those comparisons will be skipped for you; everything else works normally.',
+    flag: null,
+  };
+}
+
 export function jxlEnableHint(supported: Set<string>): string | null {
   if (supported.has('jxl')) return null;
   // Chrome / Edge / Brave behind a flag; Firefox no support yet.

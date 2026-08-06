@@ -119,3 +119,31 @@ test.describe('the front page', () => {
     await expect(page.locator('[data-screen="landing"]')).toBeVisible();
   });
 });
+
+test.describe('the JXL flag instruction', () => {
+  // Headless Chromium does not decode JXL, so the panel is expected to render.
+  // If a future Playwright ships JXL support this test starts skipping itself,
+  // which is why it asserts the *supported* branch too rather than assuming.
+  test('tells a Chromium user how to turn JPEG XL on', async ({ page }) => {
+    await gotoLanding(page);
+    const panel = page.locator('.jxl-advice');
+    await expect(panel).toBeVisible({ timeout: 15_000 });
+    await expect(panel).toContainText(/JPEG XL/i);
+
+    // The address must be present and copyable. It cannot be a link — browsers
+    // refuse navigation to chrome:// from a page — so a copy button is the only
+    // followable form, and its absence would leave the instruction unusable.
+    const flag = page.locator('#jxl-flag');
+    await expect(flag).toHaveText(/^(chrome|edge):\/\/flags\/#enable-jxl-image-format$/);
+    await expect(page.locator('#jxl-copy')).toBeVisible();
+  });
+
+  test('does not block the page from being used', async ({ page }) => {
+    // Advice, never a gate. The probe decodes a test image per format, so it
+    // must not sit between somebody and the button they came to press.
+    await gotoLanding(page);
+    await expect(page.locator('#landing-start')).toBeEnabled();
+    await page.locator('#landing-start').click();
+    await expect(page.locator('[data-screen="landing"]')).toBeHidden({ timeout: 15_000 });
+  });
+});

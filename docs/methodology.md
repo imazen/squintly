@@ -350,7 +350,19 @@ data store but downstream training pipelines must filter `held_out=1` from
 training, parameter selection, and threshold calibration — they're for
 final-metric evaluation only.
 
-## 11. Active sampling (IMPLEMENTED in v0.2 as `asap` module; not yet wired into the runtime sampler)
+## 11. Active sampling (IMPLEMENTED and WIRED)
+
+> **[note 2026-08-06]** This heading used to read "not yet wired into the
+> runtime sampler". That has been false since `handlers.rs` began calling
+> `enhance_pair_with_asap` in `next_trial` (guarded by `tests/asap_wire.rs`).
+>
+> A second correction is more consequential: **ASAP has never actually
+> engaged on live data.** It needs `ASAP_MIN_OBS` = 8 observations on one
+> (source, codec) cell, and measured 2026-08-06 across 224 live pair
+> responses there were 186 distinct cells with a maximum of **4**
+> observations in any of them — so every pair ever served came from the
+> random-adjacent fallback. Being wired is not the same as being reached;
+> the corpus is far broader than the data collected.
 
 ASAP — Active Sampling for Pairwise (Mikhailiuk 2020). For each candidate
 pair, EIG ≈ binary entropy of the predicted outcome under the current

@@ -1,6 +1,19 @@
 # Squintly — Handoff
 
 Last full pass: 2026-05-01.
+
+> **[note 2026-08-06] This document is three months stale and is NO LONGER the
+> complete pickup sheet it claims to be below.** Everything since — the study
+> selection rework, participant screening, the debrief, metric ingest and the
+> disposition report, the corpus split fix and the 17-rung ladder — landed
+> without a pass through here.
+>
+> Read in this order instead: **`CLAUDE.md`** (the live invariants, kept
+> current), then `CHANGELOG.md` `[Unreleased]`, then
+> `docs/OBSERVER-FEEDBACK.md` (feedback + debrief design, and §8 for the first
+> complete disposition reading). This file remains useful for the parts that
+> have not moved: coefficient integration, the export schema's origins, and the
+> methodology citations.
 Live: https://squintly.imazen.org
 Repo: https://github.com/imazen/squintly
 

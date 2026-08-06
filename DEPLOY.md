@@ -432,6 +432,10 @@ GET <base>/api/sources/<hash>/image
 GET <base>/api/encodings/<id>/image
 ```
 
+**[note 2026-08-06]** The version strings in this section are ILLUSTRATIVE and
+have drifted twice (v4-test → v5-test-noai → v6 pending). The authority is
+`SQUINTLY_COEFFICIENT_HTTP` on the deployment, not this file.
+
 Live: `https://codec-corpus.r2.imazen.org/squintly/demo-corpus/imazen26-v4-test`,
 selected via `SQUINTLY_COEFFICIENT_HTTP`.
 

@@ -356,7 +356,11 @@ web component from `~/work/efficient-ui/`. No framework.
   labels the rest of the pipeline was built against is worse than no rule —
   every downstream number lands in the wrong bucket and nothing says so.
   Verified 2026-08-05: `split_of` reproduces all 2,157 labels exactly. Live
-  corpus is `imazen26-v4-test`, 180/180 test-split.
+  corpus WAS `imazen26-v4-test`, 180/180 test-split; then
+  `imazen26-v5-test-noai` (168 sources / 4032 encodings, AI strata dropped).
+  As of 2026-08-06 a v6 with the 17-rung ladder is built (168 sources / 11,424
+  encodings) and pending publish — check `SQUINTLY_COEFFICIENT_HTTP` on the
+  deployment for what is actually live rather than trusting this line.
   `trials.source_filename` (migration 0022) exists so the split is recomputable
   from `responses.tsv`: `source_hash` cannot answer it, since the rule reads the
   filename. Rows collected before it are NULL, which is deliberately different
@@ -372,6 +376,49 @@ web component from `~/work/efficient-ui/`. No framework.
   compression. Judgements on it generalise to other generated images, not to
   the photographs, scans, screenshots and documents the metric is pointed at.
   Costs no coverage — ten non-photo strata remain.
+- **The quality ladder is spaced by MEASURED perception, not by q units.**
+  `DEFAULT_QUALITIES` is 17 rungs `[15,18,22,26,30,38,45,52,60,68,75,82,88,92,
+  95,97,100]`, chosen by interpolating the measured q→ssim2 curve so no adjacent
+  gap exceeds ~5 points (largest is 4.9). The old 6-rung grid
+  `[15,30,45,60,80,92]` was even-ish in q and wildly uneven in what an observer
+  sees: median adjacent ssim2 gaps of 17.3 / 7.9 / 5.7 / 8.0 / 6.2. Eight rungs
+  sit below q60 and eight above, so the low-q half stays as dense as the high-q
+  half. Do NOT "simplify" this back to round numbers — the unevenness is the bug
+  it fixes. Rung count does not worsen the ASAP cold-start problem, which counts
+  observations per (source, codec) cell.
+- **Human agreement with ssim2 hits 100% at a 5-point gap.** Measured
+  2026-08-06 on 84 live comparisons with both arms scored: 0–5 points → 94%
+  agreement (n=16), 5–10 → 100% (n=44), 10+ → 100% (n=24). That is what
+  "foregone" means numerically, and it is why `TRIVIAL_SSIM2_GAP` exists.
+  The constant is 15 rather than 5 — a compromise named in the code, because at
+  5 the corpus could build almost no servable pairs.
+- **ρ/ceiling above 1 is a warning about the STIMULI, never a result.**
+  First complete reading, 2026-08-06: ceiling 0.90, ssim2 ρ=0.988 over 84 scored
+  comparisons, ρ/ceiling **1.10**. A metric cannot really beat humans; that
+  number appears when the pairs are easy enough that both get them right while
+  the repeats that *did* disagree were the genuinely hard ones. Read it as
+  "make the corpus harder", which is what the 17-rung ladder is for. See
+  `docs/OBSERVER-FEEDBACK.md` §8.
+- **ASAP is wired but has never engaged.** `enhance_pair_with_asap` runs in
+  `next_trial`, but it needs `ASAP_MIN_OBS` (8) observations on one
+  (source, codec) cell and the live maximum is 4 across 186 cells — so every
+  pair ever served came from the random-adjacent fallback. Do not attribute
+  pair selection to ASAP when reasoning about collected data. Docs that said
+  "not yet wired" were wrong in the other direction and are corrected in place.
+- **Metric scores are ingested, never computed by the server.**
+  `cargo run --release --bin squintly-score -- --fs demo-corpus --out x.tsv`
+  then `POST /api/admin/metrics`. The scorer FETCHES existing encodings and
+  decodes them rather than re-encoding, so scores are of exactly the bytes
+  observers saw. Nothing pre-existing was reusable and this was checked: all 16
+  parquets under `/mnt/v/output/imazen-26-features/` are zensim SOURCE features
+  with no metric columns, and the one sweep carrying `score_ssim2` is 100%
+  zenjxl on differently-named files.
+- **JXL rungs reach the near-lossless band, but not every browser can see
+  them.** The four builder codecs top out near ssim2 86–90 even at q100, so
+  `scripts/add_jxl_rungs.py` adds high-q JXL. Chromium keeps JXL behind a flag;
+  the codec probe means the sampler only serves what a session declared support
+  for, so they degrade safely — but on a panel with no JXL-capable browser they
+  are scored and never judged.
 - **Source-informing-sweep rule applies.** Sampling MUST cover all 4 size buckets and
   weight low-q encodings. See `src/sampling.rs`.
 

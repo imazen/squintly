@@ -3,6 +3,14 @@
 ## [Unreleased]
 
 ### Added
+- **`squintly-score --fs <splitstore-root>`** — score a locally built corpus
+  without publishing it first. Uploading 2.7 GB and immediately downloading it
+  to find out the ladder missed its target band is the wrong order.
+- **JXL decoding in the scorer**, and `scripts/add_jxl_rungs.py` for high-q JXL
+  rungs. The four builder codecs top out near ssim2 86–90 even at q100, so the
+  corpus has never held the near-lossless band. Caveat written into the script:
+  Chromium keeps JXL behind a flag, so on a panel with no JXL-capable browser
+  these are scored and never judged. The codec probe makes them degrade safely.
 - **`squintly-score`** — batch binary computing SSIMULACRA2 for every encoding
   against its source, emitting the TSV `POST /api/admin/metrics` ingests. Fetches
   the live encodings rather than re-encoding, so the scores are of exactly the

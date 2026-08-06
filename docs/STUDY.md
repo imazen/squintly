@@ -139,7 +139,11 @@ Per [`docs/methodology.md`](methodology.md) §3 + §11:
 - **Anchor reservation:** CID22-style reference-pinned anchors interspersed at ~5 %
   rate to align our scale to CID22's where the content overlaps (`corpus_anchors` table).
 - **First-3-trials warmup** (CID22 verbatim).
-- **Active sampler (ASAP):** `src/asap.rs` IS implemented (106 LOC) **but not yet wired
+- **[note 2026-08-06] Active sampler (ASAP):** `src/asap.rs` is implemented AND
+  wired into `next_trial`. It has nonetheless never engaged on live data — it
+  needs 8 observations on one (source, codec) cell and the live maximum is 4, so
+  every pair served so far came from the random-adjacent fallback. The text
+  below is retained for history and its "not yet wired
   into the runtime trial selector**. This is the v0.2-finishing chunk: route
   `next_trial` through `asap::next_pair` once the BT posterior is non-degenerate
   (≥ 50 trials per study).

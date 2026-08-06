@@ -480,6 +480,35 @@ one this hits hardest.
 
 ## Known Bugs
 
+### Squintly stores no metric scores, so it cannot compute its own headline result
+
+The default study exists to ask whether SSIMULACRA2 ranks non-photo encodings
+as well as it ranks photographs (imazen/squintly#4). Answering that needs a
+ssim2 score per encoding to correlate the human ranking against — and **there
+is none anywhere in squintly**. `EncodingMeta` carries `codec`, `quality`,
+`effort` and `bytes` only (`src/coefficient.rs`); `scripts/build_demo_corpus.py`
+computes no metric; nothing in the schema or `responses.tsv` holds one.
+Confirmed 2026-08-05.
+
+So everything squintly can produce today is one side of the correlation. The
+scores would have to come from zensim's feature extraction (the split labels
+already live at `/mnt/v/output/imazen-26-features/`), either plumbed into the
+manifest as an `EncodingMeta` field or joined externally on
+`a_encoding_id`/`b_encoding_id` at analysis time.
+
+What IS computable in-app, and is worth reporting on its own, is **how close
+the study is to being able to answer the question**: the noise ceiling from
+`Study::p_repeat` self-agreement (which bounds any ρ that a later join could
+produce — see the `ρ / ceiling` invariant), the golden-pair pass rate, pair
+coverage and comparisons against `min_viable_ratings`, and the BT fit over the
+encodings with intervals. A report that presents those and says plainly that
+the metric side is not yet joined is honest; one that implies a ρ has been
+measured is not.
+
+Do not build a "disposition toward the hypothesis" view that silently omits
+this — the absence of the metric column is the single most important fact
+about the study's current disposition.
+
 ### Curator write endpoints are unauthenticated on a public instance
 
 `POST /api/curator/manifest`, `/api/curator/decision`, `/api/curator/threshold`

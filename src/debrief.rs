@@ -186,11 +186,16 @@ pub async fn pending(
     observer_id: &str,
     include_current: bool,
 ) -> anyhow::Result<Option<PendingDebrief>> {
+    // Alias-resolved: signing in on a second device merges two observer ids, and
+    // a bout computed from only half somebody's answers would split one sitting
+    // into two and ask about each separately.
     let rows: Vec<(i64, String)> = sqlx::query_as(
         "SELECT r.responded_at, t.kind FROM responses r \
          JOIN trials t   ON t.id = r.trial_id \
          JOIN sessions s ON s.id = t.session_id \
-         WHERE s.observer_id = ? ORDER BY r.responded_at ASC",
+         WHERE COALESCE((SELECT a.canonical_id FROM observer_aliases a \
+                         WHERE a.alias_id = s.observer_id), s.observer_id) = ? \
+         ORDER BY r.responded_at ASC",
     )
     .bind(observer_id)
     .fetch_all(pool)
@@ -209,6 +214,19 @@ pub async fn pending(
     .fetch_all(pool)
     .await?;
 
+    // ONLY the most recent eligible bout is ever offered.
+    //
+    // This used to walk back through every un-debriefed bout, which meant an
+    // observer with a backlog — anyone who had used squintly before the debrief
+    // shipped, or who works in several short sittings — was asked again on
+    // every visit until the queue drained. Measured on the live instance: that
+    // is one prompt per session for weeks, which is precisely the nagging this
+    // design was supposed to avoid.
+    //
+    // Dropping the backlog costs nothing real. A self-report about a sitting
+    // two sittings ago is recall rather than observation (the same reason
+    // MAX_BOUT_AGE_MS exists), so the answers being given up were the least
+    // reliable ones on offer.
     for bout in bouts.iter().rev() {
         if bout.responses < MIN_BOUT_RESPONSES {
             continue;
@@ -221,15 +239,13 @@ pub async fn pending(
         if !include_current && now - bout.end_ms < BOUT_GAP_MS {
             continue;
         }
-        // Overlap rather than equality: the bout's end moves as more answers
-        // land, so a debrief taken at "End session" and the same bout seen on a
-        // later visit will not have identical bounds. Any overlap means this
-        // stretch has been asked about.
-        let asked = done
+        // This is the newest bout worth asking about. Either it has been asked
+        // and there is nothing to do, or it is the one — never something older.
+        let asked_this = done
             .iter()
             .any(|&(s, e)| bout.start_ms <= e && s <= bout.end_ms);
-        if asked {
-            continue;
+        if asked_this {
+            return Ok(None);
         }
         return Ok(Some(PendingDebrief {
             bout: bout.clone(),

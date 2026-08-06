@@ -3,6 +3,42 @@
 ## [Unreleased]
 
 ### Added
+- **`/board`** — the reviewer leaderboard as its own route, linked from the front
+  page and reachable by URL. It was a panel below the study goals, competing with
+  the one thing the front page exists to carry, and a board is something people
+  return to. Everyone is listed rather than a top ten: at this scale a cut-off
+  would hide most participants from a board whose point is seeing yourself on it.
+- **`/admin`** — the operator view as a route, so an admin can reach it from the
+  front page without starting a session first.
+- **`web/src/vocab.ts`** — one place owning the user-facing nouns. Six terms were
+  in circulation for four concepts, mixed across screens, so two pages could
+  describe the same count differently. Internal names (`trial`, `response`,
+  `observer`) are unchanged; this is the translation layer.
+
+### Fixed
+- **Duplicate debrief prompts.** `pending` walked back through every
+  un-debriefed bout, so anyone with a backlog met the question on every visit
+  until the queue drained. Only the newest bout is offered now; older ones are
+  dropped, which costs little because a report about a sitting two sittings ago
+  is recall rather than observation. Double-tapping Send no longer writes two
+  rows.
+- **Signing in was cosmetic.** `observer_aliases` recorded the device merge from
+  the first release and **nothing ever read it**, so a person who signed in on a
+  second device stayed split in two: two rows on the leaderboard with their
+  ratings divided, a reset comparison count, and bout detection seeing half their
+  history. The leaderboard, the lifetime comparison count and the debrief now
+  resolve through the alias table.
+- The leaderboard query aliased a column as `oid`, which SQLite treats as a
+  built-in row identifier, so `GROUP BY oid` was ambiguous and 500'd at runtime
+  while compiling cleanly. Caught by e2e; now covered by a test that runs the
+  real query.
+
+### Removed
+- **The lap progress bar.** A permanent row above the stimulus that moved 5% per
+  answer on a task where an answer takes ~14 seconds — so it mostly sat still
+  while costing the scarcest space in the app. The 20-comparison boundary it
+  marked lives on in the milestone notices, which say it at the moments it
+  changes and cost no permanent space.
 - **Session debriefs, keyed on bouts rather than sessions** (`src/debrief.rs`,
   `web/src/debrief.ts`, migration 0026). Nobody clicks End session, so the prompt
   lands on the next visit — "last time you did 21 comparisons, anything we should

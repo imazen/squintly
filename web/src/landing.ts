@@ -58,22 +58,17 @@ function studyRow(s: StudyProgress): string {
     </div>`;
 }
 
-function boardRow(r: LeaderboardRow): string {
-  const isMe = r.is_you;
-  const pctOf = (v: number | null) => (v === null ? '—' : `${Math.round(v * 100)}%`);
-  return `<tr class="${isMe ? 'me' : ''}">
-    <td><code>${escapeHtml(r.handle)}</code>${isMe ? ' <span class="you">you</span>' : ''}</td>
-    <td>${r.trials.toLocaleString()}</td>
-    <td>${pctOf(r.self_agreement)}</td>
-    <td>${(r.active_seconds / 3600).toFixed(1)}</td>
-  </tr>`;
-}
 
 export interface LandingActions {
   onStart: () => void;
   onSignIn: () => void;
   onSignOut: () => void;
   onCalibrate: () => void;
+  /// The reviewer board, now its own route rather than a panel here — a board
+  /// is something people return to, so it wants a URL.
+  onBoard: () => void;
+  /// Only rendered for an admin; the server re-checks anyway.
+  onAdmin: () => void;
 }
 
 /**
@@ -92,7 +87,7 @@ export async function renderLanding(root: HTMLElement, actions: LandingActions):
 
   // Your own row is pulled to the top of the shown slice as well as marked —
   // a board you cannot find yourself on is a scoreboard for other people.
-  const shown = [...board.filter((r) => r.is_you), ...board.filter((r) => !r.is_you)].slice(0, 10);
+  const mine = board.find((r) => r.is_you);
 
   root.innerHTML = `
     <div class="screen landing" data-screen="landing">
@@ -140,21 +135,18 @@ export async function renderLanding(root: HTMLElement, actions: LandingActions):
         <h2>Reviewers</h2>
         ${
           board.length
-            ? `<table class="board landing-board">
-                 <thead><tr><th>Reviewer</th><th>Ratings</th>
-                   <th title="Agreement with themselves on repeated pairs — the ceiling any metric could reach against this reviewer">Self-agree</th>
-                   <th title="Engaged time, breaks excluded">Hours</th></tr></thead>
-                 <tbody>${shown.map(boardRow).join('')}</tbody>
-               </table>
-               <p class="muted tiny">Names are derived from a salted hash and cannot be reversed.
-                 Ranked by volume, but self-agreement is shown beside it on purpose: rating a lot
-                 quickly is only worth something if the answers are consistent.</p>`
+            ? `<p class="muted">${board.length.toLocaleString()}
+                 ${board.length === 1 ? 'person has' : 'people have'} rated so far${
+                   mine ? `, including you — ${mine.trials.toLocaleString()} ratings` : ''
+                 }.</p>
+               <div class="row"><button id="landing-board">See the board</button></div>`
             : '<p class="muted">No reviewers yet — you would be the first.</p>'
         }
       </section>
 
       <p class="muted tiny landing-foot">
         <a id="landing-calibrate" href="#">Calibrate screen size</a> ·
+        ${me?.is_admin ? '<a id="landing-admin" href="#">Operator view</a> · ' : ''}
         <a href="https://github.com/imazen/squintly" target="_blank" rel="noreferrer noopener">Source</a>
       </p>
     </div>`;
@@ -162,6 +154,11 @@ export async function renderLanding(root: HTMLElement, actions: LandingActions):
   root.querySelector<HTMLButtonElement>('#landing-start')!.addEventListener('click', actions.onStart);
   root.querySelector<HTMLButtonElement>('#landing-signin')?.addEventListener('click', actions.onSignIn);
   root.querySelector<HTMLButtonElement>('#landing-signout')?.addEventListener('click', actions.onSignOut);
+  root.querySelector<HTMLButtonElement>('#landing-board')?.addEventListener('click', actions.onBoard);
+  root.querySelector<HTMLAnchorElement>('#landing-admin')?.addEventListener('click', (e) => {
+    e.preventDefault();
+    actions.onAdmin();
+  });
   root.querySelector<HTMLAnchorElement>('#landing-calibrate')!.addEventListener('click', (e) => {
     e.preventDefault();
     actions.onCalibrate();

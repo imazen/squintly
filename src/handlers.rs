@@ -1166,13 +1166,20 @@ pub async fn record_response(
         award_badge(&state.pool, &observer.0, slug).await?;
     }
 
+    // Resolved through the alias table: after signing in on a second device the
+    // two observer ids are merged, and counting only the raw id would show a
+    // returning observer a total that had reset — which is exactly the thing
+    // signing in is supposed to prevent.
+    let canonical = canonical_observer_id(&state.pool, &observer.0).await?;
     let total_comparisons: (i64,) = sqlx::query_as(
         "SELECT COUNT(*) FROM responses r \
          JOIN trials t ON t.id = r.trial_id \
          JOIN sessions s ON s.id = t.session_id \
-         WHERE s.observer_id = ? AND t.kind = 'pair'",
+         WHERE (SELECT COALESCE((SELECT a.canonical_id FROM observer_aliases a \
+                                 WHERE a.alias_id = s.observer_id), s.observer_id)) = ? \
+           AND t.kind = 'pair'",
     )
-    .bind(&observer.0)
+    .bind(&canonical)
     .fetch_one(&state.pool)
     .await?;
 
@@ -1549,7 +1556,12 @@ pub async fn leaderboard(
 ) -> Result<Json<Vec<LeaderboardRow>>, AppError> {
     let salt = crate::handle::salt();
     let rows = sqlx::query(
-        "SELECT s.observer_id AS oid, \
+        // `reviewer_id` resolves through the alias table so a person who signed in on a
+        // second device appears once with their ratings summed, rather than
+        // twice with them split. The merge was recorded from the first release
+        // and read by nothing, which made signing in cosmetic.
+        "SELECT COALESCE((SELECT a.canonical_id FROM observer_aliases a \
+                          WHERE a.alias_id = s.observer_id), s.observer_id) AS reviewer_id, \
                 COALESCE(o.email, s.observer_id) AS identity, \
                 COUNT(*) AS trials, \
                 COUNT(DISTINCT s.id) AS sessions, \
@@ -1558,14 +1570,17 @@ pub async fn leaderboard(
          JOIN trials t ON t.id = r.trial_id \
          JOIN sessions s ON s.id = t.session_id \
          JOIN observers o ON o.id = s.observer_id \
-         GROUP BY s.observer_id HAVING trials > 0",
+         GROUP BY reviewer_id HAVING trials > 0",
     )
     .fetch_all(&state.pool)
     .await?;
 
     let mut out = Vec::with_capacity(rows.len());
     for row in &rows {
-        let oid: String = row.get("oid");
+        // NOT named `oid`: SQLite treats oid/rowid/_rowid_ as built-in row
+        // identifiers on every table, so `GROUP BY oid` is ambiguous and the
+        // query fails at runtime with a 500 that compiles perfectly.
+        let oid: String = row.get("reviewer_id");
         let identity: String = row.get("identity");
 
         // Attention checks.
@@ -2726,4 +2741,35 @@ pub async fn debrief_submit(
         .await
         .map_err(AppError::Anyhow)?;
     Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+/// SQL fragment mapping an observer column through the alias table.
+///
+/// Signing in from a second device merges the two observer ids —
+/// `observer_aliases` records that the requesting one is now an alias of the
+/// canonical one — but nothing ever READ that table. So a merge did nothing
+/// visible: the same person appeared twice on the leaderboard with their
+/// ratings split, `total_comparisons` reset to whichever half the browser was
+/// holding, and the debrief saw only part of their history. The whole point of
+/// signing in is that your work follows you, and it did not.
+///
+/// Written as a fragment rather than a join so callers keep their own GROUP BY
+/// shape. `$1` is the column to resolve.
+pub fn canonical_observer_sql(col: &str) -> String {
+    format!(
+        "COALESCE((SELECT a.canonical_id FROM observer_aliases a WHERE a.alias_id = {col}), {col})"
+    )
+}
+
+/// Resolve one observer id to its canonical form.
+pub async fn canonical_observer_id(
+    pool: &sqlx::SqlitePool,
+    observer_id: &str,
+) -> Result<String, AppError> {
+    let row: Option<(String,)> =
+        sqlx::query_as("SELECT canonical_id FROM observer_aliases WHERE alias_id = ?")
+            .bind(observer_id)
+            .fetch_optional(pool)
+            .await?;
+    Ok(row.map(|(c,)| c).unwrap_or_else(|| observer_id.to_string()))
 }

@@ -80,9 +80,17 @@ p, label { line-height: 1.4; color: var(--fg); }
      stimulus, so on any image that filled the frame it covered the pixels the
      observer is being asked to judge. Occluding the stimulus is a measurement
      problem, not just a cosmetic one. */
-  /* lap · progress · stage · hint · gate-hint · panel. The lap bar is its own
-     row rather than an overlay so it can never sit on top of the picture. */
-  grid-template-rows: auto auto 1fr auto auto auto;
+  /* progress · stage · hint · gate-hint · panel.
+     This list must have exactly as many entries as `.trial` has children, and
+     `.stage` must land on the `1fr`. Removing the lap bar's <div> without
+     removing its row here left a spare leading `auto`, which pushed `.stage`
+     onto an `auto` row — the viewport then sized to its content, collapsed to
+     zero height, and `.viewport.all-ready` never became visible. 250+ e2e
+     failures, none of which looked like a layout bug. The same trap in the
+     other direction (adding a `hidden` child, which is `display: none` and so
+     occupies no track) is why `.lap[hidden]` used to need an explicit
+     `display: block; height: 0`. Count the children before touching this. */
+  grid-template-rows: auto 1fr auto auto auto;
   /* An implicit `auto` column is sized from its items' content and will happily
      exceed the container: a long corpus·license label in .progress stretched
      the column to 352px inside a 304px screen, pushing the menu button and the
@@ -1826,42 +1834,13 @@ button.secondary:hover { background: rgba(74, 209, 255, 0.10); }
    At the very top, 3px, above everything — it must never take space from the
    picture, and it must never sit near enough to the stimulus to affect what is
    being judged. */
-/* `hidden` is `display: none`, which removes the element as a GRID ITEM — not
-   merely as ink. Every later child then shifts up one track, so `.stage` lands
-   on an `auto` row instead of the `1fr` one, the viewport collapses to content
-   height, the stimulus never sizes, and `.viewport.all-ready` never arrives.
-   That took 257 e2e failures to find, all of them timing out somewhere that
-   looked nothing like a layout bug.
-   Stay a grid item; collapse the height instead. */
-.lap[hidden] {
-  display: block;
-  height: 0;
-  margin: 0;
-}
-.lap {
-  height: 3px;
-  background: var(--card);
-  border-radius: 999px;
-  overflow: hidden;
-  margin: 0 0 2px;
-}
-.lap-fill {
-  height: 100%;
-  width: 0;
-  background: var(--accent);
-  /* Linear, not eased. An ease-out fill decelerates toward its new value, which
-     reads as the bar "settling" somewhere approximate — wrong for a counter of
-     discrete answers, where each step is one comparison and every one is the
-     same size. Constant rate says that. */
-  transition: width 260ms linear, background-color 400ms linear;
-}
-/* Green only on a completed lap. Using the same colour throughout would make
-   the fill say "progress" and never "done". */
-.lap-fill.complete { background: var(--good); }
-@media (prefers-reduced-motion: reduce) {
-  .lap-fill { transition: none; }
-}
-.lap.celebrate { box-shadow: 0 0 8px var(--good); }
+/* The lap progress bar is gone — see `trial.ts` for why. It was a permanent
+   row above the stimulus that moved 5% per answer on a task where an answer
+   takes ~14 seconds, so it mostly sat still while costing the scarcest space
+   in the app. The 20-comparison boundary it marked now lives entirely in the
+   milestone notices, which say it at the moments it changes and cost no
+   permanent space. */
+
 /* ---- notifications --------------------------------------------------------
    Pinned to the top edge and kept to one short line, so a notice overlays the
    header band rather than the picture — at most a few pixels of the stage's

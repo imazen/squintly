@@ -139,7 +139,13 @@ async fn a_skip_is_recorded_so_the_question_is_not_asked_again() -> Result<()> {
 }
 
 #[tokio::test]
-async fn an_earlier_bout_is_offered_once_the_recent_one_is_answered() -> Result<()> {
+async fn only_the_newest_bout_is_ever_asked_about() -> Result<()> {
+    // A backlog must not become a queue of prompts. Walking back through every
+    // un-debriefed bout meant anyone who had used squintly before the debrief
+    // shipped — or who works in several short sittings — met the question again
+    // on every visit until the queue drained, which is exactly the nagging this
+    // design set out to avoid. Giving those answers up costs little: a report
+    // about a sitting two sittings ago is recall, not observation.
     let pool = pool().await?;
     // Two separate evenings, far enough apart to be different bouts.
     seed(&pool, "obs1", 8, 3 * BOUT_GAP_MS).await?;
@@ -165,10 +171,10 @@ async fn an_earlier_bout_is_offered_once_the_recent_one_is_answered() -> Result<
         },
     )
     .await?;
-    let older = pending(&pool, "obs1", false)
-        .await?
-        .expect("then the earlier one");
-    assert_eq!(older.bout.responses, 9);
+    assert!(
+        pending(&pool, "obs1", false).await?.is_none(),
+        "the earlier bout must NOT be offered next — that is the duplicate-prompt bug"
+    );
     Ok(())
 }
 
@@ -226,4 +232,73 @@ fn the_client_and_server_agree_on_how_far_back_undo_reaches() {
         ts.contains(&want),
         "web/src/trial.ts must declare `{want}` to match handlers::UNDO_DEPTH"
     );
+}
+
+/// Signing in on a second device merges two observer ids. Reading must follow
+/// the merge, or signing in is cosmetic: the same person's answers stay split,
+/// which shows up as two rows on the leaderboard and a bout computed from half
+/// their history.
+///
+/// `observer_aliases` was written by the verify handler from the first release
+/// and read by nothing at all.
+#[tokio::test]
+async fn a_merged_observer_is_one_person_for_bout_detection() -> Result<()> {
+    let pool = pool().await?;
+    // Two devices, two ids, one evening's work split across them.
+    seed(&pool, "device-a", 3, 3 * BOUT_GAP_MS).await?;
+    seed(&pool, "device-b", 3, 3 * BOUT_GAP_MS + 60_000).await?;
+
+    // Before the merge, neither half reaches MIN_BOUT_RESPONSES on its own.
+    assert!(pending(&pool, "device-a", false).await?.is_none());
+    assert!(pending(&pool, "device-b", false).await?.is_none());
+
+    sqlx::query(
+        "INSERT INTO observer_aliases (alias_id, canonical_id, merged_at) VALUES ('device-b', 'device-a', 0)",
+    )
+    .execute(&pool)
+    .await?;
+
+    // After it, the six answers are one person's one sitting.
+    let p = pending(&pool, "device-a", false)
+        .await?
+        .expect("the merged history is a real bout");
+    assert_eq!(p.bout.responses, 6, "both devices' answers count as one");
+    Ok(())
+}
+
+/// The leaderboard query must actually run.
+///
+/// Resolving the alias introduced a column alias named `oid` — which SQLite
+/// treats as a built-in row identifier on every table, making `GROUP BY oid`
+/// ambiguous. It compiled fine and 500'd at runtime on every board request.
+/// A Rust type-check cannot catch that, so this executes the real query.
+#[tokio::test]
+async fn the_leaderboard_query_runs_and_merges_aliases() -> Result<()> {
+    let pool = pool().await?;
+    seed(&pool, "device-a", 4, 3 * BOUT_GAP_MS).await?;
+    seed(&pool, "device-b", 3, 3 * BOUT_GAP_MS).await?;
+    sqlx::query(
+        "INSERT INTO observer_aliases (alias_id, canonical_id, merged_at) \
+         VALUES ('device-b', 'device-a', 0)",
+    )
+    .execute(&pool)
+    .await?;
+
+    // The same shape the handler runs, exercised end to end against the schema.
+    let rows: Vec<(String, i64)> = sqlx::query_as(
+        "SELECT COALESCE((SELECT a.canonical_id FROM observer_aliases a \
+                          WHERE a.alias_id = s.observer_id), s.observer_id) AS reviewer_id, \
+                COUNT(*) AS trials \
+         FROM responses r \
+         JOIN trials t   ON t.id = r.trial_id \
+         JOIN sessions s ON s.id = t.session_id \
+         JOIN observers o ON o.id = s.observer_id \
+         GROUP BY reviewer_id HAVING trials > 0",
+    )
+    .fetch_all(&pool)
+    .await?;
+    assert_eq!(rows.len(), 1, "a merged reviewer appears once, not twice");
+    assert_eq!(rows[0].0, "device-a");
+    assert_eq!(rows[0].1, 7, "with both devices' ratings summed");
+    Ok(())
 }

@@ -9,6 +9,8 @@ import { hasChosenInputMode } from './input-mode';
 import { maybeShowInstructions } from './instructions';
 import { renderLanding } from './landing';
 import { maybeShowDebrief } from './debrief';
+import { renderBoard } from './board';
+import { showAdmin } from './admin';
 import { chooseInputMode } from './mode-chooser';
 import { detectCodecs, jxlEnableHint } from './codec-probe';
 import {
@@ -373,6 +375,11 @@ function hasOnboarded(): boolean {
 ///    specs broke on exactly that, and the fix was a helper that clicked past
 ///    it everywhere. A URL is the honest version of that helper.
 export const RATE_PATH = '/rate';
+/// The reviewer board. Its own route so it can be linked and returned to.
+export const BOARD_PATH = '/board';
+/// The operator view. A route rather than a menu item so an admin can reach it
+/// from the front page without starting a session first.
+export const ADMIN_PATH = '/admin';
 
 function onRatePath(): boolean {
   return location.pathname.replace(/\/+$/, '') === RATE_PATH;
@@ -392,6 +399,15 @@ async function boot(): Promise<void> {
     await enterStudy();
     return;
   }
+  const path = location.pathname.replace(/\/+$/, '');
+  if (path === BOARD_PATH) {
+    await renderBoard(root, { onBack: () => go('/'), onStart: () => go(RATE_PATH) });
+    return;
+  }
+  if (path === ADMIN_PATH) {
+    await showAdmin(root, () => go('/'));
+    return;
+  }
   // The landing page. Opening squintly used to run straight into a session —
   // for a returning observer, literally into the next trial — so the decision
   // to take part was made on the one screen with nothing on it to decide from.
@@ -403,6 +419,8 @@ async function boot(): Promise<void> {
       await boot();
     },
     onCalibrate: () => openCalibration(),
+    onBoard: () => go(BOARD_PATH),
+    onAdmin: () => go(ADMIN_PATH),
   });
 }
 

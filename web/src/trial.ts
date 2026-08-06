@@ -18,6 +18,7 @@ import { notify } from './notify';
 import { considerNudge, newNudgeState } from './nudge';
 import { encodingMetrics } from './api';
 import { maybeShowDebrief } from './debrief';
+import { trialCounterLabel } from './vocab';
 import { openSignInModal } from './auth-modal';
 import { showAdmin } from './admin';
 import {
@@ -244,7 +245,7 @@ export function startTrials(
     try {
       trial = await nextTrial(sessionId);
     } catch (e) {
-      root.innerHTML = `<div class="screen center"><h1>No trials available</h1><p class="muted">${
+      root.innerHTML = `<div class="screen center"><h1>Nothing to rate right now</h1><p class="muted">${
         (e as Error).message
       }</p></div>`;
       return;
@@ -317,13 +318,10 @@ export function startTrials(
 
     root.innerHTML = `
       <div class="trial" data-trial-id="${trial.trial_id}" data-input-mode="${inputMode}">
-        <div class="lap" id="lap" hidden>
-          <div class="lap-fill" id="lap-fill"></div>
-        </div>
         <div class="progress" id="trial-chrome">
           <button class="signin-chip" id="chrome-signin" title="Sign in to carry your ratings to another device"${signedIn ? ' hidden' : ''}>sign in</button>
           <span class="study-badge" id="study-badge">${escapeHtml(studyShortName ?? '')}</span>
-          <span>Trial ${trialCount + 1}</span>
+          <span>${trialCounterLabel(trial.kind, trialCount + 1)}</span>
           <span class="trial-license" data-corpus="${escapeAttr(corpus)}" data-license-id="${escapeAttr(licId)}" title="${escapeAttr(`${trial.source_filename ?? corpus} · ${corpus} · ${licLabel}`)}">${
             trial.source_group ? `<span class="src-group">${escapeHtml(trial.source_group)}</span> ` : ''
           }${escapeHtml(trial.source_label ?? corpus)}</span>
@@ -680,7 +678,6 @@ export function startTrials(
       el.src = srcFor(v);
     }
     showView(resting);
-    paintLap();
     // Anything already in cache resolves before the listener attached above.
     for (const v of views) {
       const el = layers[v];
@@ -1536,25 +1533,17 @@ export function startTrials(
   /// arrival is a demand, and on a rating-only study it would never move at all
   /// — comparisons are what the threshold counts, so a 4-tier rating correctly
   /// leaves it alone.
-  function paintLap() {
-    const bar = root.querySelector<HTMLElement>('#lap');
-    const fill = root.querySelector<HTMLElement>('#lap-fill');
-    if (!bar || !fill || !lapProgress || lapProgress.per <= 0) return;
-    const into = lapProgress.done % lapProgress.per;
-    const lap = Math.floor(lapProgress.done / lapProgress.per);
-    // A completed lap reads as full, not as empty: `done % per === 0` right
-    // after crossing would otherwise snap the bar to zero at the exact moment
-    // it should look finished.
-    const shown = into === 0 && lapProgress.done > 0 ? lapProgress.per : into;
-    bar.hidden = lapProgress.done === 0;
-    fill.style.width = `${(shown / lapProgress.per) * 100}%`;
-    fill.classList.toggle('complete', shown === lapProgress.per);
-    const left = lapProgress.per - shown;
-    bar.title =
-      lap === 0
-        ? `${left} more comparisons and your ratings can be reliability-checked`
-        : `${lapProgress.done} comparisons · ${left} to the next mark`;
-  }
+  // The lap bar is GONE. It filled, turned green at 20 and started over — and
+  // as a permanent fixture above the stimulus it was a bar that mostly sat
+  // still, since a comparison takes ~14s and the bar moves 5% per answer. It
+  // also cost a grid row directly above the picture on a phone, which is the
+  // scarcest space in the app.
+  //
+  // What it was FOR survives in the milestone notices: 20 comparisons is
+  // `crowd_bt::MIN_OBS_FOR_ETA`, the point where an observer's reliability
+  // becomes estimable, and that boundary is worth telling somebody about. A
+  // notice at 2/10/15/20 says it at the moments it changes, and costs no
+  // permanent space. `lapProgress` is kept for exactly that.
 
   /// Mark a completed lap.
   ///
@@ -1736,11 +1725,6 @@ export function startTrials(
             const firstLap = ack.total_comparisons <= per;
             showMilestone(hit === per ? 0 : hit, per, firstLap);
             milestoneShown = true;
-            if (hit === per) {
-              const bar = root.querySelector<HTMLElement>('#lap');
-              bar?.classList.add('celebrate');
-              window.setTimeout(() => bar?.classList.remove('celebrate'), 2400);
-            }
           }
         }
       }

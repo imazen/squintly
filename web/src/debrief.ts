@@ -136,7 +136,17 @@ function render(
   // never having been asked. They would then face the same question about the
   // same evening on every future visit, which at two participants is an
   // expensive way to annoy half the study.
+  // One submission, whatever happens to the buttons. A double-tap on a phone
+  // would otherwise write two rows for the same bout and resolve `onDone`
+  // twice — and the second row is indistinguishable in the data from somebody
+  // genuinely answering twice.
+  let sent = false;
   const send = async (skipped: boolean) => {
+    if (sent) return;
+    sent = true;
+    root.querySelectorAll<HTMLButtonElement>('.screen.debrief button').forEach((b) => {
+      b.disabled = true;
+    });
     const checked = [...root.querySelectorAll<HTMLInputElement>('.debrief-reason input:checked')].map(
       (el) => el.value,
     );

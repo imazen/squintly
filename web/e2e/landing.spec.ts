@@ -90,13 +90,21 @@ test.describe('the front page', () => {
     await completeProfileAndStart(page);
     await submitOneTrial(page);
 
+    // The board moved off the front page to its own route: it made the front
+    // page long enough that the decision to take part competed with a table
+    // nobody needs before rating anything, and a board is something people come
+    // back to, so it wants a URL. The front page keeps a count and a way in.
     await page.goto('/');
     await expect(page.locator('[data-screen="landing"]')).toBeVisible();
+    await expect(page.locator('.board tr')).toHaveCount(0);
+    await page.locator('#landing-board').click();
+
+    await expect(page.locator('[data-screen="board"]')).toBeVisible();
     const me = page.locator('.board tr.me');
     await expect(me).toHaveCount(1);
     await expect(me.locator('.you')).toBeVisible();
-    // And it is pulled into the shown slice rather than left below the fold.
-    await expect(page.locator('.board tbody tr').first()).toHaveClass(/me/);
+    // Reachable by URL, which is the point of it being a route.
+    await expect(page).toHaveURL(/\/board$/);
   });
 
   test('the front page is where a session ends up, not the next trial', async ({ page }) => {

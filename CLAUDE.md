@@ -627,6 +627,23 @@ to convert skips the source rather than being assumed sRGB — a missing image i
 visible in the stratum counts, a mis-coloured one is not.
 **The v6 corpus was built BEFORE this fix and must be rebuilt before publishing.**
 
+**zenmetrics is NOT at fault, and should not be "fixed" for this.** It types its
+input as `zenpixels::PixelDescriptor::RGB8_SRGB` — a declared sRGB contract, so
+reading raw samples is the documented design rather than an oversight. Delivering
+sRGB is the CALLER's job, which is exactly what `load_rgb`'s convert-and-strip
+now does. Anyone tempted to add ICC handling inside zenmetrics should read that
+descriptor first; the bug was squintly handing it non-sRGB pixels.
+
+Verified after the fix (2026-08-06): rescoring the ICC-clean corpus with
+`zenmetrics batch` moved ssim2 by a median of ~0.00 and at most 0.4 points per
+codec. That is the expected result and worth understanding — **the ICC fix was
+never about the metric**. Both source and encodings converted together, so their
+raw-sample relationship barely moved. It was about what the BROWSER shows, since
+the browser DOES apply ICC: before the fix it rendered the source through P3 and
+a stripped JPEG as sRGB. Exactly 1,088 encoding ids changed (16 P3 sources × 17
+rungs × 4 codecs), because converting the pixels changes the source sha — a
+clean confirmation the fix touched precisely what it should and nothing else.
+
 Note that switching scorers does NOT fix this: verified 2026-08-06 that
 `zenmetrics batch --metric ssim2` and `squintly-score` agree to 0.3 ssim2 points
 on an ICC-carrying source, i.e. **neither applies ICC** — they both read raw

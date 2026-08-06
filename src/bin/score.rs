@@ -39,7 +39,14 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 struct Args {
     /// Coefficient HTTP base, same value the server uses.
     #[arg(long, env = "SQUINTLY_COEFFICIENT_HTTP")]
-    coefficient_http: String,
+    coefficient_http: Option<String>,
+    /// A local SplitStore root instead. Scoring a freshly built corpus this way
+    /// avoids uploading 2.7 GB and immediately downloading it again — and lets
+    /// the scores be inspected BEFORE the corpus is published, which is the
+    /// right order: a ladder that does not reach the band it was widened for
+    /// should be found out before observers are pointed at it.
+    #[arg(long, conflicts_with = "coefficient_http")]
+    fs: Option<std::path::PathBuf>,
     /// Where to write the TSV. `-` for stdout.
     #[arg(long, default_value = "-")]
     out: String,
@@ -141,6 +148,28 @@ fn decode_rgb8(bytes: &[u8], content_type: &str) -> Result<(Vec<u8>, usize, usiz
         };
         return Ok((rgb, w, h));
     }
+    if ct.contains("jxl")
+        || bytes.starts_with(&[0xFF, 0x0A])
+        || bytes.get(0..4) == Some(&[0, 0, 0, 0x0C])
+    {
+        // zenjxl-decoder yields interleaved RGBA or GrayAlpha, tightly packed.
+        let img = zenjxl_decoder::decode(bytes).map_err(|e| anyhow::anyhow!("jxl: {e}"))?;
+        let (w, h) = (img.width, img.height);
+        let rgb = match img.channels {
+            4 => composite_rgba(&img.data, w, h),
+            2 => {
+                let mut out = Vec::with_capacity(w * h * 3);
+                for c in img.data.chunks_exact(2) {
+                    let (l, a) = (c[0] as u32, c[1] as u32);
+                    let v = ((l * a + 255 * (255 - a)) / 255) as u8;
+                    out.extend_from_slice(&[v, v, v]);
+                }
+                out
+            }
+            n => anyhow::bail!("jxl with {n} channels"),
+        };
+        return Ok((rgb, w, h));
+    }
     anyhow::bail!("unrecognised content type `{content_type}`")
 }
 
@@ -169,9 +198,15 @@ async fn main() -> Result<()> {
     let args = Args::parse();
     tracing_subscriber::fmt().with_target(false).init();
 
-    let coeff = Arc::new(CoefficientSource::Http(
-        HttpCoefficient::new(&args.coefficient_http).context("coefficient base url")?,
-    ));
+    let coeff = Arc::new(match (&args.fs, &args.coefficient_http) {
+        (Some(root), _) => {
+            CoefficientSource::Fs(squintly::coefficient::FsCoefficient::new(root.clone()))
+        }
+        (None, Some(base)) => {
+            CoefficientSource::Http(HttpCoefficient::new(base).context("coefficient base url")?)
+        }
+        (None, None) => anyhow::bail!("pass --fs <splitstore-root> or --coefficient-http <base>"),
+    });
     let manifest = coeff.refresh_manifest().await.context("fetch manifest")?;
     let mut sources = manifest.sources.clone();
     sources.sort_by(|a, b| a.hash.cmp(&b.hash));

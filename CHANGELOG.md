@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+### Fixed
+- **Display P3 sources lost their profile on half the encoders.** 16 of 168
+  sources carry `Display P3 Gamut with sRGB Transfer`; jpegli and libavif
+  preserved it while libjpeg-turbo and libwebp dropped it, so a browser rendered
+  the source through P3 and a stripped JPEG as sRGB. Measured shift: up to **79
+  levels per channel**, a saturated red going `(237,61,37) → (255,30,0)` —
+  attributed to the codec by anyone looking. `load_rgb` now converts through the
+  profile to sRGB once and strips it. Likely a second and larger cause of the
+  "desaturated reds" report previously pinned entirely on chroma subsampling.
+
 ### Added
 - **`squintly-score --fs <splitstore-root>`** — score a locally built corpus
   without publishing it first. Uploading 2.7 GB and immediately downloading it

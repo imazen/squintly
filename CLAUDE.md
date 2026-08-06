@@ -520,6 +520,21 @@ Reported from the live study: "so many a and b variants have super desaturated
 reds". Real, measured, and **not** a pipeline defect — but it does have a
 recording gap worth knowing about.
 
+> **[note 2026-08-06 — the "not colour management" claim below is WRONG for
+> the corpus as built.]** Re-measured: 16 of 168 sources carry
+> `Display P3 Gamut with sRGB Transfer`, and jpegli/libavif preserved it while
+> libjpeg-turbo/libwebp dropped it. On those sources the profile loss moves
+> saturated pixels by up to **79 levels per channel** — far larger than the
+> 5–10% subsampling effects measured below, and concentrated in exactly the
+> saturated reds that were reported.
+>
+> So this investigation found a real effect and a real mechanism, but assigned
+> **all** of the reported desaturation to it after checking ICC on a build that
+> did not have profiles. Read the subsampling findings below as sound in
+> themselves and INCOMPLETE as an explanation. The colour-management half is
+> fixed in `load_rgb` as of 2026-08-06 (convert to sRGB, strip the profile);
+> the subsampling half remains unrecorded in `EncodingMeta` and is still open.
+
 **Not colour management.** Nothing in the corpus carries an ICC profile —
 neither the source PNGs nor any encoding (measured: `icc_profile` is absent on
 all of them), so a browser treats every arm as sRGB and the reference and the

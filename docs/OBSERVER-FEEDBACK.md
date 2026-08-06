@@ -147,3 +147,71 @@ should be checked against real data before any η is reported, not assumed.
 
 Until it is checked, treat η at N=2 as a diagnostic to look at, not a number to
 quote.
+
+## 7. When an observer says they made a mistake
+
+Real need, and it has a right answer that is not "delete".
+
+### 7.1 Deletion is never the mechanism
+
+Two independent reasons, either of which is sufficient:
+
+**Self-selected deletion is missing-not-at-random.** An observer removing "the
+ones I got wrong" is removing trials on a criterion correlated with the thing
+being measured. MNAR is the one kind of missingness that cannot be corrected
+for afterwards, because the deletion rule depends on the value that is now gone.
+Random dropout costs power; this costs validity.
+
+**It destroys the noise ceiling.** Self-agreement is computed from what somebody
+actually did. Delete the trials where they were inconsistent and the ceiling
+rises toward 1.0 — and every ρ/ceiling built on it is then divided by a number
+that describes a filtered person rather than a real one.
+
+Also worth naming: an observer cannot know which individual trials were bad.
+They know they were tired; they do not know which of the forty pairs that
+affected. Per-trial marking is guessing presented as data.
+
+### 7.2 What to offer instead, in three layers
+
+**A misclick on the current trial — undo.** Already built (migration 0020).
+Bounded to the latest trial on purpose, so it cannot walk back through a run,
+and the first answer survives in `original_choice` because "answered A, then
+changed to B" is itself signal about difficulty.
+
+**A compromised sitting — a session-level self-report, at the debrief.** Scoped
+to the *session*, never a range of trials: session-level statements are about
+CONDITIONS ("I was in sunlight", "I misunderstood the task at first"), which
+squintly already treats as first-class data, and conditions are something an
+observer genuinely knows. Recorded as a disposition, the same shape as
+`observer_dispositions` — the analyst gets a filter, and can run with and
+without. Never a delete.
+
+Offer it at session END, not mid-session. Mid-session it becomes an undo by
+another name, and it is also a demand characteristic: being asked "was that
+alright?" implies you are doing badly.
+
+**A reason from a fixed list**, because reasons map to different analyses:
+
+| reason | what it licenses |
+|---|---|
+| I misunderstood the task at first | truncating from the start — a learning effect is real and modelable |
+| Bad viewing conditions | corroborates what `conditions` already recorded |
+| Someone else was using my device | an IDENTITY problem, not a quality one — different fix |
+| I was rushing or distracted | check it against `switch_count` / `dwell_ms` before acting |
+
+### 7.3 The elegant part: a self-report is checkable
+
+We already record `switch_count`, `dwell_ms`, `ms_on_*`, `zoom_factor`,
+`cant_tell_hint_ms` and the golden pass rate. So "I rushed the last twenty"
+either corroborates the effort columns or it does not, and a self-report that
+disagrees with the instruments is itself informative. The flag never has to be
+trusted blindly, which is what makes accepting it safe.
+
+### 7.4 Wording
+
+Never "your data was excluded" — it is not, and saying so would be false given
+`ExclusionPolicy::enabled` is off. "Anything we should know about this session?"
+is the neutral form: it asks about circumstances, not performance, which is the
+same process-versus-outcome line as §3.
+
+Status: **not built.** The undo layer exists; the session self-report does not.

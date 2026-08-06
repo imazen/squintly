@@ -480,34 +480,45 @@ one this hits hardest.
 
 ## Known Bugs
 
-### Squintly stores no metric scores, so it cannot compute its own headline result
+### Metric scores live in `encoding_metrics`, ingested — never computed here
 
-The default study exists to ask whether SSIMULACRA2 ranks non-photo encodings
-as well as it ranks photographs (imazen/squintly#4). Answering that needs a
-ssim2 score per encoding to correlate the human ranking against — and **there
-is none anywhere in squintly**. `EncodingMeta` carries `codec`, `quality`,
-`effort` and `bytes` only (`src/coefficient.rs`); `scripts/build_demo_corpus.py`
-computes no metric; nothing in the schema or `responses.tsv` holds one.
-Confirmed 2026-08-05.
+Squintly does not compute metrics; it ingests them. `POST /api/admin/metrics`
+takes a wide TSV/CSV/Parquet and writes long rows to `encoding_metrics`
+(migration 0025), joined at report time. Resolved 2026-08-05; the gap it closed
+is recorded in the resolved-bug log below.
 
-So everything squintly can produce today is one side of the correlation. The
-scores would have to come from zensim's feature extraction (the split labels
-already live at `/mnt/v/output/imazen-26-features/`), either plumbed into the
-manifest as an `EncodingMeta` field or joined externally on
-`a_encoding_id`/`b_encoding_id` at analysis time.
+Three rules that are load-bearing rather than stylistic:
 
-What IS computable in-app, and is worth reporting on its own, is **how close
-the study is to being able to answer the question**: the noise ceiling from
-`Study::p_repeat` self-agreement (which bounds any ρ that a later join could
-produce — see the `ρ / ceiling` invariant), the golden-pair pass rate, pair
-coverage and comparisons against `min_viable_ratings`, and the BT fit over the
-encodings with intervals. A report that presents those and says plainly that
-the metric side is not yet joined is honest; one that implies a ρ has been
-measured is not.
+- **Names are open, directions are closed.** Ingest accepts ANY metric name,
+  because zenmetrics bakes an implementation version into several of them
+  (`cvvdp_imazen_v0_0_1`, `ssim2_imazen_iir_v3`) and a retuned kernel mints a
+  new one. But `metrics::direction_of` must RECOGNISE a name to say which way
+  it points, and an unknown one gets `Direction::Unknown` — storable and
+  exportable, never correlatable. A rank correlation with an unknown direction
+  is a coin flip on the SIGN, and a flipped sign reads exactly like the finding
+  the study exists to make. The report lists such metrics under `unusable`
+  rather than omitting them.
+- **A blank cell is NOT MEASURED, never 0.0.** cvvdp needs a GPU, iwssim needs
+  `min(W,H) >= 176` — gaps are normal, and a 0.0 puts a worst-possible score on
+  an encoding nobody measured. Same distinction as the DEFAULT-0 backfill rule.
+- **Metadata columns never become metrics.** `NON_METRIC_COLUMNS` drops
+  `bytes`, `quality`, `codec` and friends. `bytes` would correlate beautifully
+  with human judgement and be entirely an artefact of bigger files looking
+  better.
 
-Do not build a "disposition toward the hypothesis" view that silently omits
-this — the absence of the metric column is the single most important fact
-about the study's current disposition.
+**Everything about metrics is admin-gated, including reading.** Showing an
+observer the ssim2 of the image they are about to judge hands them the answer to
+the question being asked. The trial identifier panel therefore fetches scores
+through an admin endpoint and renders nothing on the 403 an ordinary observer
+gets — no gap, no error, just the panel they always saw.
+
+`src/disposition.rs` + `/api/admin/disposition` is the report. Self-agreement is
+computed over pairs normalised to the SORTED pair, not the A/B slot:
+counterbalancing flips slots on about half of all repeats, so comparing raw
+`choice` strings would score a consistent observer as inconsistent every time,
+halving the ceiling and making every ρ/ceiling look twice as good as it is.
+`rho_over_ceiling` is `None` whenever either input is, so a ρ can never be
+printed against an assumed ceiling of 1.
 
 ### Curator write endpoints are unauthenticated on a public instance
 

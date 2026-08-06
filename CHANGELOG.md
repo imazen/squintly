@@ -3,6 +3,32 @@
 ## [Unreleased]
 
 ### Added
+- **Objective metric scores** (`encoding_metrics`, migration 0025;
+  `src/metrics.rs`, `src/metrics_api.rs`). `POST /api/admin/metrics` ingests a
+  wide TSV, CSV or Parquet and writes long rows joined at report time. Long
+  rather than wide because zenmetrics bakes implementation versions into column
+  names (`cvvdp_imazen_v0_0_1`, `ssim2_imazen_iir_v3`), so a wide table would
+  need a migration every time a kernel is retuned. Parquet reads through the row
+  API, keeping the Arrow stack out of the build.
+- **`src/disposition.rs` + `GET /api/admin/disposition`** — the study against its
+  own question. Noise ceiling from `p_repeat` self-agreement, each metric's
+  agreement ρ, and ρ/ceiling, which is the only one worth reporting.
+  `rho_over_ceiling` is `None` whenever either input is, so a ρ can never be
+  printed against an assumed ceiling of 1. Ties stay out of the denominator
+  (Davidson's tie term makes them an outcome, not noise), goldens score
+  `COALESCE(original_choice, choice)` so undo cannot launder a failed check, and
+  self-agreement is normalised to the sorted pair — counterbalancing flips slots
+  on about half of all repeats, and comparing raw choices would halve the
+  measured ceiling.
+- **The disposition report** (`web/src/report.ts`), linked from the admin page.
+  Inline-SVG charts that draw the ceiling ACROSS the ρ bars, mark 50% as chance,
+  and keep "not enough data" visually distinct from a measured zero. Coverage is
+  its own chart, because a metric with ρ=0.9 on 3% of pairs has not been
+  evaluated.
+- **Metric scores in the trial identifier panel, for operators only.** Appended
+  after the panel opens so it never waits on the network; renders nothing on the
+  403 an ordinary observer gets. Showing an observer the ssim2 of the image they
+  are about to judge would hand them the answer to the question being asked.
 - **Process nudges** (`web/src/nudge.ts`) — a short "flick between A and B a few
   times" after an answer that was both fast and unswitched. With two expected
   participants every peer-based screen in `src/exclusion.rs` is meaningless (no

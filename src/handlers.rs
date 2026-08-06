@@ -957,10 +957,13 @@ pub async fn record_response(
 ) -> Result<Json<ResponseAck>, AppError> {
     // Already answered? Then this is a correction, not a new judgement.
     //
-    // Allowed ONLY when it is the most recent response in the session. That is
-    // the "I just misclicked" window; letting an observer reach back past
-    // later trials would let them revise in light of what they saw afterwards,
-    // which is a different and much less innocent thing.
+    // Allowed within the last `UNDO_DEPTH` responses of the session. Noticing a
+    // misclick usually happens on the NEXT trial, so a one-deep window misses
+    // most of what it exists to catch — but the window stays BOUNDED, because
+    // letting somebody reach back through a whole run would let them revise in
+    // light of everything they saw afterwards. That is self-selected editing,
+    // and it makes the resulting missingness non-random in the one way that
+    // cannot be corrected for afterwards.
     let existing: Option<(String, i64, Option<String>)> = sqlx::query_as(
         "SELECT r.choice, r.revision_count, r.original_choice FROM responses r \
          WHERE r.trial_id = ?",
@@ -979,10 +982,10 @@ pub async fn record_response(
         .bind(&trial_id)
         .fetch_optional(&state.pool)
         .await?;
-        if is_latest.map(|(n,)| n).unwrap_or(0) > 0 {
+        if is_latest.map(|(n,)| n).unwrap_or(0) >= UNDO_DEPTH {
             return Err(AppError::Conflict(
-                "only the most recent response can be corrected — later trials have \
-                 been answered since this one"
+                "that answer is too far back to correct — more recent trials have \
+                 been answered since"
                     .into(),
             ));
         }
@@ -2675,4 +2678,52 @@ mod tests {
         let m2 = build_export_manifest(ExportKind::Responses, "");
         assert_eq!(m2.row_count, 0);
     }
+}
+
+/// How many answers back an observer may reach to correct one.
+///
+/// Was 1 — strictly "the response you just gave". That window is too narrow for
+/// the thing it exists to catch: noticing a misclick usually happens on the NEXT
+/// trial, by which point the previous one is already out of reach.
+///
+/// The guard's purpose is unchanged and still enforced: an observer must not be
+/// able to walk back through a whole run and retroactively tidy their data in
+/// light of everything they saw afterwards. That is what makes self-selected
+/// revision missing-not-at-random. A bounded window of a few trials is a
+/// correction; an unbounded one is editing.
+///
+/// The first answer survives regardless — `original_choice` is written once and
+/// never overwritten, and attention checks score it rather than `choice`, so
+/// reaching back cannot launder a failed honeypot.
+pub const UNDO_DEPTH: i64 = 5;
+
+/// Debrief: what an observer says about a stretch of work they already did.
+#[derive(Debug, serde::Deserialize)]
+pub struct PendingDebriefQuery {
+    pub observer_id: String,
+    /// Set when the observer is deliberately signing off, so the bout they are
+    /// still in counts. Absent on a return visit.
+    #[serde(default)]
+    pub ending: bool,
+}
+
+pub async fn debrief_pending(
+    State(state): State<SharedState>,
+    axum::extract::Query(q): axum::extract::Query<PendingDebriefQuery>,
+) -> Result<Json<Option<crate::debrief::PendingDebrief>>, AppError> {
+    Ok(Json(
+        crate::debrief::pending(&state.pool, &q.observer_id, q.ending)
+            .await
+            .map_err(AppError::Anyhow)?,
+    ))
+}
+
+pub async fn debrief_submit(
+    State(state): State<SharedState>,
+    Json(req): Json<crate::debrief::SubmitDebrief>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    crate::debrief::submit(&state.pool, &req)
+        .await
+        .map_err(AppError::Anyhow)?;
+    Ok(Json(serde_json::json!({ "ok": true })))
 }

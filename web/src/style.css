@@ -2044,3 +2044,106 @@ button.secondary:hover { background: rgba(74, 209, 255, 0.10); }
   background: color-mix(in srgb, var(--warn) 8%, transparent);
   border-left-color: var(--warn);
 }
+
+/* ---- Trial chrome: sign-in chip and collapse-to-i ----------------------- */
+
+/* A sign-in offer in the chrome, left of the study name. The menu already has
+   one, but it is behind a tap nobody makes mid-session — and knowing which
+   sessions a participant did is what lets their work follow them to another
+   device. Deliberately a chip, not a button: it must not compete with the
+   answer controls for attention. */
+.signin-chip {
+  flex: 0 0 auto;
+  font-size: 0.7rem;
+  line-height: 1;
+  padding: 3px 7px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--accent) 55%, transparent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--accent);
+  cursor: pointer;
+}
+.signin-chip:hover {
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+}
+
+/* The chrome must never wrap: it sits directly above the stimulus, and a second
+   row is a row taken from the picture. `fitChrome()` measures the real content
+   and adds `.collapsed` when it overflows — a width breakpoint cannot do this,
+   because what overflows depends on how long THIS image's name is. */
+.progress {
+  flex-wrap: nowrap;
+  overflow: hidden;
+}
+.progress > * {
+  min-width: 0;
+}
+
+/* Collapsed: the two name labels go, the `i` button stays. Nothing becomes
+   unreachable — the identifier panel lists every one of these — it moves one
+   tap away. The trial counter and the controls are what remain, because they
+   are the ones that change between trials. */
+.progress.collapsed .study-badge,
+.progress.collapsed .trial-license {
+  display: none;
+}
+
+/* ---- Debrief (web/src/debrief.ts) --------------------------------------- */
+/* Checkboxes for CIRCUMSTANCES, never a self-rating. Styled roomy rather than
+   compact: this is one screen seen occasionally, between a decision to work and
+   the work, so the cost of a generous tap target is nil and mis-ticking a
+   reason produces a wrong fact about the data. */
+
+.debrief-reasons {
+  border: 0;
+  margin: 4px 0 14px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.debrief-reason {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+  line-height: 1.35;
+}
+.debrief-reason:hover {
+  background: color-mix(in srgb, currentColor 6%, transparent);
+}
+.debrief-reason input {
+  flex: 0 0 auto;
+  width: 20px;
+  height: 20px;
+  margin-top: 1px;
+  accent-color: var(--accent);
+}
+/* A ticked reason is visible at a glance on the way out, so somebody can see
+   what they are about to send without re-reading every line. */
+.debrief-reason:has(input:checked) {
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+
+.debrief-note-label {
+  display: block;
+  font-size: 0.85rem;
+  color: var(--muted);
+  margin-bottom: 4px;
+}
+.debrief-note {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid color-mix(in srgb, currentColor 22%, transparent);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 0.9rem;
+  margin-bottom: 14px;
+  resize: vertical;
+}

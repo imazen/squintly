@@ -338,6 +338,8 @@ async fn main() -> Result<()> {
             "/admin/metrics",
             post(metrics_api::ingest).get(metrics_api::catalog),
         )
+        .route("/debrief/pending", get(handlers::debrief_pending))
+        .route("/debrief", post(handlers::debrief_submit))
         .route("/admin/disposition", get(metrics_api::disposition))
         .route("/admin/metrics/encodings", get(metrics_api::for_encodings))
         .route("/curator/backfill-dims", post(curator::backfill_dims))

@@ -569,9 +569,22 @@ test.describe('trial chrome on a phone', () => {
   test('the header names the corpus, not the licence', async ({ page }) => {
     await toTrial(page);
     const label = page.locator('.trial-license');
-    await expect(label).toBeVisible();
-    const text = await label.innerText();
+    // On the narrowest screens the chrome collapses and this label is one of
+    // the two that go — deliberately, since a wrapped header steals a row from
+    // the picture. The rule under test is about what the header SAYS, so read
+    // the text either way and check reachability against whichever state the
+    // device is actually in.
+    const collapsed = await page
+      .locator('#trial-chrome')
+      .evaluate((el) => el.classList.contains('collapsed'));
+    if (collapsed) {
+      await expect(page.locator('#info-btn'), 'collapsed, the i button carries it').toBeVisible();
+    } else {
+      await expect(label).toBeVisible();
+    }
+    const text = await label.evaluate((el) => el.textContent ?? '');
     expect(text).not.toMatch(/own work|CC[- ]BY|public domain/i);
+    expect(text.trim(), 'the label still names something').not.toBe('');
     // Still recoverable without leaving the trial.
     expect(await label.getAttribute('title')).toMatch(/·/);
     await page.locator('#info-btn').click();
@@ -707,12 +720,49 @@ test.describe('which study am I in', () => {
     expect(name.split(/\s+/).length, `"${name}" should be two words`).toBeLessThanOrEqual(2);
     expect(name, 'not the raw id').not.toMatch(/[_]|ssim2-/);
 
-    // Top-left: before the trial counter in the header.
+    // Top-left: before the trial counter in the header. The only thing that may
+    // sit further left is the sign-in chip, which is offered to a guest —
+    // knowing which sessions a participant did is what lets their work follow
+    // them to another device, and the menu's version is behind a tap nobody
+    // makes mid-session.
     const order = await page.evaluate(() => {
       const kids = [...document.querySelector('.progress')!.children];
-      return kids.map((k) => k.id || k.className);
+      return kids.map((k) => (k as HTMLElement).id || k.className);
     });
-    expect(order[0]).toBe('study-badge');
+    const badgeAt = order.indexOf('study-badge');
+    const signinAt = order.indexOf('chrome-signin');
+    expect(badgeAt, 'the study badge must be in the header').toBeGreaterThanOrEqual(0);
+    if (signinAt >= 0) {
+      expect(signinAt, 'sign in sits left of the study name').toBeLessThan(badgeAt);
+      expect(badgeAt, 'and nothing else comes between them').toBe(signinAt + 1);
+    } else {
+      expect(badgeAt).toBe(0);
+    }
+    // Whichever of the two leads, the trial counter comes after both.
+    expect(order.findIndex((c) => c.includes('trial-license')), 'names precede the picture label')
+      .toBeGreaterThan(badgeAt);
+  });
+
+  test('the chrome collapses to the i button when the names do not fit', async ({ page }) => {
+    // The header sits directly above the stimulus, so it must never wrap — a
+    // second row is a row taken from the picture. What overflows depends on how
+    // long THIS image's name is, not on the viewport, which is why it is
+    // measured rather than switched at a width breakpoint.
+    await toTrial(page);
+    await page.setViewportSize({ width: 240, height: 640 });
+    await page.waitForTimeout(150);
+    const bar = page.locator('#trial-chrome');
+    const m = await bar.evaluate((el) => ({
+      collapsed: el.classList.contains('collapsed'),
+      scroll: el.scrollWidth,
+      client: el.clientWidth,
+      height: el.getBoundingClientRect().height,
+    }));
+    expect(m.collapsed, 'a 240px header cannot hold both names').toBe(true);
+    expect(m.scroll, 'collapsed, it must actually fit').toBeLessThanOrEqual(m.client + 1);
+    // Nothing becomes unreachable — the identifier panel lists every one of
+    // these — it moves one tap away.
+    await expect(page.locator('#info-btn')).toBeVisible();
   });
 
   // Every listed study needs one — a missing short name would silently render

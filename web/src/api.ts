@@ -351,3 +351,53 @@ export async function encodingMetrics(ids: string[]): Promise<EncodingMetricRow[
     return [];
   }
 }
+
+export interface DebriefBout {
+  start_ms: number;
+  end_ms: number;
+  responses: number;
+  /// Comparisons only — what the observer remembers doing.
+  comparisons: number;
+}
+
+export interface PendingDebrief {
+  bout: DebriefBout;
+  reasons: { key: string; label: string }[];
+}
+
+/// The most recent stretch of work this observer has not been asked about.
+///
+/// `ending` is true only when they are deliberately signing off, so the bout
+/// they are still in counts. On a return visit it must be false — prompting
+/// about work somebody is still doing is the mid-session interruption this
+/// whole design exists to avoid.
+export async function fetchPendingDebrief(
+  observerId: string,
+  ending: boolean,
+): Promise<PendingDebrief | null> {
+  const r = await fetch(
+    `/api/debrief/pending?observer_id=${encodeURIComponent(observerId)}${ending ? '&ending=true' : ''}`,
+  );
+  if (!r.ok) return null;
+  return (await r.json()) as PendingDebrief | null;
+}
+
+export interface DebriefSubmission {
+  observer_id: string;
+  bout_start_ms: number;
+  bout_end_ms: number;
+  responses: number;
+  reasons: string[];
+  note: string | null;
+  skipped: boolean;
+  prompted_at: 'end' | 'return';
+}
+
+export async function submitDebrief(body: DebriefSubmission): Promise<void> {
+  const r = await fetch('/api/debrief', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!r.ok) throw new Error(`submitDebrief ${r.status}`);
+}

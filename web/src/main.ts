@@ -8,6 +8,7 @@ import { runCalibration } from './calibration-onboarding';
 import { hasChosenInputMode } from './input-mode';
 import { maybeShowInstructions } from './instructions';
 import { renderLanding } from './landing';
+import { maybeShowDebrief } from './debrief';
 import { chooseInputMode } from './mode-chooser';
 import { detectCodecs, jxlEnableHint } from './codec-probe';
 import {
@@ -426,6 +427,24 @@ async function enterStudy(): Promise<void> {
   // `hasChosenInputMode` is separate from "which mode are we in" — and it is a
   // one-off, because answering it is what makes it stop.
   if (!hasChosenInputMode()) await chooseInputMode(root);
+
+  // Ask about last time before starting this time.
+  //
+  // This is the PRIMARY moment for a debrief, not the fallback: almost nobody
+  // clicks End session, so a prompt that only fires there mostly never fires.
+  // Here it lands on somebody who is already at their device and about to work,
+  // which is also the only point where it cannot interrupt a sitting.
+  //
+  // Nothing is asked if there is no closed bout to ask about — a first-time
+  // observer, a bout too short to have an impression of, or one already
+  // debriefed. `maybeShowDebrief` calls `onDone` immediately in that case.
+  const observerId = getObserverId();
+  if (observerId) {
+    await new Promise<void>((done) => {
+      void maybeShowDebrief(root, observerId, { promptedAt: 'return', onDone: done });
+    });
+  }
+
   // Straight back into trials. A new session row is correct rather than
   // resuming the old one: conditions are re-captured, and the screen, lighting
   // or device may well have changed since last time — pretending otherwise

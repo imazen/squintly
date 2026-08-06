@@ -75,6 +75,9 @@ export function showInstructions(root: HTMLElement, opts: { returning: boolean }
               say so. A guess recorded as a preference is worse than a tie.</li>
             <li><b>Magnify when it helps.</b> Pinch, or the mouse wheel. Judge at
               whatever size makes the difference visible.</li>
+            <li><b>Sign off when you stop.</b> The menu has an <i>End session</i>
+              button. It asks one short question about how the sitting went, which
+              is far more accurate answered there than remembered next time.</li>
           </ul>
           <p class="muted">Some comparisons are deliberately easy, and some pictures
             come round twice. Both are checks on the data, not on you.</p>

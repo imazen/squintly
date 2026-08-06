@@ -35,6 +35,9 @@ async function mode(page: Page): Promise<string> {
   return (await page.locator('.trial').getAttribute('data-input-mode')) ?? 'tap';
 }
 
+/// Mirrors `handlers::UNDO_DEPTH`; `debrief_flow.rs` fails if they drift.
+const UNDO_DEPTH = 5;
+
 test.describe('the seen-both gate', () => {
   // Rating a pair you have only half-looked at records an opinion about an
   // image that was never on screen. The panel is dark by default, and only the
@@ -167,7 +170,43 @@ test.describe('taking back an answer', () => {
     // ...with the gate closed again: an undo is for a misclick, not for
     // changing an answer without re-examining the images.
     await expect(page.locator('#panel')).toHaveAttribute('data-gated', 'yes');
-    // And it is a one-shot; there is no walking back through the whole session.
+  });
+
+  test('undo walks back more than one step, and then stops', async ({ page }) => {
+    // A one-deep undo misses most of what it exists to catch: noticing a
+    // misclick usually happens on the NEXT trial, by which point the trial that
+    // needs fixing is already out of reach. So it reaches back several — but it
+    // stays BOUNDED, because walking back through a whole run would let
+    // somebody revise in light of everything they saw afterwards, and that is
+    // self-selected editing rather than a correction.
+    await toTrial(page);
+
+    // Answer more than the window, remembering the order they were served in.
+    const answered: string[] = [];
+    for (let i = 0; i < UNDO_DEPTH + 2; i++) {
+      const id = await page.locator('.trial').getAttribute('data-trial-id');
+      answered.push(id!);
+      await satisfyGate(page);
+      await page.locator('.rating-panel button, .pair-panel button').first().click();
+      await expect
+        .poll(async () => page.locator('.trial').getAttribute('data-trial-id'), { timeout: 15_000 })
+        .not.toBe(id);
+      await page.waitForSelector('.viewport.all-ready', { timeout: 20_000 });
+    }
+
+    // Each press reaches one trial further back, newest first.
+    for (let step = 1; step <= UNDO_DEPTH; step++) {
+      await expect(page.locator('#undo-btn'), `step ${step} should be reachable`).toBeVisible();
+      await page.locator('#undo-btn').click();
+      const want = answered[answered.length - step]!;
+      await expect
+        .poll(async () => page.locator('.trial').getAttribute('data-trial-id'), { timeout: 15_000 })
+        .toBe(want);
+    }
+
+    // And then it stops. The button goes rather than staying to serve a
+    // correction the server would refuse — a control that errors is worse than
+    // one that is not offered.
     await expect(page.locator('#undo-btn')).toBeHidden();
   });
 

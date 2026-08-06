@@ -18,6 +18,7 @@ pub mod crowd_bt;
 pub mod curator;
 pub mod db;
 pub mod db_health;
+pub mod debrief;
 pub mod disposition;
 pub mod exclusion;
 pub mod export;

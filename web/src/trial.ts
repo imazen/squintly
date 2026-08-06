@@ -17,6 +17,7 @@ import { showInstructions } from './instructions';
 import { notify } from './notify';
 import { considerNudge, newNudgeState } from './nudge';
 import { encodingMetrics } from './api';
+import { maybeShowDebrief } from './debrief';
 import { openSignInModal } from './auth-modal';
 import { showAdmin } from './admin';
 import {
@@ -157,7 +158,24 @@ export function startTrials(
   /// different and much less innocent thing than fixing a stray tap. The server
   /// enforces the same rule (`record_response` refuses a revision once a later
   /// response exists), so this is not the only line of defence.
-  let lastAnswered: { trial: TrialPayload; choice: string } | null = null;
+  /// Answers that can still be taken back, most recent last.
+  ///
+  /// A stack, not a single slot: noticing a misclick usually happens on the
+  /// NEXT trial, by which point a one-deep undo has already dropped the trial
+  /// that needs fixing. Bounded to `UNDO_DEPTH` because the server enforces the
+  /// same bound — an observer must not be able to walk back through a whole run
+  /// and retroactively tidy their data in light of what they saw afterwards.
+  ///
+  /// Walked with a CURSOR rather than popped. Popping loses the entry the
+  /// observer is currently correcting: undo twice and the first trial you
+  /// reopened has left the stack, so it can never be reached again even though
+  /// the server would still accept a correction for it. The cursor counts how
+  /// many steps back we are and resets to 0 whenever an answer lands.
+  const undoStack: Array<{ trial: TrialPayload; choice: string }> = [];
+  let undoCursor = 0;
+  /// Mirrors `handlers::UNDO_DEPTH`. Kept in step by
+  /// `the client and server agree on how far back undo reaches`.
+  const UNDO_DEPTH = 5;
   /// Opens the keyboard cheatsheet for the trial on screen.
   let showKeyHelp: (() => void) | null = null;
   let aborted = false;
@@ -189,6 +207,10 @@ export function startTrials(
   /// mid-run should be able to see which one they are in without opening the
   /// menu, and the id (`ssim2-nonphoto`) is not a thing to read at a glance.
   let studyShortName: string | null = null;
+  /// Whether the chrome shows a sign-in chip. Starts true so the chip does not
+  /// flash in for the already-signed-in on every trial render while whoami is
+  /// in flight — a control that appears and vanishes reads as a glitch.
+  let signedIn = true;
   void (async () => {
     try {
       const chosen = loadStudyId();
@@ -200,6 +222,19 @@ export function startTrials(
     } catch {
       /* the corner label is not worth failing a trial over */
     }
+  })();
+  // Resolved once per mount, then applied to whatever chrome is on screen.
+  // Failing closed (treating an error as signed-in) hides the chip rather than
+  // offering a sign-in that may not work — the menu still carries the real one.
+  void (async () => {
+    try {
+      signedIn = (await whoami())?.signed_in ?? true;
+    } catch {
+      signedIn = true;
+    }
+    const chip = root.querySelector<HTMLElement>('#chrome-signin');
+    if (chip) chip.hidden = signedIn;
+    fitChrome();
   })();
 
   const fetchAndRender = async () => {
@@ -285,7 +320,8 @@ export function startTrials(
         <div class="lap" id="lap" hidden>
           <div class="lap-fill" id="lap-fill"></div>
         </div>
-        <div class="progress">
+        <div class="progress" id="trial-chrome">
+          <button class="signin-chip" id="chrome-signin" title="Sign in to carry your ratings to another device"${signedIn ? ' hidden' : ''}>sign in</button>
           <span class="study-badge" id="study-badge">${escapeHtml(studyShortName ?? '')}</span>
           <span>Trial ${trialCount + 1}</span>
           <span class="trial-license" data-corpus="${escapeAttr(corpus)}" data-license-id="${escapeAttr(licId)}" title="${escapeAttr(`${trial.source_filename ?? corpus} · ${corpus} · ${licLabel}`)}">${
@@ -327,7 +363,7 @@ export function startTrials(
           </div>
           ${modePicker}
           <button class="undo-btn" id="undo-btn" aria-label="Take back the previous answer"
-                  title="Take back the previous answer (u)"${lastAnswered ? '' : ' hidden'}>↶${compact ? '' : ' undo'}</button>
+                  title="Take back the previous answer (u)"${canUndo() ? '' : ' hidden'}>↶${compact ? '' : ' undo'}</button>
           <button class="keys-btn" id="info-btn" aria-label="Image identifiers" title="Which images am I looking at? (i)">i</button>
           <button class="keys-btn" id="keys-btn" aria-label="Keyboard shortcuts" title="Keyboard shortcuts (?)">⌨</button>
         </div>
@@ -347,6 +383,13 @@ export function startTrials(
     const status = root.querySelector<HTMLDivElement>('#vp-status')!;
     const gateHint = root.querySelector<HTMLParagraphElement>('#gate-hint')!;
     root.querySelector<HTMLButtonElement>('#menu')!.addEventListener('click', () => openMenu());
+    root
+      .querySelector<HTMLButtonElement>('#chrome-signin')
+      ?.addEventListener('click', () => openSignInModal());
+    // After paint: the labels are filled in asynchronously (the study name
+    // arrives from listStudies), so measuring during render would measure an
+    // empty bar and never collapse.
+    requestAnimationFrame(fitChrome);
 
     // ---- every variant is loaded up front -------------------------------
     //
@@ -1305,9 +1348,13 @@ export function startTrials(
 
     window.addEventListener('keydown', onKeyDown);
     window.addEventListener('keyup', onKeyUp);
+    // Rotating a phone changes what fits, and so does the on-screen keyboard
+    // resizing the viewport. Re-measured rather than assumed to be stable.
+    window.addEventListener('resize', fitChrome);
     detachKeys = () => {
       window.removeEventListener('keydown', onKeyDown);
       window.removeEventListener('keyup', onKeyUp);
+      window.removeEventListener('resize', fitChrome);
     };
 
     /// Everything needed to identify what is on screen, as `label: value` lines.
@@ -1574,14 +1621,61 @@ export function startTrials(
   /// both arms again before re-answering, which is the point: an undo is for
   /// "I hit the wrong button", not for changing an answer without re-examining.
   const undoLast = async () => {
-    if (!lastAnswered) return;
-    const { trial } = lastAnswered;
-    lastAnswered = null;
+    if (undoCursor >= undoStack.length) return;
+    undoCursor += 1;
+    const entry = undoStack[undoStack.length - undoCursor]!;
     // The trial we were about to serve is abandoned; a fresh one is drawn after
     // the correction, chosen with the corrected answer in hand.
     trialCount = Math.max(0, trialCount - 1);
-    renderTrial(trial);
+    renderTrial(entry.trial);
   };
+
+  /// Collapse the chrome labels when they do not fit.
+  ///
+  /// The header carries a study name, an image name and a trial counter on one
+  /// line above the stimulus. On a narrow phone — and the study runs on phones —
+  /// those overflow, and an overflowing header either wraps (stealing a row from
+  /// the picture) or clips mid-word.
+  ///
+  /// Measured rather than guessed at a breakpoint: what overflows depends on how
+  /// long THIS image's name is, not on the viewport. A `imazen26-6600-ia-scans-
+  /// manuscript-illustrations` fits nowhere and a short one fits almost
+  /// anywhere, so a media query would collapse the short ones needlessly and
+  /// still clip the long ones.
+  ///
+  /// Collapsing hides the two name labels and leaves the `i` button, which
+  /// already opens a panel listing every identifier — so nothing becomes
+  /// unreachable, it moves one tap away.
+  function fitChrome() {
+    const bar = root.querySelector<HTMLElement>('#trial-chrome');
+    if (!bar) return;
+    // Measure uncollapsed, or the check would be asking whether the collapsed
+    // form fits and would never expand again.
+    bar.classList.remove('collapsed');
+    // Two ways the row can fail to fit, and only checking one misses the case
+    // that actually happens. The container overflows when its children hold
+    // their natural width — but these children may shrink instead (a flex item
+    // with `min-width: 0` and an ellipsis does), and then the container reports
+    // no overflow at all while the names are unreadably clipped. So ask the
+    // labels whether THEY were squeezed as well.
+    //
+    // 1px of slack throughout: sub-pixel layout puts scrollWidth a fraction
+    // above clientWidth on rows that visibly fit, and collapsing those would
+    // hide the labels on screens with room for them.
+    const squeezed = [...bar.querySelectorAll<HTMLElement>('.study-badge, .trial-license')].some(
+      (el) => el.scrollWidth > el.clientWidth + 1,
+    );
+    if (squeezed || bar.scrollWidth > bar.clientWidth + 1) bar.classList.add('collapsed');
+  }
+
+  /// Is there anything left to take back?
+  ///
+  /// Not just "has anything been answered" — after walking `UNDO_DEPTH` steps
+  /// back there is nothing further the server would accept, and a button that
+  /// 409s is worse than no button.
+  function canUndo(): boolean {
+    return undoCursor < undoStack.length;
+  }
 
   const submit = async (
     choice: string,
@@ -1664,7 +1758,17 @@ export function startTrials(
     } catch (e) {
       console.warn('record failed', e);
     }
-    lastAnswered = { trial, choice };
+    // A correction updates the entry in place; a fresh answer appends. Pushing
+    // unconditionally would put the same trial in twice, and undo would then
+    // walk back onto a trial it had already reopened.
+    const at = undoStack.findIndex((e) => e.trial.trial_id === trial.trial_id);
+    if (at >= 0) undoStack[at] = { trial, choice };
+    else undoStack.push({ trial, choice });
+    undoCursor = 0;
+    // Oldest first, so the stack holds the most recent `UNDO_DEPTH` answers —
+    // the same window the server will accept a correction for. Letting it grow
+    // past that would show an undo button that 409s.
+    while (undoStack.length > UNDO_DEPTH) undoStack.shift();
     trialCount += 1;
     if (trialCount > 0 && trialCount % 25 === 0) {
       renderBreak(() => fetchAndRender());
@@ -1857,7 +1961,20 @@ export function startTrials(
       aborted = true;
       detachKeys?.();
       detachKeys = null;
-      renderDone();
+      // Somebody who signs off deliberately gets the debrief HERE, where it is
+      // immediate rather than recalled days later — a strictly better
+      // measurement than the return-visit prompt, and the reason the
+      // instructions ask people to sign off at all. `ending` lets the server
+      // count the bout they are still in, which a return visit must not.
+      const observerId = getObserverId();
+      if (observerId) {
+        void maybeShowDebrief(root, observerId, {
+          promptedAt: 'end',
+          onDone: () => void renderDone(),
+        });
+      } else {
+        void renderDone();
+      }
     });
   };
 

@@ -113,6 +113,10 @@ fn expected() -> BTreeMap<&'static str, &'static str> {
             "61422e60afa21a218e149cbe64f680b0226f7ac2cbba59736cb5924eab3677ef",
         ),
         (
+            "0025_encoding_metrics.sql",
+            "af1ca4806aa6fcaaf3959d33943fa84fb6b72b8dc9aad713fe96902cd87ef668",
+        ),
+        (
             "0024_process_nudges.sql",
             "9909d7f678b9615332d24e0c94eba67c0a37b8ac530f019a76e4a289f0a0c179",
         ),

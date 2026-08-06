@@ -15,6 +15,7 @@ use tracing_subscriber::EnvFilter;
 use squintly::coefficient::{CoefficientSource, FsCoefficient, HttpCoefficient};
 use squintly::curator;
 use squintly::handlers::{self, AppState};
+use squintly::metrics_api;
 use squintly::suggestions;
 
 #[derive(RustEmbed)]
@@ -329,6 +330,15 @@ async fn main() -> Result<()> {
         .route("/curator/progress", get(curator::progress))
         .route("/curator/manifest", post(curator::load_manifest))
         .route("/curator/load-r2-public", post(curator::load_r2_public))
+        // Objective metric scores. All three are admin-only: the values say how
+        // well the metric under test agrees with the observers, and an observer
+        // who reads that has been told something about the answer to the
+        // question they are being asked.
+        .route(
+            "/admin/metrics",
+            post(metrics_api::ingest).get(metrics_api::catalog),
+        )
+        .route("/admin/disposition", get(metrics_api::disposition))
         .route("/curator/backfill-dims", post(curator::backfill_dims))
         .route("/curator/blob/{sha256}", get(curator::blob_proxy))
         .route(

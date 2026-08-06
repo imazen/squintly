@@ -79,14 +79,19 @@ test.describe('milestone notices', () => {
     await toTrial(page);
 
     // Answer until two comparisons have landed.
+    //
+    // Selected by `data-notice`, not by `.notice`: the layer holds one notice
+    // at a time and the process nudge shares it, so a bare `.notice` would stop
+    // this loop on whichever arrived first and then assert milestone shape
+    // against it.
     let notice = 0;
     for (let i = 0; i < 14 && notice === 0; i++) {
       await submitOneTrial(page);
-      notice = await page.locator('.notice').count();
+      notice = await page.locator('[data-notice="milestone"]').count();
     }
     expect(notice, 'a milestone notice should have appeared').toBeGreaterThan(0);
 
-    const el = page.locator('.notice');
+    const el = page.locator('[data-notice="milestone"]');
     // x/20, so the progress is legible without reading the sentence.
     await expect(el.locator('.notice-badge')).toHaveText(/^\d+\/20$/);
     // And wording that says what the 20 is for, not just that a number went up.

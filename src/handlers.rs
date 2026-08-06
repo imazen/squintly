@@ -915,6 +915,17 @@ pub struct ResponseReq {
     /// apart. See migration 0021.
     #[serde(default)]
     pub cant_tell_hint_ms: Option<i64>,
+    /// How many process nudges the observer had seen in this session BEFORE
+    /// giving this answer.
+    ///
+    /// A process nudge ("flick between A and B a few times") is answer-neutral,
+    /// so unlike the can't-tell hint it cannot bias `choice`. It does change
+    /// effort: somebody who has just been told to flick will flick more on
+    /// every later trial, and `switch_count` / `dwell_ms` are what difficulty is
+    /// read from. `None` means not recorded, which is deliberately different
+    /// from a recorded zero. See migration 0024 and `web/src/nudge.ts`.
+    #[serde(default)]
+    pub process_nudges_seen: Option<i64>,
 }
 
 #[derive(Debug, Serialize)]
@@ -986,7 +997,8 @@ pub async fn record_response(
         sqlx::query(
             "UPDATE responses SET choice = ?, original_choice = ?, revised_at = ?, \
              revision_count = ?, dwell_ms = ?, switch_count = ?, ms_on_a = ?, ms_on_b = ?, \
-             ms_on_ref = ?, cant_tell_hint_ms = COALESCE(cant_tell_hint_ms, ?) \
+             ms_on_ref = ?, cant_tell_hint_ms = COALESCE(cant_tell_hint_ms, ?), \
+             process_nudges_seen = COALESCE(?, process_nudges_seen) \
              WHERE trial_id = ?",
         )
         .bind(&req.choice)
@@ -999,6 +1011,11 @@ pub async fn record_response(
         .bind(req.ms_on_b)
         .bind(req.ms_on_ref)
         .bind(req.cant_tell_hint_ms)
+        // Opposite COALESCE order to the hint above, and for the opposite
+        // reason: this counter only ever grows, so a revision carries the more
+        // recent value when it has one and falls back to the stored count when
+        // an older client sends nothing.
+        .bind(req.process_nudges_seen)
         .bind(&trial_id)
         .execute(&state.pool)
         .await?;
@@ -1088,8 +1105,8 @@ pub async fn record_response(
          image_displayed_h_css, intrinsic_to_device_ratio, pixels_per_degree, response_flags, \
          responded_at, pan_count, pan_distance_css, pannable_w_css, pannable_h_css, \
          visible_w_css, visible_h_css, zoom_factor, input_mode, keyboard_used, ui_ready_ms, \
-         switch_count, ms_on_a, ms_on_b, ms_on_ref, cant_tell_hint_ms) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+         switch_count, ms_on_a, ms_on_b, ms_on_ref, cant_tell_hint_ms, process_nudges_seen) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&trial_id)
     .bind(&req.choice)
@@ -1121,6 +1138,7 @@ pub async fn record_response(
     .bind(req.ms_on_b)
     .bind(req.ms_on_ref)
     .bind(req.cant_tell_hint_ms)
+    .bind(req.process_nudges_seen)
     .execute(&state.pool)
     .await?;
 
@@ -1276,7 +1294,7 @@ fn schema_version(kind: ExportKind) -> u32 {
         // the pan/visible-area telemetry that the 1:1 display rule made
         // necessary. Appended rather than inserted so positional consumers
         // keep working; the bump is here so strict ones can refuse.
-        ExportKind::Responses => 9,
+        ExportKind::Responses => 10,
         ExportKind::Unified => 1,
     }
 }
@@ -2612,13 +2630,15 @@ mod tests {
     fn responses_schema_version_reflects_the_appended_columns() {
         assert_eq!(
             schema_version(ExportKind::Responses),
-            9,
+            10,
             "v2 added study_id + pan/visible telemetry; v3 the participant exclusion \
              disposition; v4 input_mode + keyboard_used + ui_ready_ms; v5 source_corpus + \
              content_class; v6 per-view dwell, switch_count and repeat_of_trial_id; \
              v7 response revisions; v8 cant_tell_hint_ms; v9 source_filename, which is what makes the \
-             canonical train/val/test split recomputable from an export. Bump \
-             whenever columns change."
+             canonical train/val/test split recomputable from an export; v10 \
+             process_nudges_seen, without which a mid-session nudge to compare \
+             more shifts switch_count and dwell_ms with nothing on the row \
+             saying so. Bump whenever columns change."
         );
         assert_eq!(schema_version(ExportKind::Pareto), 1, "pareto is unchanged");
     }

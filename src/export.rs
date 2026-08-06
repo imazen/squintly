@@ -685,10 +685,16 @@ pub async fn unified_tsv(pool: &SqlitePool) -> Result<String> {
     Ok(out)
 }
 
-pub async fn responses_tsv(pool: &SqlitePool) -> Result<String> {
-    let mut out = String::new();
-    out.push_str(
-        "trial_id\tsession_id\tobserver_id\tkind\tsource_hash\ta_encoding_id\ta_codec\ta_quality\ta_bytes\
+/// Column names of `responses.tsv`, in SELECT order.
+///
+/// The row loop below reads columns by index, so the number of columns has to
+/// match the SELECT exactly — and it used to be a literal `0..65` sitting forty
+/// lines away from the header it had to agree with. Adding a column meant
+/// remembering to bump a magic number, and forgetting silently truncated the
+/// new column out of every export while the header still advertised it.
+/// Deriving the count from this list makes that class of mistake impossible,
+/// and `responses_tsv_header_matches_select` checks it against the query.
+const RESPONSES_TSV_HEADER: &str = "trial_id\tsession_id\tobserver_id\tkind\tsource_hash\ta_encoding_id\ta_codec\ta_quality\ta_bytes\
          \tb_encoding_id\tb_codec\tb_quality\tb_bytes\tintrinsic_w\tintrinsic_h\tstaircase_target\
          \tchoice\tdwell_ms\treveal_count\treveal_ms_total\tzoom_used\tviewport_w_css\tviewport_h_css\
          \torientation\timage_displayed_w_css\timage_displayed_h_css\tintrinsic_to_device_ratio\
@@ -698,8 +704,12 @@ pub async fn responses_tsv(pool: &SqlitePool) -> Result<String> {
          \tvisible_w_css\tvisible_h_css\tzoom_factor\tobserver_disposition\tobserver_r_s\
          \tobserver_outlier_rate\texclusion_enforced\tinput_mode\tkeyboard_used\tui_ready_ms\
          \tsource_corpus\tcontent_class\tswitch_count\tms_on_a\tms_on_b\tms_on_ref\
-         \trepeat_of_trial_id\toriginal_choice\trevised_at\trevision_count\tcant_tell_hint_ms\tsource_filename\n",
-    );
+         \trepeat_of_trial_id\toriginal_choice\trevised_at\trevision_count\tcant_tell_hint_ms\tsource_filename\tprocess_nudges_seen";
+
+pub async fn responses_tsv(pool: &SqlitePool) -> Result<String> {
+    let mut out = String::new();
+    out.push_str(RESPONSES_TSV_HEADER);
+    out.push('\n');
     let rows = sqlx::query(
         "SELECT t.id, t.session_id, s.observer_id, t.kind, t.source_hash, t.a_encoding_id, \
                 t.a_codec, t.a_quality, t.a_bytes, t.b_encoding_id, t.b_codec, t.b_quality, t.b_bytes, \
@@ -714,7 +724,7 @@ pub async fn responses_tsv(pool: &SqlitePool) -> Result<String> {
                 r.input_mode, r.keyboard_used, r.ui_ready_ms, t.source_corpus, t.content_class, \
                 r.switch_count, r.ms_on_a, r.ms_on_b, r.ms_on_ref, t.repeat_of_trial_id, \
                 r.original_choice, r.revised_at, r.revision_count, r.cant_tell_hint_ms, \
-                t.source_filename \
+                t.source_filename, r.process_nudges_seen \
          FROM trials t \
          JOIN responses r ON r.trial_id = t.id \
          JOIN sessions  s ON s.id = t.session_id \
@@ -729,8 +739,9 @@ pub async fn responses_tsv(pool: &SqlitePool) -> Result<String> {
     // unscreened numbers ignores the column. Dropping rows here would make the
     // two impossible to produce from one export, which is the whole point of
     // carrying a disposition instead of deleting data.
+    let columns = RESPONSES_TSV_HEADER.split('\t').count();
     for row in rows {
-        for i in 0..65 {
+        for i in 0..columns {
             if i > 0 {
                 out.push('\t');
             }

@@ -277,6 +277,25 @@ async fn smoke_full_loop() -> Result<()> {
         "expected header + 30 rows, got {response_lines}"
     );
 
+    // Every data row must carry exactly as many fields as the header names.
+    //
+    // The row loop reads columns by index against a count derived from the
+    // header, so a column added to the SELECT but not the header (or the
+    // reverse) shows up here as a width mismatch. It used to be a literal
+    // `0..65` forty lines from the header string, and a forgotten bump would
+    // have silently truncated the new column out of every export while the
+    // header still advertised it — no error, just a missing column nobody
+    // notices until the analysis needs it.
+    let mut lines = responses.lines();
+    let width = lines.next().expect("header").split('\t').count();
+    for (i, line) in lines.enumerate() {
+        assert_eq!(
+            line.split('\t').count(),
+            width,
+            "responses.tsv row {i} has a different field count than the header"
+        );
+    }
+
     // The TSV must come with a Link rel=describedby pointing at the manifest;
     // the manifest itself must carry build_commit + sha256 + row_count.
     let resp_full = client

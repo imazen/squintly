@@ -32,6 +32,14 @@ export interface NoticeOptions {
   tone?: NoticeTone;
   /// How long before it leaves on its own. Dismissable by tap throughout.
   ms?: number;
+  /// What raised it, as `data-notice` on the element.
+  ///
+  /// The layer holds one notice at a time and several unrelated things can
+  /// raise it, so "a notice is showing" does not say WHICH. A test that meant
+  /// to check the milestone matched the process nudge that had replaced it and
+  /// failed on a missing badge — the assertion was right and the locator could
+  /// not express what it meant. Identity belongs on the element.
+  kind?: string;
 }
 
 /// Default dwell. Long enough to read one line, short enough that nobody waits
@@ -75,6 +83,7 @@ export function notify(opts: NoticeOptions): () => void {
   el.type = 'button';
   el.className = `notice notice-${opts.tone ?? 'info'}`;
   el.setAttribute('aria-live', 'polite');
+  if (opts.kind) el.dataset.notice = opts.kind;
 
   if (opts.badge) {
     const b = document.createElement('span');

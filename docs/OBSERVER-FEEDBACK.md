@@ -94,8 +94,24 @@ The wording rule: describe **what to do**, never **how they did**. "Flick betwee
 them before answering" is process. "You are answering too fast to be accurate" is
 a judgement, and a judgement invites the observer to perform rather than report.
 
-Status: the fast-answer and no-switch nudges are **not built**. The can't-tell
-nudge is built and recorded.
+Status: **built** — `web/src/nudge.ts`, wired into `trial.ts::submit`. It fires
+only on the combination (`dwell < FAST_ANSWER_MS` **and**
+`switch_count <= MIN_COMPARE_SWITCHES`), because either alone is innocent: a
+slow answer with one look each is deliberation, and a fast answer after eight
+flicks is an easy pair. It yields to a milestone, waits `NUDGE_COOLDOWN`
+answers between firings, and stops after `MAX_NUDGES_PER_SESSION` — someone who
+has heard it three times has made a choice, and a fourth costs goodwill we
+cannot spare at two participants.
+
+`responses.process_nudges_seen` (migration 0024) records how many the observer
+had seen *before* each answer. Not because the nudge could bias `choice` — it
+is answer-neutral, unlike the can't-tell hint — but because it moves the effort
+columns. Somebody just told to flick will flick more on every later trial, and
+`switch_count` / `dwell_ms` are what difficulty is read from; without the column
+an analyst sees that step and attributes it to the stimuli. NULL means not
+recorded, which is deliberately not the same as a recorded zero.
+
+The magnification and welcome-back nudges in the table above are **not built**.
 
 ### 4.3 After a session — aggregate outcome feedback is safe
 

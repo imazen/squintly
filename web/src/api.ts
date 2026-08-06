@@ -138,6 +138,11 @@ export interface ResponseReq {
   /// ms into the trial when the UI suggested "can't tell"; null if it never
   /// did. A nudge toward one answer has to be conditionable in analysis.
   cant_tell_hint_ms: number | null;
+  /// How many process nudges this observer had seen in this session before
+  /// answering. Answer-neutral, so it cannot bias `choice` — but it changes
+  /// `switch_count` and `dwell_ms` on later trials, which is what effort is
+  /// read from. See `nudge.ts` and migration 0024.
+  process_nudges_seen: number;
   viewport_w_css: number;
   viewport_h_css: number;
   orientation: 'portrait' | 'landscape';

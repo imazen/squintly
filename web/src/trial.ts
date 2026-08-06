@@ -15,6 +15,7 @@ import {
 import { captureTrial, getObserverId, loadCalibration, loadStudyId, saveStudyId } from './conditions';
 import { showInstructions } from './instructions';
 import { notify } from './notify';
+import { considerNudge, newNudgeState } from './nudge';
 import { openSignInModal } from './auth-modal';
 import { showAdmin } from './admin';
 import {
@@ -1492,6 +1493,9 @@ export function startTrials(
   /// reward.
   const LAP_MILESTONES = [2, 10, 15, 20];
 
+  /// Per-session nudge budget. See `nudge.ts` — deliberately not persisted.
+  const nudgeState = newNudgeState();
+
   /// What to say at each mark on the FIRST lap.
   ///
   /// The wording has to stay honest: below 20 comparisons an observer's
@@ -1525,6 +1529,7 @@ export function startTrials(
   function showMilestone(into: number, per: number, firstLap: boolean) {
     const shown = into === 0 ? per : into;
     notify({
+      kind: 'milestone',
       badge: `${shown}/${per}`,
       text: firstLap
         ? milestoneText(shown, per)
@@ -1575,9 +1580,13 @@ export function startTrials(
         ms_on_b: Math.round(state.msOnView.b),
         ms_on_ref: Math.round(state.msOnView.ref),
         cant_tell_hint_ms: state.cantTellHintMs,
+        // BEFORE this answer — the count is advanced below, once the answer is
+        // in. A nudge cannot have influenced the trial it was raised on.
+        process_nudges_seen: nudgeState.shown,
         ...panGeometry(img, viewport),
         ...cond,
       });
+      let milestoneShown = false;
       if (ack) {
         const before = lapProgress?.done ?? 0;
         lapProgress = { done: ack.total_comparisons, per: ack.comparisons_per_lap };
@@ -1602,6 +1611,7 @@ export function startTrials(
           if (hit !== undefined) {
             const firstLap = ack.total_comparisons <= per;
             showMilestone(hit === per ? 0 : hit, per, firstLap);
+            milestoneShown = true;
             if (hit === per) {
               const bar = root.querySelector<HTMLElement>('#lap');
               bar?.classList.add('celebrate');
@@ -1610,6 +1620,17 @@ export function startTrials(
           }
         }
       }
+      // Steer, don't screen. With two participants there is nobody to be an
+      // outlier against and dropping either costs half the dataset, so the way
+      // to improve the data is to improve the answering while it is happening.
+      // The nudge yields to a milestone: a reward and a correction competing
+      // for the same two seconds means neither is read.
+      const nudge = considerNudge(
+        { kind: trial.kind, dwellMs: dwell, switchCount: state.switchCount },
+        nudgeState,
+        milestoneShown,
+      );
+      if (nudge) notify({ kind: 'nudge', text: nudge.text, tone: nudge.tone, ms: 3200 });
     } catch (e) {
       console.warn('record failed', e);
     }

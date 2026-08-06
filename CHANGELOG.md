@@ -3,6 +3,29 @@
 ## [Unreleased]
 
 ### Added
+- **Process nudges** (`web/src/nudge.ts`) — a short "flick between A and B a few
+  times" after an answer that was both fast and unswitched. With two expected
+  participants every peer-based screen in `src/exclusion.rs` is meaningless (no
+  peers to be an outlier against) and acting on one costs half the dataset, so
+  the way to improve the data is to improve the answering while it happens —
+  training-as-tuning, per zenpapers ch10 §10.2.3. Budgeted hard: it yields to a
+  milestone, waits 8 answers between firings, and stops after 3 per session.
+  Fires only on the *combination*, since a slow answer with one look each is
+  deliberation and a fast one after eight flicks is an easy pair.
+- **`responses.process_nudges_seen`** (migration 0024) — how many nudges the
+  observer had seen before each answer. The nudge is answer-neutral so it cannot
+  bias `choice`, but it moves `switch_count` and `dwell_ms`, which is what
+  difficulty is read from; without the column that step looks like the stimuli
+  got harder. NULL means not recorded, distinct from a recorded zero. Export
+  schema bumped to v10.
+- **`docs/OBSERVER-FEEDBACK.md`** — what feedback is safe to give an observer
+  and what destroys an instrument. Two hard prohibitions, now also CLAUDE.md
+  invariants: never reveal that a trial is a repeat (the observer recalls
+  instead of judging, and the noise ceiling inflates toward 1.0), and never give
+  correctness feedback on a scored trial (it identifies the attention checks and
+  trains the observer toward the metric under test). Outcome feedback belongs in
+  training and in end-of-session aggregate; during a session, feedback is about
+  process.
 - **A notifications component** (`web/src/notify.ts`) — one place that knows how
   a transient message appears, how long it stays, how it leaves and how it is
   dismissed, rendered into a layer that outlives screen re-renders.

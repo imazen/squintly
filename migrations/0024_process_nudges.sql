@@ -1,0 +1,19 @@
+-- How many process nudges the observer had seen before giving this answer.
+--
+-- The nudge itself is answer-neutral ("flick between A and B a few times"), so
+-- unlike the can't-tell hint it cannot bias `choice` toward any outcome and
+-- does not need recording for that reason.
+--
+-- It does change the columns that measure EFFORT. `switch_count`, `dwell_ms`
+-- and `ms_on_a/b/ref` are the difficulty signal — a pair flipped six times over
+-- twenty seconds sits near the observer's threshold — and an observer who has
+-- just been told to flick between the arms will flick more on every later
+-- trial. Without this column an analyst reading effort across a session would
+-- see that step and attribute it to the stimuli.
+--
+-- NULLABLE, and NULL means "not recorded" — rows written before this migration.
+-- 0 means recorded and none seen yet, which is a different fact. The
+-- leaderboard's DEFAULT-0 incident (91 of the first 154 responses predating
+-- migration 0019, median swaps reported as 0 for everybody) is the precedent
+-- for not collapsing those two into one value.
+ALTER TABLE responses ADD COLUMN process_nudges_seen INTEGER;

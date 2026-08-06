@@ -3,6 +3,37 @@
 Browser-based psychovisual data collection for zensim. See [SPEC.md](SPEC.md) for the
 design and [README.md](README.md) for the elevator pitch.
 
+## NEVER PAUSE NEAR THE END OF CONTEXT — DOC IT AND PUSH THROUGH COMPACTION
+
+**Running low on context is not a reason to stop, hand off, or ask whether to
+continue.** Compaction is the harness's job and it works; the way to survive it
+is not to wind down but to make the durable record complete enough that the next
+window resumes mid-stride.
+
+When context is running short, the correct sequence is:
+
+1. **Write everything durable down, in the RIGHT files** — CLAUDE.md invariants,
+   the relevant `docs/*.md`, CHANGELOG, and `.workongoing` with the literal next
+   commands. Never a CONTEXT-HANDOFF.md (see "NEVER DELAY DUE TO CONTEXT").
+2. **Correct historical docs in place, with editorial notes.** A dated document
+   that is now wrong is worse than no document, because it is read and believed.
+   Do not rewrite history silently: mark the correction `[note YYYY-MM-DD]`,
+   state what the old claim was and what the measurement says instead, and leave
+   both readable. Stale dated docs are still in scope — "it says 2026-05-01 at
+   the top" is not permission to leave it lying.
+3. **Commit and push** so nothing depends on this window surviving.
+4. **Keep working.** Then continue the assigned task — and the *implied* one:
+   the next obvious step in the work, not merely the literal instruction.
+
+Forbidden: "I'm running low on context, so I'll stop here", "let me leave this
+for a fresh session", ending a turn with a status report when there is obvious
+next work, or asking permission to continue something already asked for. A
+status report is what you write on the way past, not instead of the next step.
+
+This is the counterpart to the continuation discipline in the global CLAUDE.md,
+sharpened for the specific failure of treating a shrinking context window as a
+natural stopping point. It is not.
+
 ## Architecture in one paragraph
 
 Single Rust binary (axum). Embeds the Vite-built TS frontend via `rust-embed`. SQLite
@@ -531,7 +562,7 @@ one this hits hardest.
 
 ## Known Bugs
 
-### ICC profiles are dropped by some encoders and kept by others (2026-08-06)
+### ICC: 16 sources are Display P3, and half the encoders threw the profile away (2026-08-06, FIXED in the builder)
 
 **Measured on the live corpus build, not inferred.** 16 of 168 sources (9.5%)
 carry an ICC profile. For each of those 16, across the 17-rung ladder:
@@ -542,6 +573,18 @@ carry an ICC profile. For each of those 16, across the 17-rung ladder:
 | libjpeg-turbo (Pillow) | **no** — 272 encodings |
 | libwebp (Pillow) | **no** — 272 encodings |
 | libavif (Pillow) | **yes** — 272 encodings |
+
+**All 16 profiles are `Display P3 Gamut with sRGB Transfer`** — genuinely
+wide-gamut, not a no-op tag. Converting one to sRGB moves saturated pixels by up
+to **79 levels per channel** (measured; a saturated red goes
+`(237,61,37) -> (255,30,0)`). That is not a subtlety, it is a different picture.
+
+**This is very likely a second and larger cause of the "desaturated reds"
+report** recorded further down as chroma subsampling. That investigation
+measured 4:2:0 effects of ~5-10% and never checked ICC; on these 16 sources the
+profile loss is a far bigger colour move, and it hits exactly the saturated reds
+that were reported. The subsampling finding stands on its own merits — but it is
+not the whole explanation, and the note below should be read with this one.
 
 Two consequences, and the first is a pixels bug:
 
@@ -559,7 +602,22 @@ This ALSO corrects the investigation note further down that says "Nothing in the
 corpus carries an ICC profile — measured: `icc_profile` is absent on all of
 them". That was true of an older build and is not true now; do not rely on it.
 
-**The right fix is not to patch the hand-rolled paths.** `zenmetrics-cli`
+**Fixed 2026-08-06 in `load_rgb`**: sources are now converted through their
+profile to sRGB once at build time, and the profile is then STRIPPED (Pillow's
+`profileToProfile` attaches the destination profile, which would have
+reintroduced the same split). Convert-and-strip is chosen over preserve-
+everywhere because it depends on Pillow alone rather than on four encoders each
+continuing to agree about metadata they treat as optional. A profile that fails
+to convert skips the source rather than being assumed sRGB — a missing image is
+visible in the stratum counts, a mis-coloured one is not.
+**The v6 corpus was built BEFORE this fix and must be rebuilt before publishing.**
+
+Note that switching scorers does NOT fix this: verified 2026-08-06 that
+`zenmetrics batch --metric ssim2` and `squintly-score` agree to 0.3 ssim2 points
+on an ICC-carrying source, i.e. **neither applies ICC** — they both read raw
+samples. The confound was in the corpus, not the metric.
+
+**The right fix for the DUPLICATION is not to patch the hand-rolled paths.** `zenmetrics-cli`
 already does correct decode + colour handling and computes ssim2 (and five other
 metrics) — `squintly-score` re-implemented decoding for PNG/JPEG/WebP/AVIF/JXL
 that zenmetrics already had. Prefer wiring zenmetrics-cli in over extending

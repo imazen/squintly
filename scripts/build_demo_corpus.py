@@ -53,6 +53,7 @@ Then publish it: `just publish-corpus <version>` (scripts/publish_corpus_r2.py).
 from __future__ import annotations
 
 import argparse
+import io
 import csv
 import hashlib
 import importlib.util
@@ -511,11 +512,68 @@ def bucket_of(max_dim: int) -> str:
 
 
 def load_rgb(path: Path) -> Image.Image | None:
+    """Decode to 8-bit sRGB, converting through any embedded ICC profile.
+
+    # Why this converts rather than passing the profile through
+
+    Measured 2026-08-06 on the previous build: 16 of 168 sources carried an ICC
+    profile, and the encoders DISAGREED about what to do with it — jpegli and
+    libavif preserved it, libjpeg-turbo and libwebp dropped it, 272 encodings
+    each way. A browser then renders the source through its profile and a
+    stripped JPEG as sRGB, so on a wide-gamut source the observer sees a colour
+    shift that is not compression and attributes it to the codec. That is a
+    pixels bug by this project's rules, not a cosmetic one.
+
+    Two ways to make it consistent: preserve everywhere, or convert once and
+    strip. Converting is chosen because it is the one that cannot rot — it
+    depends on Pillow alone, not on four encoders each continuing to agree about
+    metadata they treat as optional. After this, the source and every encoding
+    of it are sRGB with no profile, so they are colorimetrically identical in
+    interpretation and any difference an observer sees is compression.
+
+    It also makes the metric honest: neither `squintly-score` nor
+    `zenmetrics batch` applies ICC (verified 2026-08-06 — they agree to 0.3
+    ssim2 points on an ICC-carrying source, i.e. both read raw samples). With
+    profiles converted at build time, "raw samples" and "what the observer sees"
+    finally mean the same thing.
+    """
     try:
         im = Image.open(path)
         im.load()
     except Exception:
         return None
+
+    icc = im.info.get("icc_profile")
+    if icc:
+        try:
+            from PIL import ImageCms
+            src_prof = ImageCms.ImageCmsProfile(io.BytesIO(icc))
+            dst_prof = ImageCms.createProfile("sRGB")
+            # Perceptual rendering: these are pictures being judged by eye, not
+            # colorimetric proofs, and out-of-gamut clipping (the relative-
+            # colorimetric default) would itself be a visible artefact that no
+            # codec caused.
+            im = ImageCms.profileToProfile(
+                im,
+                src_prof,
+                dst_prof,
+                renderingIntent=ImageCms.Intent.PERCEPTUAL,
+                outputMode="RGBA" if im.mode in ("RGBA", "LA", "P") else "RGB",
+            )
+        except Exception as e:
+            # A broken profile must not silently become "assume sRGB" — that is
+            # the same confound with a different cause. Skip the source instead;
+            # a missing image is visible in the stratum counts, a mis-coloured
+            # one is not.
+            print(f"  ICC conversion failed for {path.name}: {e}; skipping source")
+            return None
+        # profileToProfile ATTACHES the destination profile. Leaving it on would
+        # reintroduce the split it just closed — jpegli/libavif would carry an
+        # sRGB profile and libjpeg-turbo/libwebp would not. Untagged sRGB is
+        # what every browser assumes by default, so stripping is what makes all
+        # five files agree.
+        im.info.pop("icc_profile", None)
+
     if im.mode in ("RGBA", "LA", "P"):
         im = im.convert("RGBA")
         bg = Image.new("RGBA", im.size, (255, 255, 255, 255))

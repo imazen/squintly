@@ -23,3 +23,16 @@
 #   ssim2 gap 10+   n=24 100%
 # Median adjacent-rung gaps on the [15,30,45,60,80,92] ladder:
 #   15->30 17.3 | 30->45 7.9 | 45->60 5.7 | 60->80 8.0 | 80->92 6.2
+
+# ---------------------------------------------------------------------------
+# SUPERSEDED 2026-08-06 by the 17-rung ladder (corpus v6, 11,424 encodings).
+# Results of the rebuild, same scorer, --fs against the local store:
+#
+#   max adjacent-rung ssim2 gap   17.3  ->  5.8   (1 of 16 gaps still over 5)
+#   encodings scoring >= 90       ~0    ->  863 / 11,424
+#   range                         -53.5..94.5  ->  -53.5..96.6
+#   median at q100 by codec       jpegli 93.4 | libjpeg-turbo 89.2
+#                                 libavif 88.9 | libwebp 87.6
+#   runtime                       3491s, peak RSS 1.11 GiB, 168/168 sources
+#
+# The one remaining gap over 5 points is q18->q22 at 5.8.

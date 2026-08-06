@@ -413,9 +413,13 @@ web component from `~/work/efficient-ui/`. No framework.
   parquets under `/mnt/v/output/imazen-26-features/` are zensim SOURCE features
   with no metric columns, and the one sweep carrying `score_ssim2` is 100%
   zenjxl on differently-named files.
-- **JXL rungs reach the near-lossless band, but not every browser can see
-  them.** The four builder codecs top out near ssim2 86–90 even at q100, so
-  `scripts/add_jxl_rungs.py` adds high-q JXL. Chromium keeps JXL behind a flag;
+- **JXL enriches the near-lossless band; it is not the only way in.** Measured
+  2026-08-06 on the 17-rung corpus: jpegli medians **93.4 at q100** and 863 of
+  11,424 encodings score ≥90, where the old q92-capped ladder had essentially
+  none. (An earlier note here said the builder codecs "top out near 86–90 even
+  at q100" — that was extrapolated from the OLD ladder, which stopped at q92,
+  and the measurement corrects it.) `scripts/add_jxl_rungs.py` adds high-q JXL
+  as a fifth codec and extra density up top, not as a rescue. Chromium keeps JXL behind a flag;
   the codec probe means the sampler only serves what a session declared support
   for, so they degrade safely — but on a panel with no JXL-capable browser they
   are scored and never judged.

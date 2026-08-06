@@ -4,11 +4,18 @@
 
 # Why JXL specifically
 
-The four codecs the builder produces top out around ssim2 86-90 even at q100
-(measured; see benchmarks/). So the corpus has never contained the near-lossless
-band, which is where compression product decisions actually live and which
-zensim's own notes call its weak zone. JXL reaches it, so these rungs are what
-finally put that band inside the grid rather than beyond its ceiling.
+[measured 2026-08-06, correcting an earlier claim in this docstring]
+
+With q100 in the ladder the near-lossless band is ALREADY reachable: jpegli
+medians ssim2 93.4 at q100, and 863 of 11,424 encodings score >=90. The earlier
+claim that the builder codecs "top out around 86-90 even at q100" was
+extrapolated from the old q92-capped grid and is wrong.
+
+So JXL is an ENRICHMENT rather than a rescue: a fifth codec, and extra density
+in the 90-100 band where the other four thin out (only jpegli clears 93). That
+band is where compression product decisions live and is zensim's documented weak
+zone, so more of it is worth having — but the band is no longer empty without
+JXL, and that changes how urgent these rungs are.
 
 # The caveat an operator has to know
 

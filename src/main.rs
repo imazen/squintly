@@ -157,6 +157,13 @@ async fn main() -> Result<()> {
         "studies"
     );
 
+    let metric_scores = handlers::load_metric_scores(&pool).await.unwrap_or_else(|e| {
+        // A missing or unreadable metrics table is not a reason to refuse to
+        // serve trials — the sampler has a heuristic fallback, and the study
+        // ran on it for months.
+        tracing::warn!(error = %e, "could not load metric scores; trivial-pair filter falls back to the heuristic");
+        Default::default()
+    });
     let state = Arc::new(AppState {
         pool,
         coefficient: coeff,
@@ -164,6 +171,10 @@ async fn main() -> Result<()> {
         anchors: tokio::sync::RwLock::new(anchors),
         source_flags: tokio::sync::RwLock::new(source_flags),
         suggestions,
+        // Loaded at boot so the trivial-pair filter is metric-driven from the
+        // first trial after a restart, rather than falling back to the
+        // encoder-metadata heuristic until something happens to refresh it.
+        metric_scores: tokio::sync::RwLock::new(metric_scores),
     });
 
     // Spawn the nightly observer_grades batch. Fires once on startup so a

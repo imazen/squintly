@@ -62,6 +62,7 @@ async fn squintly_server() -> Result<SocketAddr> {
         suggestions: squintly::suggestion_store::SuggestionStore::LocalDisk(
             squintly::suggestion_store::LocalDiskStore::new(tempfile::tempdir()?.keep()),
         ),
+        metric_scores: Default::default(),
     });
 
     let api = Router::new()

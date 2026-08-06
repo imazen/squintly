@@ -40,9 +40,56 @@ pub struct AppState {
     /// Storage backend for public-suggestion uploads. R2 in production,
     /// local-disk fallback for dev/tests. See `src/suggestion_store.rs`.
     pub suggestions: crate::suggestion_store::SuggestionStore,
+    /// Ingested metric scores for the trivial-pair filter, keyed by encoding id.
+    ///
+    /// Cached rather than queried per trial: `next_trial` runs on every answer
+    /// and this is a whole-corpus lookup. Refreshed when metrics are ingested
+    /// and at boot, which is often enough for a table that only changes when an
+    /// operator uploads a file.
+    ///
+    /// Empty until somebody ingests, and that is a working state — the sampler
+    /// falls back to the encoder-metadata heuristic.
+    pub metric_scores: tokio::sync::RwLock<crate::sampling::MetricScores>,
 }
 
 pub type SharedState = Arc<AppState>;
+
+/// Which metric decides whether a pair is trivial.
+///
+/// ssim2 by name, because [`crate::sampling::TRIVIAL_SSIM2_GAP`] is expressed
+/// on ssim2's 0–100 scale. The gap test itself is direction-independent — it
+/// compares |a − b| — but the SCALE is not: 25 points is most of ssim2's useful
+/// range and meaningless on butteraugli (0..∞) or dssim (0..1). So this loader
+/// accepts only the ssim2 family rather than whatever happens to be ingested.
+pub const TRIVIAL_FILTER_METRIC_PREFIX: &str = "ssim2";
+
+/// Load metric scores for the trivial-pair filter.
+///
+/// Picks the ssim2-family metric with the widest coverage when several have
+/// been ingested — `ssim2` and `ssim2_gpu` are the same measurement from
+/// different backends, and preferring the one that covers more encodings means
+/// more pairs get the good filter rather than the fallback.
+pub async fn load_metric_scores(
+    pool: &SqlitePool,
+) -> Result<crate::sampling::MetricScores, sqlx::Error> {
+    let best: Option<(String,)> = sqlx::query_as(
+        "SELECT metric FROM encoding_metrics WHERE metric LIKE ? \
+         GROUP BY metric ORDER BY COUNT(*) DESC LIMIT 1",
+    )
+    .bind(format!("{TRIVIAL_FILTER_METRIC_PREFIX}%"))
+    .fetch_optional(pool)
+    .await?;
+    let Some((metric,)) = best else {
+        return Ok(Default::default());
+    };
+    let rows: Vec<(String, f64)> =
+        sqlx::query_as("SELECT encoding_id, value FROM encoding_metrics WHERE metric = ?")
+            .bind(&metric)
+            .fetch_all(pool)
+            .await?;
+    tracing::info!(metric, scores = rows.len(), "loaded trivial-pair metric");
+    Ok(rows.into_iter().collect())
+}
 
 /// Load `corpus_anchors` from the database, classifying entries by `role`.
 pub async fn load_anchor_pool(pool: &SqlitePool) -> Result<AnchorPool, sqlx::Error> {
@@ -573,6 +620,7 @@ pub async fn next_trial(
         allowed.as_ref(),
         Some(&*anchors),
         Some(&*flags),
+        &*state.metric_scores.read().await,
     )
     .ok_or_else(|| {
         // Name the content restriction. A study that filters its pool and then

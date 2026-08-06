@@ -1,0 +1,25 @@
+# SSIMULACRA2 for every encoding in the live squintly corpus.
+#
+# corpus:        imazen26-v5-test-noai (168 sources / 4032 encodings, test split, no AI strata)
+# produced by:   cargo run --release --bin squintly-score
+# commit:        see `git log -1` at 2026-08-06
+# implementation: fast-ssim2 0.8.2 (imazen), CPU, imgref feature
+# runtime:       1570s wall, 6-way concurrency, peak RSS 1.10 GiB (run-heavy)
+# coverage:      4032/4032 encodings — no failures, no gaps
+# range:         -53.5 .. 94.5, median 69.3
+#
+# The encodings are FETCHED FROM THE LIVE STORE and decoded, not re-encoded, so
+# these scores are of exactly the bytes observers were shown.
+#
+# Nothing existing could be reused: all 16 parquets under
+# /mnt/v/output/imazen-26-features/ are zensim SOURCE features with no metric
+# columns, and the one sweep carrying `score_ssim2`
+# (/mnt/v/output/dense-bal1000-sweep-2026-06-25.omni.tsv, 444k rows) is 100%
+# zenjxl on differently-named files — a codec this corpus does not contain.
+#
+# Calibration derived from this file, against 84 live human comparisons:
+#   ssim2 gap 0-5   n=16  94% human agreement
+#   ssim2 gap 5-10  n=44 100%
+#   ssim2 gap 10+   n=24 100%
+# Median adjacent-rung gaps on the [15,30,45,60,80,92] ladder:
+#   15->30 17.3 | 30->45 7.9 | 45->60 5.7 | 60->80 8.0 | 80->92 6.2

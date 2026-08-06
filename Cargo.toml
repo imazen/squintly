@@ -12,6 +12,13 @@ readme = "README.md"
 name = "squintly"
 path = "src/main.rs"
 
+# Offline metric scorer. A separate binary rather than a server route because it
+# fetches and decodes the whole corpus — thousands of blobs, minutes of CPU —
+# which is an operator's batch job, not something a web request should ever do.
+[[bin]]
+name = "squintly-score"
+path = "src/bin/score.rs"
+
 [lib]
 path = "src/lib.rs"
 
@@ -56,6 +63,9 @@ image-webp = "0.2"
 zenavif = { version = "0.1.7", default-features = false }
 zenjxl-decoder = { version = "0.3.8", default-features = false }
 parquet = { version = "59.1.0", default-features = false, features = ["zstd", "snap", "flate2", "brotli", "lz4", "flate2-rust_backend"] }
+fast-ssim2 = { version = "0.8.2", features = ["imgref"] }
+imgref = "1.12.2"
+futures-util = "0.3.33"
 
 [dev-dependencies]
 tempfile = "3"

@@ -120,6 +120,17 @@ pub async fn ingest(
     .await?;
     summary.unmatched_encodings = summary.encodings.saturating_sub(matched.0 as usize);
 
+    // Refresh the sampler's cache in place. Without this an ingest changes
+    // nothing until the next restart, and an operator would reasonably conclude
+    // the filter does not work — the symptom being identical to no scores at
+    // all, because that is exactly the state the sampler would still be in.
+    match crate::handlers::load_metric_scores(&state.pool).await {
+        Ok(scores) => *state.metric_scores.write().await = scores,
+        Err(e) => {
+            tracing::warn!(error = %e, "ingest stored, but the sampler cache was not refreshed")
+        }
+    }
+
     tracing::info!(
         rows = summary.rows,
         encodings = summary.encodings,

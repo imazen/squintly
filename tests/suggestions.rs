@@ -53,6 +53,7 @@ async fn boot_app() -> Result<(SocketAddr, sqlx::SqlitePool, std::path::PathBuf)
         suggestions: squintly::suggestion_store::SuggestionStore::LocalDisk(
             squintly::suggestion_store::LocalDiskStore::new(dir.clone()),
         ),
+        metric_scores: Default::default(),
     });
     let api = Router::new()
         .route(

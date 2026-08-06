@@ -57,6 +57,7 @@ async fn boot_app() -> Result<(SocketAddr, sqlx::SqlitePool)> {
         suggestions: squintly::suggestion_store::SuggestionStore::LocalDisk(
             squintly::suggestion_store::LocalDiskStore::new(dir),
         ),
+        metric_scores: Default::default(),
     });
     // Set EXACTLY ONCE for the whole binary.
     //

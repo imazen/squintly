@@ -350,12 +350,18 @@ impl SourceFlagMap {
 ///
 /// `anchors` and `flags` are optional; when present, the sampler will mix in
 /// anchor and honeypot trials per `cfg.p_anchor` / `cfg.p_honeypot`.
+/// `scores` carries ingested metric values keyed by encoding id, and decides
+/// what counts as a trivial pair. Empty until somebody runs `squintly-score`
+/// and ingests the result, in which case every pair falls back to the
+/// encoder-metadata heuristic — which is what shipped, and which cannot see
+/// that q15↔q30 is adjacent AND blatant on the live ladder.
 pub fn pick_trial(
     manifest: &Manifest,
     cfg: &SamplerConfig,
     allowed_codecs: Option<&HashSet<String>>,
     anchors: Option<&AnchorPool>,
     flags: Option<&SourceFlagMap>,
+    scores: &MetricScores,
 ) -> Option<TrialPlan> {
     if manifest.sources.is_empty() {
         return None;
@@ -526,7 +532,7 @@ pub fn pick_trial(
             });
             let lo = *sorted.first()?;
             let hi = *sorted.last()?;
-            if !is_trivial_pair(lo, hi) {
+            if !is_trivial_pair_scored(lo, hi, scores) {
                 // This source's ladder is too narrow to be unambiguous. Better
                 // no control than one whose "correct" answer is arguable.
                 return None;
@@ -566,7 +572,7 @@ pub fn pick_trial(
                 let i = r2.random_range(0..sorted.len() - 1);
                 let a = sorted[i];
                 let b = sorted[i + 1];
-                if !is_trivial_pair(a, b) {
+                if !is_trivial_pair_scored(a, b, scores) {
                     return Some(TrialPlan::Pair {
                         source: (*src).clone(),
                         a: a.clone(),
@@ -688,14 +694,84 @@ fn pick_anchor<R: Rng + ?Sized>(
     })
 }
 
-/// CID22-style trivial-triplet filter. A pair is trivial when its outcome is
-/// foregone — answering it eats opinions without moving the BT posterior.
+/// How far apart two encodings must score before the answer is foregone.
+///
+/// In SSIMULACRA2 units (0–100, higher better).
+///
+/// # Calibrated against our own observers, not assumed
+///
+/// Measured 2026-08-06 on 84 live comparisons where both arms have an ingested
+/// ssim2, agreement between the human answer and the metric's ordering:
+///
+/// | ssim2 gap | n  | humans agree |
+/// |-----------|----|--------------|
+/// | 0–5       | 16 | 94%          |
+/// | 5–10      | 44 | 100%         |
+/// | 10+       | 24 | 100%         |
+///
+/// So the answer stops being in doubt somewhere around a **5-point** gap. That
+/// is the number the data supports.
+///
+/// **This constant is 15, and the gap between 5 and 15 is a compromise worth
+/// naming rather than hiding.** The live ladder `[15,30,45,60,80,92]` has
+/// median adjacent-rung gaps of 17.3 / 7.9 / 5.7 / 8.0 / 6.2 — so a threshold
+/// of 5 would reject nearly every pair the corpus can build, and the sampler
+/// would have almost nothing left to serve. 15 removes the blatant tier
+/// (q15↔q30, median 17.3, which is what made the first trials of a session feel
+/// like a formality) while leaving the rest servable.
+///
+/// The real fix is not a threshold. It is a **denser quality ladder**, which is
+/// imazen/squintly#8 rows 5–6: the instrument currently cannot pose a hard
+/// question because the corpus contains almost no hard pairs. Revisit this
+/// constant downward when the ladder gains rungs.
+///
+/// Note also what the table above says about the study's headline question:
+/// ssim2 tracked these observers essentially perfectly on non-photo content.
+/// That is 84 comparisons against an unmeasured noise ceiling, so it is a
+/// direction of travel and not a result — see `disposition.rs`.
+pub const TRIVIAL_SSIM2_GAP: f64 = 15.0;
+
+/// Metric scores for the encodings in play, when any have been ingested.
+///
+/// `None` for an encoding with no score — which is the normal state until
+/// somebody runs `squintly-score` and ingests the result, and stays normal for
+/// encodings a metric could not handle. A missing score falls back to the
+/// heuristic below rather than admitting the pair, because "we do not know" is
+/// not "it is fine".
+pub type MetricScores = std::collections::HashMap<String, f64>;
+
+/// CID22-style trivial-triplet filter, using a perceptual metric when one is
+/// available.
+///
+/// A pair is trivial when its outcome is foregone — answering it eats opinions
+/// without moving the BT posterior, and it is what makes the first trials of a
+/// session feel like a formality rather than a judgement.
+///
+/// This is README lever #4, which promised a metric-driven filter and shipped
+/// the heuristic below instead. With scores in `encoding_metrics` the promise
+/// is keepable: two encodings whose ssim2 differs by more than
+/// [`TRIVIAL_SSIM2_GAP`] are not a comparison, they are a demonstration.
+pub fn is_trivial_pair_scored(a: &EncodingMeta, b: &EncodingMeta, scores: &MetricScores) -> bool {
+    if let (Some(sa), Some(sb)) = (scores.get(&a.id), scores.get(&b.id)) {
+        // The metric has an opinion about both. Trust it over the heuristic —
+        // it is measuring the thing the heuristic was approximating.
+        return (sa - sb).abs() > TRIVIAL_SSIM2_GAP;
+    }
+    is_trivial_pair(a, b)
+}
+
+/// CID22-style trivial-triplet filter, on encoder metadata alone.
+///
+/// The fallback for encodings with no ingested score. Kept because it is what
+/// runs before anybody ingests anything, and because a metric can fail on an
+/// individual image.
 ///
 /// Heuristic: cross-codec pairs whose encoded-bytes ratio exceeds 4× are
 /// trivial (the bigger one almost certainly looks better). Same-codec pairs
 /// at non-adjacent quality steps with > 30 grid units between them are
-/// trivial. Adjacent same-codec pairs are never trivial — that's the
-/// information-bearing measurement.
+/// trivial. Adjacent same-codec pairs are never trivial — which is the
+/// heuristic's blind spot, since on the live ladder q15↔q30 is adjacent AND
+/// blatant.
 pub fn is_trivial_pair(a: &EncodingMeta, b: &EncodingMeta) -> bool {
     if a.codec == b.codec {
         // Same codec: trivial only at far-apart quality steps.
@@ -994,6 +1070,7 @@ mod tests {
                 Some(&allowed),
                 None,
                 None,
+                &Default::default(),
             ) {
                 match plan {
                     TrialPlan::Single { encoding, .. } => {
@@ -1063,6 +1140,7 @@ mod tests {
                 Some(&allowed),
                 None,
                 None,
+                &Default::default(),
             ) {
                 match plan {
                     TrialPlan::Single { encoding, .. } => {
@@ -1145,7 +1223,8 @@ mod tests {
 
         let mut seen = std::collections::HashSet::new();
         for _ in 0..400 {
-            let plan = pick_trial(&manifest, &cfg, None, None, None).expect("pool is non-empty");
+            let plan = pick_trial(&manifest, &cfg, None, None, None, &Default::default())
+                .expect("pool is non-empty");
             let corpus = match &plan {
                 TrialPlan::Single { source, .. } => source.corpus.clone(),
                 TrialPlan::Pair { source, .. } => source.corpus.clone(),
@@ -1195,11 +1274,29 @@ mod tests {
             ..SamplerConfig::default()
         };
         assert!(
-            pick_trial(&manifest, &restricted, None, None, None).is_none(),
+            pick_trial(
+                &manifest,
+                &restricted,
+                None,
+                None,
+                None,
+                &Default::default()
+            )
+            .is_none(),
             "an unknown stratum must not be admitted to a restricted study"
         );
         // The same manifest still serves an unrestricted study.
-        assert!(pick_trial(&manifest, &SamplerConfig::default(), None, None, None).is_some());
+        assert!(
+            pick_trial(
+                &manifest,
+                &SamplerConfig::default(),
+                None,
+                None,
+                None,
+                &Default::default()
+            )
+            .is_some()
+        );
     }
 
     /// The bug: `try_pair` returns `(sorted[i], sorted[i+1])` from a
@@ -1253,7 +1350,8 @@ mod tests {
 
         let mut seen = std::collections::HashSet::new();
         for _ in 0..300 {
-            let plan = pick_trial(&manifest, &cfg, None, None, None).expect("a pair exists");
+            let plan = pick_trial(&manifest, &cfg, None, None, None, &Default::default())
+                .expect("a pair exists");
             let TrialPlan::Pair { a, b, .. } = plan else {
                 panic!("restoration study must never emit a single");
             };
@@ -1335,7 +1433,7 @@ mod tests {
             pairwise_only: true,
         };
         assert!(
-            pick_trial(&manifest, &cfg, None, None, None).is_none(),
+            pick_trial(&manifest, &cfg, None, None, None, &Default::default()).is_none(),
             "no restorations in the corpus must mean no trial, not a codec pair"
         );
         // The same manifest still serves the ordinary adjacent-quality study.
@@ -1344,7 +1442,7 @@ mod tests {
             p_single: 0.0,
             ..SamplerConfig::default()
         };
-        assert!(pick_trial(&manifest, &normal, None, None, None).is_some());
+        assert!(pick_trial(&manifest, &normal, None, None, None, &Default::default()).is_some());
     }
 
     /// The rank-agreement study had no controls at all: `p_honeypot` and
@@ -1386,7 +1484,8 @@ mod tests {
 
         let mut goldens = 0;
         for _ in 0..200 {
-            let plan = pick_trial(&manifest, &cfg, None, None, None).expect("a pair exists");
+            let plan = pick_trial(&manifest, &cfg, None, None, None, &Default::default())
+                .expect("a pair exists");
             let TrialPlan::Pair {
                 a,
                 b,
@@ -1457,7 +1556,8 @@ mod tests {
             pairwise_only: true,
         };
         for _ in 0..100 {
-            let plan = pick_trial(&manifest, &cfg, None, None, None).expect("a pair exists");
+            let plan = pick_trial(&manifest, &cfg, None, None, None, &Default::default())
+                .expect("a pair exists");
             let TrialPlan::Pair { is_golden, .. } = plan else {
                 panic!("expected a pair");
             };
@@ -1520,7 +1620,8 @@ mod tests {
         let mut photo = 0usize;
         const N: usize = 4000;
         for _ in 0..N {
-            let plan = pick_trial(&manifest, &cfg, None, None, None).expect("a pair exists");
+            let plan = pick_trial(&manifest, &cfg, None, None, None, &Default::default())
+                .expect("a pair exists");
             let corpus = match &plan {
                 TrialPlan::Single { source, .. } | TrialPlan::Pair { source, .. } => {
                     source.corpus.clone().unwrap()
@@ -1772,7 +1873,14 @@ mod tests {
 
         let mut pairs = 0;
         for _ in 0..300 {
-            match pick_trial(&manifest, &cfg, Some(&allowed), Some(&pool), None) {
+            match pick_trial(
+                &manifest,
+                &cfg,
+                Some(&allowed),
+                Some(&pool),
+                None,
+                &Default::default(),
+            ) {
                 Some(TrialPlan::Pair { .. }) => pairs += 1,
                 Some(TrialPlan::Single { .. }) => {
                     panic!("pairwise_only emitted a single-stimulus trial")
@@ -1818,6 +1926,7 @@ mod tests {
                     Some(&allowed),
                     None,
                     None,
+                    &Default::default(),
                 )
             })
             .filter(|p| matches!(p, TrialPlan::Single { .. }))
@@ -1847,5 +1956,89 @@ mod tests {
             "unparseable keeps the default"
         );
         unsafe { std::env::remove_var("SQUINTLY_P_SINGLE") };
+    }
+}
+
+#[cfg(test)]
+mod trivial_filter_tests {
+    use super::*;
+
+    fn enc(id: &str, codec: &str, q: f32, bytes: u64) -> EncodingMeta {
+        EncodingMeta {
+            id: id.to_string(),
+            source_hash: "src".into(),
+            codec: codec.to_string(),
+            quality: Some(q),
+            effort: None,
+            bytes,
+        }
+    }
+
+    #[test]
+    fn a_scored_pair_far_apart_is_trivial_even_though_the_rungs_are_adjacent() {
+        // The case the heuristic could not see. On the live ladder q15 and q30
+        // are ADJACENT, so `is_trivial_pair` calls them information-bearing —
+        // but they measure 35.5 and 56.4 in ssim2 (real values, first source of
+        // imazen26-v5-test-noai), a 21-point gap nobody is in doubt about.
+        let a = enc("a", "jpegli", 15.0, 1000);
+        let b = enc("b", "jpegli", 30.0, 1430);
+        assert!(!is_trivial_pair(&a, &b), "the heuristic admits it");
+
+        let mut scores = MetricScores::new();
+        scores.insert("a".into(), 30.0);
+        scores.insert("b".into(), 60.0);
+        assert!(
+            is_trivial_pair_scored(&a, &b, &scores),
+            "the metric sees a 30-point gap and refuses it"
+        );
+    }
+
+    #[test]
+    fn a_scored_pair_close_together_is_kept_however_far_apart_the_rungs_are() {
+        // The mirror case: two encodings that LOOK similar are worth asking
+        // about even when their quality numbers are far apart, which happens
+        // whenever a source is easy for one encoder and hard for another.
+        let a = enc("a", "jpegli", 30.0, 1000);
+        let b = enc("b", "jpegli", 92.0, 4000);
+        assert!(is_trivial_pair(&a, &b), "the heuristic refuses it on q-gap");
+
+        let mut scores = MetricScores::new();
+        scores.insert("a".into(), 84.0);
+        scores.insert("b".into(), 88.0);
+        assert!(
+            !is_trivial_pair_scored(&a, &b, &scores),
+            "four ssim2 points apart is a real comparison"
+        );
+    }
+
+    #[test]
+    fn a_missing_score_falls_back_rather_than_admitting_the_pair() {
+        // "We do not know" is not "it is fine". An unscored encoding must get
+        // the heuristic, not a free pass — otherwise ingesting a partial
+        // metrics file would quietly loosen the filter on everything it missed.
+        let a = enc("a", "jpegli", 15.0, 1000);
+        let b = enc("b", "jpegli", 92.0, 9000);
+        let mut scores = MetricScores::new();
+        scores.insert("a".into(), 30.0); // only one side scored
+        assert!(
+            is_trivial_pair_scored(&a, &b, &scores),
+            "falls back to the heuristic, which refuses a 77-point q gap"
+        );
+        assert!(is_trivial_pair_scored(&a, &b, &MetricScores::new()));
+    }
+
+    #[test]
+    fn the_gap_test_does_not_care_which_way_the_metric_points() {
+        // |a - b|, so the argument order cannot change the verdict. Direction
+        // matters for RANKING and is enforced in `metrics::direction_of`; it is
+        // irrelevant here, which is why this filter can run on a metric whose
+        // direction the report would refuse to correlate.
+        let a = enc("a", "jpegli", 15.0, 1000);
+        let b = enc("b", "jpegli", 30.0, 1400);
+        let mut scores = MetricScores::new();
+        scores.insert("a".into(), 90.0);
+        scores.insert("b".into(), 40.0);
+        assert!(is_trivial_pair_scored(&a, &b, &scores));
+        assert!(is_trivial_pair_scored(&b, &a, &scores));
     }
 }

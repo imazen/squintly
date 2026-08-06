@@ -96,6 +96,7 @@ async fn smoke_full_loop() -> Result<()> {
         suggestions: squintly::suggestion_store::SuggestionStore::LocalDisk(
             squintly::suggestion_store::LocalDiskStore::new(tempfile::tempdir()?.keep()),
         ),
+        metric_scores: Default::default(),
     });
 
     // Build the same router as main, then exercise it via reqwest in a spawned server.

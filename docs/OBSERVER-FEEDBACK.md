@@ -262,3 +262,36 @@ would be a missing row, which is indistinguishable from never having asked, and
 the observer would meet the same question about the same evening forever.
 
 Status: **built** — `src/debrief.rs`, `web/src/debrief.ts`, migration 0026.
+
+
+## 8. First live reading, 2026-08-06 — and why ρ/ceiling > 1 is a warning
+
+With ssim2 ingested for all 4032 encodings, the disposition report produced its
+first complete reading:
+
+| | |
+|---|---|
+| comparisons | 222 (208 distinct pairs, 5 observers) |
+| noise ceiling | **0.90** (9 of 10 repeated pairs answered the same way) |
+| golden pairs passed | 100% of 13 |
+| ssim2 ρ | **0.988** over 84 scored comparisons |
+| ρ / ceiling | **1.10** |
+
+**A ρ/ceiling above 1 is not a metric beating humans.** It means the metric
+agreed with the observers more often than the observers agreed with themselves,
+which can only happen when the pairs being served are easy enough that both get
+them right — while the repeats that *did* disagree were the genuinely hard ones.
+It is a statement about the stimuli, not about ssim2.
+
+That corroborates the calibration in `sampling::TRIVIAL_SSIM2_GAP`: human
+agreement reaches 100% by a 5-point ssim2 gap, and the live ladder's median
+adjacent-rung gaps are 5.7–17.3. The instrument is currently posing questions
+whose answers are not in doubt.
+
+So the headline question is **not yet answerable**, and for a reason that has
+nothing to do with sample size: a corpus of easy pairs cannot discriminate
+between a metric that tracks human judgement and one that merely tracks
+"obviously worse". The fix is a denser quality ladder (imazen/squintly#8 rows
+5–6), not more observers on this one.
+
+Read ρ/ceiling > 1 as a prompt to make the corpus harder, never as a result.

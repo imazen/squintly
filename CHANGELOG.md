@@ -3,6 +3,29 @@
 ## [Unreleased]
 
 ### Added
+- **Session debriefs, keyed on bouts rather than sessions** (`src/debrief.rs`,
+  `web/src/debrief.ts`, migration 0026). Nobody clicks End session, so the prompt
+  lands on the next visit — "last time you did 21 comparisons, anything we should
+  know?" — and at sign-off when somebody does use it. A bout is a run of answers
+  with no gap over 45 minutes, computed from `responded_at`. Six checkboxes, each
+  naming a circumstance; no self-rating, because whether you understood the tie
+  button is a fact and how good your judgements were is not. A skip is recorded so
+  the same question does not return forever.
+- **Undo reaches back five answers, not one** (`handlers::UNDO_DEPTH`). Noticing a
+  misclick usually happens on the next trial, by which point a one-deep undo has
+  already dropped the trial that needs fixing. Still bounded — walking back
+  through a whole run would be self-selected editing — and `original_choice`
+  still survives, so undo cannot launder a failed attention check.
+- **A sign-in chip in the trial chrome**, left of the study name. The menu's
+  version is behind a tap nobody makes mid-session.
+
+### Changed
+- **The trial header collapses to the `i` button when the names do not fit.**
+  Measured rather than switched at a breakpoint, since what overflows depends on
+  how long that image's name is. Nothing becomes unreachable — the identifier
+  panel already lists all of it.
+- **The instructions ask people to sign off when they stop**, because a debrief
+  answered at the time beats one remembered next visit.
 - **Objective metric scores** (`encoding_metrics`, migration 0025;
   `src/metrics.rs`, `src/metrics_api.rs`). `POST /api/admin/metrics` ingests a
   wide TSV, CSV or Parquet and writes long rows joined at report time. Long

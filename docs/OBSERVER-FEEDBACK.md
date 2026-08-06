@@ -214,4 +214,51 @@ Never "your data was excluded" — it is not, and saying so would be false given
 is the neutral form: it asks about circumstances, not performance, which is the
 same process-versus-outcome line as §3.
 
-Status: **not built.** The undo layer exists; the session self-report does not.
+### 7.5 Should observers self-rate their work?
+
+**No — not a rating. Yes — specific circumstances.**
+
+A "rate your attention 1–5" is an *outcome* self-judgement, and it fails on both
+counts that matter here. People are poorly calibrated about their own
+performance (the ones who did worst are least able to tell), and the question
+invites answering whatever seems safest — especially from somebody who suspects
+a low score might get their work discarded. It also has no analysis attached:
+what would you actually *do* with a 3?
+
+A checkbox saying "I didn't realise I could answer can't-tell" is different in
+kind. It is a **fact about what happened**, which the observer genuinely knows,
+and it maps to something concrete: their tie rate is artificially zero and their
+forced choices on threshold pairs were guesses, so you can condition on it.
+
+The rule to apply to any new option: *would the observer be reporting, or
+grading?* Reporting is safe; grading is not. `src/debrief.rs` enforces this with
+a test that fails any label containing "rate", "how well", "score" or "accurate",
+and another that fails any reason without an `analysis` note — because a
+checkbox nobody knows how to read is friction with no payoff.
+
+### 7.6 When to ask, given nobody signs off
+
+Almost nobody clicks "End session". So the debrief is keyed on a **bout** — a
+contiguous run of answers with no gap longer than `BOUT_GAP_MS` (45 min) —
+computed from `responses.responded_at`, which exists whether or not anyone
+signed off.
+
+- **Primary moment: the next visit.** "Last time you did 21 comparisons —
+  anything we should know?" This is also the only point where the question
+  cannot interrupt a sitting.
+- **Better moment when it happens: sign-off.** If somebody clicks End session,
+  the same prompt is raised there, where it is immediate rather than recalled.
+  The instructions ask people to sign off for exactly this reason — it is a
+  strictly better measurement, so it is worth asking for even though most people
+  will not do it.
+- **Never mid-session.** `pending(include_current: false)` on a return visit.
+
+Not asked at all: bouts under `MIN_BOUT_RESPONSES` (nobody has an impression of
+three answers), and anything older than `MAX_BOUT_AGE_MS` (14 days) — past that
+a self-report is reconstruction, and a confident wrong answer is worse than none.
+
+A skip is recorded, not absent. Otherwise the only evidence of having asked
+would be a missing row, which is indistinguishable from never having asked, and
+the observer would meet the same question about the same evening forever.
+
+Status: **built** — `src/debrief.rs`, `web/src/debrief.ts`, migration 0026.

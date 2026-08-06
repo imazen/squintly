@@ -271,3 +271,83 @@ export async function studyProgress(): Promise<StudyProgress[]> {
   if (!r.ok) throw new Error(`studyProgress ${r.status}`);
   return r.json();
 }
+
+/// One metric's agreement with the observers, from `/api/admin/disposition`.
+export interface MetricAgreement {
+  metric: string;
+  direction: 'higher_is_better' | 'lower_is_better' | 'unknown';
+  comparisons: number;
+  agreed: number;
+  /// null below the minimum sample — deliberately not 0.
+  rho: number | null;
+  /// The reportable figure. null whenever rho or the ceiling is.
+  rho_over_ceiling: number | null;
+  ties: number;
+  uncovered: number;
+}
+
+export interface NoiseCeiling {
+  repeat_pairs: number;
+  agreed: number;
+  ceiling: number | null;
+}
+
+export interface Disposition {
+  study_id: string;
+  comparisons: number;
+  distinct_pairs: number;
+  observers: number;
+  min_viable_ratings: number;
+  ideal_ratings: number;
+  ceiling: NoiseCeiling;
+  golden_pass_rate: number | null;
+  golden_trials: number;
+  metrics: MetricAgreement[];
+  unusable: { metric: string; reason: string }[];
+}
+
+export async function disposition(studyId?: string): Promise<Disposition> {
+  const q = studyId ? `?study_id=${encodeURIComponent(studyId)}` : '';
+  const r = await fetch(`/api/admin/disposition${q}`);
+  if (!r.ok) throw new Error(`disposition ${r.status}`);
+  return r.json();
+}
+
+export interface MetricCatalogRow {
+  metric: string;
+  encodings: number;
+  direction: 'higher_is_better' | 'lower_is_better' | 'unknown';
+  blurb: string | null;
+  min: number;
+  max: number;
+  covered_encodings: number;
+}
+
+export async function metricCatalog(): Promise<MetricCatalogRow[]> {
+  const r = await fetch('/api/admin/metrics');
+  if (!r.ok) throw new Error(`metricCatalog ${r.status}`);
+  return r.json();
+}
+
+export interface EncodingMetricRow {
+  encoding_id: string;
+  metric: string;
+  value: number;
+}
+
+/// Metric scores for specific encodings. Admin-only server-side.
+///
+/// Resolves to `[]` on any failure — including the 403 an ordinary observer
+/// gets. The identifier panel then simply shows what it always showed, with no
+/// gap where something was withheld and no error to explain. The gate is the
+/// server's; this is only how the UI declines to make a fuss about it.
+export async function encodingMetrics(ids: string[]): Promise<EncodingMetricRow[]> {
+  if (!ids.length) return [];
+  try {
+    const r = await fetch(`/api/admin/metrics/encodings?ids=${encodeURIComponent(ids.join(','))}`);
+    if (!r.ok) return [];
+    return await r.json();
+  } catch {
+    return [];
+  }
+}

@@ -16,6 +16,7 @@ import { captureTrial, getObserverId, loadCalibration, loadStudyId, saveStudyId 
 import { showInstructions } from './instructions';
 import { notify } from './notify';
 import { considerNudge, newNudgeState } from './nudge';
+import { encodingMetrics } from './api';
 import { openSignInModal } from './auth-modal';
 import { showAdmin } from './admin';
 import {
@@ -1378,6 +1379,35 @@ export function startTrials(
           if (c && cell) cell.textContent = c;
         });
       }
+      // Objective metric scores, when the viewer is an operator.
+      //
+      // Appended after the panel opens, like the build commit, so the panel is
+      // never waiting on the network — it is what somebody reaches for mid-
+      // report. `encodingMetrics` resolves to [] for a non-admin (the endpoint
+      // 403s), so an ordinary observer sees exactly the panel they always saw.
+      //
+      // They must NOT see the scores: telling somebody the ssim2 of the image
+      // they are about to judge hands them the answer to the question being
+      // asked.
+      const armIds = [trial.a.encoding_id, ...(trial.b ? [trial.b.encoding_id] : [])];
+      void encodingMetrics(armIds).then((rows) => {
+        if (!rows.length || !panel.isConnected) return;
+        const dl = panel.querySelector<HTMLElement>('.info-list');
+        if (!dl) return;
+        const tagOf = (id: string) => (id === trial.a.encoding_id ? 'A' : 'B');
+        for (const r of rows) {
+          const dt = document.createElement('dt');
+          dt.textContent = `${tagOf(r.encoding_id)} ${r.metric}`;
+          const dd = document.createElement('dd');
+          const code = document.createElement('code');
+          // Fixed precision rather than the raw double: these are read to spot
+          // a corrupted encode, and 88.50000000000001 obscures that job.
+          code.textContent = Number(r.value.toPrecision(6)).toString();
+          dd.appendChild(code);
+          dl.append(dt, dd);
+        }
+      });
+
       panel.addEventListener('click', (e) => {
         if (e.target === panel) panel.remove();
       });

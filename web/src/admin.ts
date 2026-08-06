@@ -18,6 +18,7 @@ import {
   type LeaderboardRow,
   type StudyProgress,
 } from './api';
+import { showReport } from './report';
 
 function escapeHtml(s: string): string {
   return s.replace(
@@ -142,6 +143,14 @@ export async function showAdmin(root: HTMLElement, onBack: () => void): Promise<
       </section>
 
       <section class="landing-panel">
+        <h2>Disposition</h2>
+        <p class="muted tiny">Where the study stands against its own question — the noise
+          ceiling, each metric's agreement measured against it, and what that does and
+          does not license.</p>
+        <div class="row"><button id="admin-report" class="primary">Open the report</button></div>
+      </section>
+
+      <section class="landing-panel">
         <h2>Exports</h2>
         <p class="muted tiny">
           <a href="/api/export/responses.tsv">responses.tsv</a> ·
@@ -150,6 +159,12 @@ export async function showAdmin(root: HTMLElement, onBack: () => void): Promise<
           <a href="/api/export/unified.tsv">unified.tsv</a>
         </p>
       </section>`;
+    // Bound after the body is written, not before: the button does not exist
+    // until this innerHTML lands, and a listener attached earlier would silently
+    // bind nothing.
+    host
+      .querySelector<HTMLButtonElement>('#admin-report')
+      ?.addEventListener('click', () => void showReport(root, () => void showAdmin(root, onBack)));
   } catch (e) {
     host.innerHTML = `<p class="muted">Couldn't load operations data: ${escapeHtml(
       (e as Error).message,

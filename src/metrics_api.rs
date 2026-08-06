@@ -213,3 +213,72 @@ pub async fn disposition(
         .map_err(AppError::Anyhow)?;
     Ok(Json(d))
 }
+
+#[derive(Debug, Deserialize)]
+pub struct ForEncodingsParams {
+    pub admin_token: Option<String>,
+    /// Comma-separated encoding ids.
+    pub ids: String,
+}
+
+/// `GET /api/admin/metrics/encodings?ids=a,b` — scores for specific encodings.
+///
+/// Feeds the trial identifier panel, which exists so an operator can diagnose a
+/// corrupted encode without leaving the trial. Admin-gated, and the browser
+/// treats a 403 as "no metric rows to show" rather than an error — so an
+/// ordinary observer simply sees the panel they always saw, with no gap where
+/// something was withheld.
+///
+/// That gating is not incidental. Showing somebody the ssim2 score of the image
+/// they are about to judge tells them the answer to the question being asked,
+/// and a study that leaks its own hypothesis to its observers has measured
+/// their reading comprehension.
+pub async fn for_encodings(
+    State(state): State<SharedState>,
+    headers: axum::http::HeaderMap,
+    Query(params): Query<ForEncodingsParams>,
+) -> Result<Json<Vec<EncodingMetricRow>>, AppError> {
+    require_admin(&state.pool, &headers, &params.admin_token).await?;
+    let ids: Vec<&str> = params
+        .ids
+        .split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .collect();
+    if ids.is_empty() {
+        return Ok(Json(Vec::new()));
+    }
+    // Bound the fan-out: this is reached from a trial panel with two encodings,
+    // and an unbounded IN list from a query string is an easy way to ask the
+    // database for the whole table.
+    let ids: Vec<&str> = ids.into_iter().take(8).collect();
+    let placeholders = std::iter::repeat_n("?", ids.len())
+        .collect::<Vec<_>>()
+        .join(",");
+    let sql = format!(
+        "SELECT encoding_id, metric, value FROM encoding_metrics \
+         WHERE encoding_id IN ({placeholders}) ORDER BY encoding_id, metric"
+    );
+    let mut q = sqlx::query_as::<_, (String, String, f64)>(&sql);
+    for id in &ids {
+        q = q.bind(*id);
+    }
+    Ok(Json(
+        q.fetch_all(&state.pool)
+            .await?
+            .into_iter()
+            .map(|(encoding_id, metric, value)| EncodingMetricRow {
+                encoding_id,
+                metric,
+                value,
+            })
+            .collect(),
+    ))
+}
+
+#[derive(Debug, Serialize)]
+pub struct EncodingMetricRow {
+    pub encoding_id: String,
+    pub metric: String,
+    pub value: f64,
+}

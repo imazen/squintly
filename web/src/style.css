@@ -1935,3 +1935,112 @@ button.secondary:hover { background: rgba(74, 209, 255, 0.10); }
 @media (prefers-reduced-motion: reduce) {
   .notice.out { transition: none; }
 }
+
+/* ---- Disposition report charts (web/src/report.ts) ---------------------- */
+/* Inline SVG, no library: three small charts whose whole value is in details a
+   general-purpose library flattens — the ceiling line drawn ACROSS the bars, a
+   "not enough data" state that must not look like a measured zero, and a
+   coverage bar that has to show what was never scored. */
+
+.chart {
+  width: 100%;
+  height: auto;
+  display: block;
+  margin: 4px 0 2px;
+  overflow: visible;
+}
+
+.chart-label {
+  fill: var(--fg, #e8e8ea);
+  font-size: 12px;
+  font-family: inherit;
+}
+.chart-axis,
+.chart-pending {
+  fill: var(--muted);
+  font-size: 10px;
+  font-family: inherit;
+}
+.chart-value {
+  fill: var(--fg, #e8e8ea);
+  font-size: 11px;
+  font-weight: 600;
+  font-family: inherit;
+}
+
+.chart-grid {
+  stroke: var(--muted);
+  stroke-width: 1;
+  opacity: 0.18;
+}
+
+/* Chance on a forced choice. Marked distinctly from the ordinary gridlines
+   because a bar reaching halfway reads as "reasonable" when what it means is
+   "carries no information about the ordering". */
+.chart-chance {
+  stroke: var(--warn);
+  stroke-width: 1;
+  stroke-dasharray: 3 3;
+  opacity: 0.55;
+}
+
+/* The ceiling. Drawn on the same axis as the bars on purpose — it is the thing
+   every rho must be read against, and a ceiling relegated to a stat below the
+   chart gets read past. */
+.chart-ceiling {
+  stroke: var(--good);
+  stroke-width: 2;
+  opacity: 0.85;
+}
+.chart-ceiling-label {
+  fill: var(--good);
+  font-size: 10px;
+  font-family: inherit;
+}
+
+.chart-bar {
+  fill: var(--accent);
+  opacity: 0.85;
+}
+.chart-bar.good {
+  fill: var(--good);
+}
+/* No ceiling measured yet, so the number under the bar is a raw rho that must
+   not be read as a score. Muted rather than absent: the data is real, the
+   interpretation is not yet licensed. */
+.chart-bar.unscaled {
+  fill: var(--muted);
+  opacity: 0.6;
+}
+.chart-bar-tie {
+  fill: var(--accent);
+  opacity: 0.35;
+}
+.chart-bar-empty {
+  fill: currentColor;
+  opacity: 0.09;
+}
+
+.chart-row:hover .chart-bar,
+.chart-row:hover .chart-bar-empty {
+  opacity: 1;
+}
+/* Every row carries a <title>, which is the native tooltip. Cueing that it is
+   there costs one property and is the only reason anybody hovers. */
+.chart-row {
+  cursor: help;
+}
+
+.verdict {
+  font-size: 1rem;
+  line-height: 1.5;
+  margin: 0 0 14px;
+  padding: 12px 14px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  border-left: 3px solid var(--accent);
+}
+.verdict.warn {
+  background: color-mix(in srgb, var(--warn) 8%, transparent);
+  border-left-color: var(--warn);
+}

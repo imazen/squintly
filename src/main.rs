@@ -339,6 +339,7 @@ async fn main() -> Result<()> {
             post(metrics_api::ingest).get(metrics_api::catalog),
         )
         .route("/admin/disposition", get(metrics_api::disposition))
+        .route("/admin/metrics/encodings", get(metrics_api::for_encodings))
         .route("/curator/backfill-dims", post(curator::backfill_dims))
         .route("/curator/blob/{sha256}", get(curator::blob_proxy))
         .route(

@@ -119,8 +119,41 @@ BUCKETS: list[tuple[str, int]] = [
     ("XL", 2400),
 ]
 
-# Low-q weighted: 5 rungs at/below 60, 2 above. See module docstring.
-DEFAULT_QUALITIES = [15, 30, 45, 60, 80, 92]
+# Spaced by MEASURED perceptual distance, not by quality units.
+#
+# The old ladder was [15, 30, 45, 60, 80, 92] — even-ish in q, wildly uneven in
+# what an observer sees. Measured on all 4032 encodings of imazen26-v5-test-noai
+# (benchmarks/ssim2_imazen26-v5-test-noai_2026-08-06.meta), the median ssim2 gap
+# between adjacent rungs was:
+#
+#     15->30  17.3     45->60   5.7     80->92   6.2
+#     30->45   7.9     60->80   8.0
+#
+# And on 84 live human comparisons, agreement with ssim2's ordering hit 100% by
+# a **5-point** gap. So every adjacent pair the old ladder could build was at or
+# past the point where the answer stops being in doubt: the study was asking
+# questions nobody could get wrong. That is what made rho/ceiling come out above
+# 1 — see docs/OBSERVER-FEEDBACK.md §8.
+#
+# These 17 rungs were chosen by interpolating that measured q->ssim2 curve so no
+# adjacent gap exceeds ~5 points, with the largest now 4.9 (was 17.3). Two
+# further properties are deliberate:
+#
+#   - **8 rungs below q60 and 8 above.** The low-q half is where commercial web
+#     compression actually operates, and the project rule is that a sweep covers
+#     q5-q60 as densely as q60-q100. The old ladder's 15->30 jump was the single
+#     worst offender in the whole grid.
+#   - **It reaches q100.** The old ladder stopped at 92, where the pooled median
+#     is ssim2 86.3 — so the corpus never entered the near-lossless band (90+)
+#     at all, and any staircase searching for a notice threshold exited censored
+#     at the ceiling with nothing recording that it had. That is
+#     imazen/squintly#8 row 5. q100 lands around ssim2 90.6, which finally puts
+#     the boundary inside the grid rather than beyond it.
+#
+# Cost: 17 x 4 codecs x 168 sources = 11,424 encodings, up from 4,032. Rung
+# count does NOT worsen the ASAP cold-start problem, which counts observations
+# per (source, codec) cell and so is unaffected by how many rungs a cell holds.
+DEFAULT_QUALITIES = [15, 18, 22, 26, 30, 38, 45, 52, 60, 68, 75, 82, 88, 92, 95, 97, 100]
 
 # ---------------------------------------------------------------------------
 # Canonical corpus on R2 (`codec-corpus/imazen-26-png-v3`).

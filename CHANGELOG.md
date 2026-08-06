@@ -3,6 +3,21 @@
 ## [Unreleased]
 
 ### Added
+- **`squintly-score`** — batch binary computing SSIMULACRA2 for every encoding
+  against its source, emitting the TSV `POST /api/admin/metrics` ingests. Fetches
+  the live encodings rather than re-encoding, so the scores are of exactly the
+  bytes observers saw. 4032/4032 scored, 26 min, no failures.
+- **The trivial-pair filter is metric-driven** (`is_trivial_pair_scored`), which
+  is what README lever #4 promised. A missing score falls back to the heuristic
+  rather than admitting the pair.
+
+### Changed
+- **The quality ladder is spaced by measured perceptual distance**, not quality
+  units: 17 rungs replacing 6. The old grid's adjacent gaps ran 5.7–17.3 ssim2
+  points while human agreement with ssim2 hits 100% by a 5-point gap — so every
+  pair it could build was past the point of doubt. Max gap is now 4.9. It also
+  reaches q100, so the near-lossless band (ssim2 90+) is finally inside the grid
+  instead of beyond it (imazen/squintly#8 row 5).
 - **`/board`** — the reviewer leaderboard as its own route, linked from the front
   page and reachable by URL. It was a panel below the study goals, competing with
   the one thing the front page exists to carry, and a board is something people

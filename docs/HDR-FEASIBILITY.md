@@ -22,6 +22,35 @@ anybody starts.
 > selects who can see the lift.
 >
 > Reassess §1–§5 against UltraHDR before spending anything on the PQ path.
+>
+> **[note 2026-08-07 — MEASURED, and the note above was too optimistic.]** The
+> zencodecs *library* lists `jpeg-ultrahdr` as decode **and** encode. The **CLI
+> does not expose HDR output**, which is what actually matters for building a
+> corpus. Tested against
+> `/mnt/v/output/imazen-26-hdr-2026-06-14/**/*.hdr.png`:
+>
+> | test | result |
+> |---|---|
+> | source tagging | **correct** — `cICP = [1, 16, 0, 1]` (BT.709 primaries, **transfer 16 = PQ/ST-2084**, full range) plus `cLLI`. 76 of them. PIL cannot see cICP, so do not check with PIL. |
+> | PQ PNG → AVIF | **tone-mapped to SDR.** Output `colr`/`nclx` comes back `trc=13` (sRGB), not 16. The `clli` box survives, which makes it look HDR-ish at a glance — it is not. |
+> | PQ PNG → JPEG | `gain_map: false`. No UltraHDR gain map is written. |
+> | JPEG → `--hdr` round-trip | **fails.** Nothing to reconstruct from. |
+>
+> `--hdr` is an **input-side** flag: it reconstructs HDR *from* gain-map HEIC /
+> UltraHDR JPEG *to* a PQ PNG. There is no flag anywhere in `convert --help`
+> that preserves HDR on output.
+>
+> **So the encode side of an HDR arm is not available through this CLI.** That
+> is a capability gap, not a bug — the tool bills itself as a minimal
+> transcoder. Options, in order of how much they'd cost:
+> 1. ask for CLI exposure of `jpeg-ultrahdr` encode (the library already has it);
+> 2. drive `zenavif` / `zenjxl` directly with an explicit PQ cICP config;
+> 3. use `avifenc --cicp 1/16/0` or libjxl's HDR path as an external encoder,
+>    the same shell-out shape as `cjpegli`.
+>
+> **Do not build an HDR arm on `zencodecs convert` until one of those lands** —
+> a silently-SDR "HDR" corpus is worse than no HDR corpus, because every
+> judgement collected on it would look valid.
 
 ## Verdict
 

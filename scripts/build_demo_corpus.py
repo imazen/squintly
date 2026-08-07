@@ -53,6 +53,7 @@ Then publish it: `just publish-corpus <version>` (scripts/publish_corpus_r2.py).
 from __future__ import annotations
 
 import argparse
+import os
 import tempfile
 import io
 import csv
@@ -684,6 +685,7 @@ def encode_via_sweep(
     metrics: list[str],
     knob_grid: str | None,
     hdr: bool,
+    jobs: int,
 ) -> tuple[list[EncodingMeta], dict[str, dict[str, float]]]:
     """Run one sweep per codec over the whole source directory.
 
@@ -723,6 +725,12 @@ def encode_via_sweep(
             ]
             for m in metrics:
                 cmd += ["--metric", m]
+            # Cap the thread budget. Sweep's default is one rayon thread per
+            # logical core, and a whole-corpus AVIF sweep was measured at 17
+            # concurrent workers x ~550 MB = ~9 GB with every core saturated —
+            # on a box the workspace rules call "frequently shared by concurrent
+            # agents", where a runaway job takes the machine down for everyone.
+            cmd += ["--jobs", str(jobs)]
             if knob_grid:
                 cmd += ["--knob-grid", knob_grid]
             if hdr:
@@ -895,6 +903,16 @@ def main() -> int:
         ),
     )
     ap.add_argument(
+        "--jobs",
+        type=int,
+        default=max(1, (os.cpu_count() or 8) - 4),
+        help=(
+            "CPU thread budget for `zenmetrics sweep`. Defaults to nproc-4, leaving room for "
+            "other agents — this box is shared and sweep's own default saturates every core "
+            "(measured: 17 workers x ~550 MB on an AVIF sweep). 0 = sweep's auto-detect."
+        ),
+    )
+    ap.add_argument(
         "--hdr",
         action="store_true",
         help=(
@@ -1018,7 +1036,7 @@ def main() -> int:
     if args.encoder == "sweep":
         encs, scores = encode_via_sweep(
             src_dir, enc_dir, args.qualities, args.metrics,
-            args.knob_grid, args.hdr,
+            args.knob_grid, args.hdr, args.jobs,
         )
         encodings.extend(encs)
         if scores:

@@ -53,6 +53,7 @@ Then publish it: `just publish-corpus <version>` (scripts/publish_corpus_r2.py).
 from __future__ import annotations
 
 import argparse
+import tempfile
 import io
 import csv
 import hashlib
@@ -650,6 +651,110 @@ def encode_with_zencodecs(
     return out
 
 
+# ---------------------------------------------------------------------------
+# The canonical path: hand the selected sources to `zenmetrics sweep`.
+#
+# squintly's real job is stratified SELECTION — which origins, which split,
+# which content classes, which size buckets. Encoding and scoring are
+# `zenmetrics sweep`'s job and it does them better than this script ever did:
+# one pass produces the encoded bytes AND the metric scores, subsampling and
+# every other codec knob become an explicit swept axis rather than an accident
+# of per-encoder defaults, and the orchestrator brings OOM-safe GPU->CPU
+# fallback and fleet distribution.
+#
+# See CLAUDE.md "ROOT CAUSE: squintly should not build or score corpora at all".
+# ---------------------------------------------------------------------------
+
+ZENMETRICS_BIN = Path("~/work/zen/zenmetrics/target/release/zenmetrics").expanduser()
+
+# study codec name -> zenmetrics --codec value. Named for the ACTUAL encoder,
+# because calling zenjpeg output "libjpeg-turbo" would falsify a codec name.
+SWEEP_CODECS: dict[str, str] = {
+    "zenjpeg": "zenjpeg",
+    "zenwebp": "zenwebp",
+    "zenavif": "zenavif",
+    "zenjxl": "zenjxl",
+}
+
+
+def encode_via_sweep(
+    src_dir: Path,
+    enc_dir: Path,
+    qualities: list[int],
+    metrics: list[str],
+    knob_grid: str | None,
+    hdr: bool,
+) -> tuple[list[EncodingMeta], dict[str, dict[str, float]]]:
+    """Run one sweep per codec over the whole source directory.
+
+    Returns `(encodings, scores)` where `scores` maps encoding id -> {metric:
+    value}, ready to POST at `/api/admin/metrics` — the scores come free with
+    the encode rather than needing a second pass over every blob.
+
+    Sweep works on a DIRECTORY in batch, not per-source, which is why this runs
+    after the selection loop rather than inside it.
+    """
+    if not ZENMETRICS_BIN.exists():
+        sys.exit(
+            f"--encoder sweep needs {ZENMETRICS_BIN}\n"
+            "Build it:  cd ~/work/zen/zenmetrics && cargo build --release --features sweep"
+        )
+    enc_dir.mkdir(parents=True, exist_ok=True)
+    out: list[EncodingMeta] = []
+    scores: dict[str, dict[str, float]] = {}
+
+    for study_codec, sweep_codec in SWEEP_CODECS.items():
+        with tempfile.TemporaryDirectory() as td:
+            pareto = Path(td) / "pareto.tsv"
+            raw = Path(td) / "enc"
+            cmd = [
+                str(ZENMETRICS_BIN), "sweep",
+                "--codec", sweep_codec,
+                "--sources", str(src_dir),
+                "--q-grid", ",".join(str(q) for q in qualities),
+                "--encoded-out-dir", str(raw),
+                "--output", str(pareto),
+            ]
+            for m in metrics:
+                cmd += ["--metric", m]
+            if knob_grid:
+                cmd += ["--knob-grid", knob_grid]
+            if hdr:
+                cmd += ["--hdr"]
+            print(f"  sweep {study_codec}: {len(qualities)} q x sources in {src_dir.name}", flush=True)
+            r = subprocess.run(cmd, capture_output=True, text=True)
+            if r.returncode != 0:
+                print(f"    ! sweep {study_codec} rc={r.returncode}: {r.stderr[-400:]}", flush=True)
+                continue
+            print(f"    {r.stderr.strip().splitlines()[-1] if r.stderr.strip() else 'ok'}", flush=True)
+
+            with pareto.open() as fh:
+                for row in csv.DictReader(fh, delimiter="\t"):
+                    sha = Path(row["image_path"]).stem
+                    q = int(float(row["q"]))
+                    eid = f"{sha[:16]}__{study_codec}__q{q}"
+                    produced = raw / row["encoded_filename"]
+                    if not produced.exists():
+                        print(f"    ! {eid}: sweep row has no file {row['encoded_filename']}")
+                        continue
+                    dst = enc_dir / f"{eid}{produced.suffix}"
+                    shutil.copyfile(produced, dst)
+                    out.append(
+                        EncodingMeta(eid, sha, study_codec, float(q), dst.stat().st_size)
+                    )
+                    # Every score_* column becomes an ingestable metric. Free:
+                    # the sweep already decoded each cell to score it, so this
+                    # costs nothing beyond reading the column.
+                    got = {
+                        k[len("score_"):]: float(v)
+                        for k, v in row.items()
+                        if k.startswith("score_") and v not in (None, "", "NaN")
+                    }
+                    if got:
+                        scores[eid] = got
+    return out, scores
+
+
 def encode_variants(
     src_png: Path, im: Image.Image, out_dir: Path, sha: str, qualities: list[int]
 ) -> list[EncodingMeta]:
@@ -754,14 +859,41 @@ def main() -> int:
     ap.add_argument("--clean", action="store_true", help="wipe --out first")
     ap.add_argument(
         "--encoder",
-        choices=["pillow", "zencodecs"],
+        choices=["pillow", "zencodecs", "sweep"],
         default="pillow",
         help=(
             "pillow (default): libjpeg-turbo / libwebp / libavif + cjpegli — the "
             "reference implementations the live study measures. zencodecs: the zen "
             "family (zenjpeg/zenwebp/zenavif/zenjxl) with ONE ICC policy across all "
             "of them and JXL support. NOT interchangeable — it changes which codecs "
-            "the study is about, so the codec names change with it."
+            "the study is about, so the codec names change with it. sweep: THE "
+            "CANONICAL PATH — hand the selected sources to `zenmetrics sweep`, "
+            "which encodes AND scores in one pass, makes codec knobs an explicit "
+            "swept axis, and supports HDR. See CLAUDE.md's ROOT CAUSE entry."
+        ),
+    )
+    ap.add_argument(
+        "--metrics",
+        nargs="*",
+        default=["ssim2"],
+        help="metrics for --encoder sweep to compute per cell (ssim2, butteraugli, dssim, "
+             "iwssim-gpu, zensim, cvvdp, ...). They land in <out>/metrics.tsv ready to ingest.",
+    )
+    ap.add_argument(
+        "--knob-grid",
+        default=None,
+        help=(
+            "JSON '{axis: [values]}' passed to `zenmetrics sweep --knob-grid`. This is how "
+            "chroma subsampling stops being an accident of per-encoder defaults and becomes a "
+            "recorded, swept axis — the confound EncodingMeta cannot currently express."
+        ),
+    )
+    ap.add_argument(
+        "--hdr",
+        action="store_true",
+        help=(
+            "HDR sweep: sources must be 16-bit PQ PNGs (cICP transfer 16). zenjxl only today. "
+            "Do NOT use the zencodecs/pillow encoders for HDR — they silently tone-map to SDR."
         ),
     )
     ap.add_argument(
@@ -864,7 +996,9 @@ def main() -> int:
                     origin_path=origin_label(path),
                 )
             )
-            if args.encoder == "zencodecs":
+            if args.encoder == "sweep":
+                pass  # batched after the loop — sweep takes a directory
+            elif args.encoder == "zencodecs":
                 encodings.extend(
                     encode_with_zencodecs(final, enc_dir, sha, args.qualities)
                 )
@@ -874,6 +1008,27 @@ def main() -> int:
                 )
             print(f"  {cat:20s} {bucket_name:2s} {im.width:5d}x{im.height:<5d} {sha[:12]} "
                   f"(+{len(args.qualities)*3}~4 encodings)")
+
+    if args.encoder == "sweep":
+        encs, scores = encode_via_sweep(
+            src_dir, enc_dir, args.qualities, args.metrics,
+            args.knob_grid, args.hdr,
+        )
+        encodings.extend(encs)
+        if scores:
+            # Emitted beside the store rather than posted from here: squintly
+            # ingests scores through an admin endpoint, and a corpus builder
+            # holding an admin token would be a worse thing than a second step.
+            mp = root / "metrics.tsv"
+            names = sorted({m for v in scores.values() for m in v})
+            with mp.open("w") as fh:
+                fh.write("encoding_id\t" + "\t".join(names) + "\n")
+                for eid, v in sorted(scores.items()):
+                    fh.write(eid + "\t" + "\t".join(
+                        ("" if n not in v else f"{v[n]:.6f}") for n in names) + "\n")
+            print(f"wrote {len(scores)} scored encodings x {len(names)} metric(s) -> {mp}")
+            print(f"  ingest:  curl -X POST '<host>/api/admin/metrics?format=tsv"
+                  f"&source=sweep-{'-'.join(names)}&admin_token=...' --data-binary @{mp}")
 
     # One meta file per object keeps FsCoefficient's walk simple and lets a
     # partial rebuild replace individual entries.

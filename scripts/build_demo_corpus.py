@@ -704,7 +704,13 @@ def encode_via_sweep(
     scores: dict[str, dict[str, float]] = {}
 
     for study_codec, sweep_codec in SWEEP_CODECS.items():
-        with tempfile.TemporaryDirectory() as td:
+        # dir= is NOT optional: `/tmp` is banned in this workspace (it is a
+        # small tmpfs that gets wiped, and a whole-corpus sweep writes hundreds
+        # of MB of encoded cells here). Filling it takes the machine's shell
+        # down with ENOSPC, which happened on 2026-08-06.
+        scratch = Path("~/tmp").expanduser()
+        scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch) as td:
             pareto = Path(td) / "pareto.tsv"
             raw = Path(td) / "enc"
             cmd = [

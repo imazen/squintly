@@ -66,8 +66,6 @@ parquet = { version = "59.1.0", default-features = false, features = ["zstd", "s
 fast-ssim2 = { version = "0.8.2", features = ["imgref"] }
 imgref = "1.12.2"
 futures-util = "0.3.33"
-zenjpeg = "0.8.4"
-zenwebp = "0.4.4"
 
 [dev-dependencies]
 tempfile = "3"

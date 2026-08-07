@@ -739,6 +739,70 @@ Three premises worth pinning, because two of them were wrong when checked:
    measured-curve approach until they grow equivalents, so a mixed corpus needs
    both paths.
 
+### Why the scorer cannot use zencodecs from inside squintly (2026-08-06)
+
+Attempted, and it does not resolve. Recording so nobody retries it the same way:
+
+- **`zencodecs` is unpublished** (0.1.0 local) and its own graph needs
+  `zenbitmaps ^0.2.0`, which crates.io tops out at 0.1.5. So a `path` dep pulls
+  in a chain of unpublished siblings, not one crate.
+- **squintly is a DEPLOYED DOCKER SERVICE**, not a library. A path dep to
+  `~/work/zen/zenpipe/zencodecs` cannot exist inside the Railway build context,
+  so the standing "patch it in and keep working" rule — written for libraries —
+  would trade a local convenience for a broken deploy.
+- **zencodecs cannot encode AVIF or JXL anyway** (decode-only; verified in its
+  feature table). The builder produces libavif encodings, so it could never have
+  been a complete replacement for the encode path.
+
+**The architecturally correct fix is to move the scorer OUT of squintly.**
+`squintly-score` is a corpus-scoring tool over zen image formats; it belongs in
+the zen workspace where zencodecs resolves naturally, alongside `zenmetrics`
+which already does exactly this job. squintly's own invariant says it is a
+*consumer* of coefficient's images — scoring them is not its work either. It
+should only INGEST scores, which it already does via `POST /api/admin/metrics`.
+
+Until then `score.rs::decode_rgb8` stays as recorded technical debt, and the
+honest statement is that `zenmetrics batch` is the canonical scorer (it is what
+produced the live v7 numbers); `squintly-score` is a convenience that duplicates
+it and should be deleted rather than extended.
+
+### zencodecs cannot currently be depended on from outside zenpipe (2026-08-06)
+
+**This is a real defect in `zencodecs`, not a squintly problem, and it is the
+reason the migration is stalled.** Traced by attempting the dependency properly
+(path dep + the sanctioned `[patch.crates-io]` compose-unreleased-siblings
+pattern) rather than assumed:
+
+`~/work/zen/zenpipe/zencodecs/Cargo.toml` requires
+
+```toml
+zenjpeg = { version = "0.8.4", features = ["decoder", "zencodec", "trellis", "recompress"] }
+```
+
+but:
+
+- published **zenjpeg 0.8.4 has no `recompress` feature** (its feature list is
+  `decoder, default, layout, moxcms, parallel, trellis, ultrahdr, web-sys, yuv,
+  zencodec, zune-jpeg, …`), and
+- the local **zenjpeg is 0.9.0**, which *does* have `recompress` — but 0.9.0
+  cannot satisfy `^0.8.4`, so `[patch.crates-io]` is powerless.
+
+**No dependency spec can satisfy it.** The requirement almost certainly wants
+`^0.9.0`; it builds inside zenpipe only because that workspace resolves zenjpeg
+some other way. **The fix belongs in zencodecs** (bump the requirement, then
+publish zenjpeg 0.9.0 and zencodecs), not in any consumer.
+
+Other crates.io gaps found on the way, all genuine and all secondary to the
+above: `heic 0.2.0` is YANKED, `zenwebp` needs 0.5.0 (published tops at 0.4.4),
+`zenbitmaps` needs 0.2.0 (published tops at 0.1.5). Cargo resolves OPTIONAL deps
+for the lockfile even when the feature is off, so all three must resolve
+regardless of feature selection. Patch only what genuinely fails — over-patching
+is harmful, since a local checkout can be *ahead* of what zencodecs expects and
+turn a working resolution into a conflict.
+
+Docker is NOT the obstacle — a build context can vendor sibling repos or copy in
+prebuilt binaries. Do not cite it as one.
+
 **Shape of the remaining work:** the builder is Python and the encoders are
 Rust, so it shells out — exactly the pattern `cjpegli` already uses in
 `encode_variants`. But the binary already exists: **`zencodecs-cli`**. So the

@@ -3,6 +3,26 @@
 Assessed 2026-08-06. Nothing here is built; this is the honest inventory before
 anybody starts.
 
+> **[note 2026-08-06] The HDR path below assumes PQ 10-bit AVIF/JXL. That is the
+> LAB answer, not the web one, and it should be reconsidered before anybody
+> builds it.**
+>
+> `zencodecs` supports **UltraHDR gain maps** — `jpeg-ultrahdr`, decode AND
+> encode, via zenjpeg — and the `heic` codec reads "base SDR + gain-map HDR".
+> UltraHDR is what HDR images on the web actually are, and it is structurally
+> better for this study than PQ for one specific reason: **a gain-map JPEG is a
+> valid SDR JPEG.** An SDR display sees the SDR base with no tone-mapping, so
+> the "hard-gate on `dynamic_range_high` or measure Chrome's tone mapper"
+> problem in §1 below largely dissolves — the fallback is defined by the format
+> rather than improvised by the browser.
+>
+> That also means the corpus does not need a separate HDR source set encoded to
+> a separate ladder; it needs gain-map variants of images we already serve, and
+> `dynamic_range_high` (already recorded per session, 73% of live responses)
+> selects who can see the lift.
+>
+> Reassess §1–§5 against UltraHDR before spending anything on the PQ path.
+
 ## Verdict
 
 **Feasible, and squintly is further along than it looks — but it is a new study

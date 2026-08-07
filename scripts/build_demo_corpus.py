@@ -583,6 +583,73 @@ def load_rgb(path: Path) -> Image.Image | None:
     return im
 
 
+# The zencodecs transcoder, built from the zenpipe workspace:
+#     cd ~/work/zen/zenpipe && cargo build --release -p zencodecs-cli
+# It is a BINARY we invoke, not a crate to link — the same way this script
+# already uses `cjpegli` and the way squintly uses `zenmetrics`.
+ZENCODECS_BIN = Path("~/work/zen/zenpipe/target/release/zencodecs").expanduser()
+
+# zencodecs' encoders are the ZEN implementations, so its output must be named
+# for them. Calling zenjpeg output "libjpeg-turbo" would falsify a codec name,
+# which is banned outright — and it would silently change what every published
+# number in this study refers to.
+ZENCODECS_CODECS: dict[str, tuple[str, str]] = {
+    # study codec name -> (zencodecs --format, file extension)
+    "zenjpeg": ("jpeg", "jpg"),
+    "zenwebp": ("webp", "webp"),
+    "zenavif": ("avif", "avif"),
+    "zenjxl": ("jxl", "jxl"),
+}
+
+
+def encode_with_zencodecs(
+    src_png: Path, out_dir: Path, sha: str, qualities: list[int]
+) -> list[EncodingMeta]:
+    """Encode via the zencodecs CLI — the zen codec family, consistent metadata.
+
+    Chosen over the Pillow path for two properties Pillow cannot give:
+
+    - **One ICC policy across every codec.** `--metadata color` keeps colour and
+      rotation and drops the rest, for all four formats. Verified 2026-08-06 on a
+      Display P3 source: zencodecs emits the profile in JPEG, WebP AND AVIF
+      (`acsp` present; AVIF `colr` box of type `prof`), where Pillow silently
+      dropped it from JPEG and WebP. That per-encoder disagreement is the bug
+      `load_rgb` currently has to pre-empt by converting to sRGB and stripping.
+    - **JXL**, which Pillow cannot write at all, so the near-lossless band stops
+      depending on a separately-installed `cjxl`.
+
+    NOTE this changes WHICH CODECS the study measures — zenjpeg/zenwebp/zenavif
+    are not libjpeg-turbo/libwebp/libavif. That is a change to the experiment,
+    not a refactor, which is why it is opt-in via `--encoder zencodecs` rather
+    than a silent replacement.
+    """
+    if not ZENCODECS_BIN.exists():
+        sys.exit(
+            f"--encoder zencodecs needs {ZENCODECS_BIN}\n"
+            "Build it:  cd ~/work/zen/zenpipe && cargo build --release -p zencodecs-cli"
+        )
+    out: list[EncodingMeta] = []
+    out_dir.mkdir(parents=True, exist_ok=True)
+    for q in qualities:
+        for codec, (fmt, ext) in ZENCODECS_CODECS.items():
+            eid = f"{sha[:16]}__{codec}__q{q}"
+            p = out_dir / f"{eid}.{ext}"
+            r = subprocess.run(
+                [
+                    str(ZENCODECS_BIN), "convert", str(src_png), str(p),
+                    "--format", fmt, "--quality", str(q),
+                    # One policy, every codec. See the docstring.
+                    "--metadata", "color",
+                ],
+                capture_output=True,
+            )
+            if r.returncode == 0 and p.exists():
+                out.append(EncodingMeta(eid, sha, codec, float(q), p.stat().st_size))
+            else:
+                print(f"    ! {codec} q{q} failed rc={r.returncode}: {r.stderr[-160:]!r}")
+    return out
+
+
 def encode_variants(
     src_png: Path, im: Image.Image, out_dir: Path, sha: str, qualities: list[int]
 ) -> list[EncodingMeta]:
@@ -686,6 +753,18 @@ def main() -> int:
     )
     ap.add_argument("--clean", action="store_true", help="wipe --out first")
     ap.add_argument(
+        "--encoder",
+        choices=["pillow", "zencodecs"],
+        default="pillow",
+        help=(
+            "pillow (default): libjpeg-turbo / libwebp / libavif + cjpegli — the "
+            "reference implementations the live study measures. zencodecs: the zen "
+            "family (zenjpeg/zenwebp/zenavif/zenjxl) with ONE ICC policy across all "
+            "of them and JXL support. NOT interchangeable — it changes which codecs "
+            "the study is about, so the codec names change with it."
+        ),
+    )
+    ap.add_argument(
         "--source",
         choices=["r2", "local"],
         default="r2",
@@ -785,7 +864,14 @@ def main() -> int:
                     origin_path=origin_label(path),
                 )
             )
-            encodings.extend(encode_variants(final, im, enc_dir, sha, args.qualities))
+            if args.encoder == "zencodecs":
+                encodings.extend(
+                    encode_with_zencodecs(final, enc_dir, sha, args.qualities)
+                )
+            else:
+                encodings.extend(
+                    encode_variants(final, im, enc_dir, sha, args.qualities)
+                )
             print(f"  {cat:20s} {bucket_name:2s} {im.width:5d}x{im.height:<5d} {sha[:12]} "
                   f"(+{len(args.qualities)*3}~4 encodings)")
 

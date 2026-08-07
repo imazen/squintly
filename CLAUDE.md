@@ -47,6 +47,32 @@ This is the counterpart to the continuation discipline in the global CLAUDE.md,
 sharpened for the specific failure of treating a shrinking context window as a
 natural stopping point. It is not.
 
+## READ THE IMAZEN CRATE INDEX — it does NOT auto-load in this repo
+
+**`~/work/zen/CLAUDE.md` carries the full Imazen crate index and the repo path
+exceptions, and it is auto-loaded ONLY for sessions under `~/work/zen/`.**
+Squintly lives at `~/work/squintly`, so it never loads here — while depending on
+zenpixels, zenresize, zenavif, zenjxl-decoder, and reaching for zenmetrics and
+zencodecs constantly. That mismatch has already cost real work; read it
+explicitly at the start of any task that touches codecs, metrics, or corpora:
+
+```
+grep -n '<crate>' ~/work/zen/CLAUDE.md      # index + path exceptions, ~line 23 and ~line 150
+```
+
+**Do NOT substitute a filesystem glob for reading the index.** On 2026-08-06 I
+ran `ls -d ~/work/zen/*codec*`, saw only `zencodec`, and concluded from its
+`#![no_std]` traits crate that "the migration means reaching for zenjpeg /
+zenwebp individually". Wrong: **`zencodecs`** — one detect-decode-encode API
+over all the zen codecs, plus a ready-made `zencodecs-cli` — is a **zenpipe
+workspace member**, so a depth-1 glob of `~/work/zen/` cannot see it. Line 23 of
+that file names the exception exactly. A glob encodes a guess about layout; the
+index encodes the layout.
+
+The global CLAUDE.md's "the filesystem is the source of truth" means *verify
+against source rather than memory* — not *guess a path instead of reading the
+map*.
+
 ## Architecture in one paragraph
 
 Single Rust binary (axum). Embeds the Vite-built TS frontend via `rust-embed`. SQLite

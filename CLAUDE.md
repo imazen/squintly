@@ -616,6 +616,60 @@ one this hits hardest.
 
 ## Known Bugs
 
+### ROOT CAUSE: squintly should not build or score corpora at all (2026-08-07)
+
+Every corpus defect found on 2026-08-06/07 — Display P3 dropped by half the
+encoders, chroma subsampling inherited by accident and unrecordable, no metric
+scores anywhere, a perceptually-uneven quality ladder, no HDR, a hand-rolled
+decoder, a hand-rolled scorer — is **one root cause with many symptoms**:
+
+> `scripts/build_demo_corpus.py` re-implements `zenmetrics sweep`, worse.
+
+`zenmetrics sweep` is the canonical pipeline and already does the whole job:
+
+| squintly's ad-hoc version | canonical |
+|---|---|
+| Pillow encode loop over codecs × q | `--codec zenjpeg\|zenwebp\|zenavif\|zenjxl\|zenpng --q-grid …` |
+| `DEFAULT_QUALITIES` hand-interpolated from a measured curve | `--q-grid`, plus `--plan` for fingerprint-deduped, validity-filtered, main-effects-first cells |
+| **subsampling inherited by accident, unrecordable** | `--knob-grid '{axis: [values]}'` — an explicit SWEPT AXIS, per-codec |
+| blobs written by hand to a SplitStore | `--encoded-out-dir` (the actual codec bytes) |
+| `squintly-score`, a separate later pass | `--metric ssim2 …` **in the same pass** |
+| no HDR | `--hdr` — and it already names "the imazen-26-png-v2 `.hdr.png` corpus contract", decodes to absolute nits, encodes through an HDR-capable path, decodes back, and scores via validated per-metric HDR feedings |
+| ICC divergence per encoder | one codec family, one metadata policy |
+| single-box, serial | orchestrator (OOM-safe GPU→strip→CPU fallback, capability cache) + zenfleet |
+
+**The correct root fix: squintly consumes a corpus, it does not produce one.**
+That is already its stated invariant for coefficient's images — "Squintly is a
+*consumer* of coefficient's image store; it never writes back" — and corpus
+production leaked across that boundary. The pipeline should be:
+
+```
+zenmetrics sweep --codec … --sources … --q-grid … --knob-grid … \
+                 --metric ssim2 --encoded-out-dir <store> --output pareto.tsv
+        ↓ blobs                              ↓ scores
+   coefficient/R2  ──────────────────────►  POST /api/admin/metrics
+        ↓
+   squintly serves and collects judgements
+```
+
+Then `build_demo_corpus.py` shrinks to what is genuinely squintly's: **stratified
+SELECTION** (which origins, which split, which content classes, the size buckets)
+— and hands the chosen sources to the sweep. Every symptom above disappears
+because the thing producing them is gone, not patched.
+
+**What this supersedes.** The `--encoder zencodecs` flag, `load_rgb`'s
+convert-and-strip, `squintly-score`, and the hand-interpolated 17-rung ladder are
+all local patches on the wrong layer. They are correct as far as they go and the
+live v7 corpus depends on them — do not rip them out before the sweep path is
+proven — but do not INVEST in them either. Nothing new should be added to
+`encode_variants` or `score.rs`.
+
+**Caveat, measured:** `zenmetrics sweep --hdr` says HDR encode is "zenjxl today",
+so an HDR arm is JXL-only for now. That is still strictly better than
+`zencodecs convert`, which silently tone-maps PQ to sRGB (see
+docs/HDR-FEASIBILITY.md).
+
+
 ### ICC: 16 sources are Display P3, and half the encoders threw the profile away (2026-08-06, FIXED in the builder)
 
 **Measured on the live corpus build, not inferred.** 16 of 168 sources (9.5%)

@@ -754,6 +754,13 @@ Attempted, and it does not resolve. Recording so nobody retries it the same way:
   feature table). The builder produces libavif encodings, so it could never have
   been a complete replacement for the encode path.
 
+**[note 2026-08-06] Also superseded.** The reasoning below ("move the scorer out
+of squintly") was built on the same mistake — it assumed the choice was between
+a Cargo dep and relocating the code. The actual answer is to invoke the
+`zencodecs` binary, which any repo can do from anywhere. The observation that
+`zenmetrics batch` is the canonical scorer still stands; the relocation argument
+does not.
+
 **The architecturally correct fix is to move the scorer OUT of squintly.**
 `squintly-score` is a corpus-scoring tool over zen image formats; it belongs in
 the zen workspace where zencodecs resolves naturally, alongside `zenmetrics`
@@ -766,12 +773,46 @@ honest statement is that `zenmetrics batch` is the canonical scorer (it is what
 produced the live v7 numbers); `squintly-score` is a convenience that duplicates
 it and should be deleted rather than extended.
 
-### zencodecs cannot currently be depended on from outside zenpipe (2026-08-06)
+### zencodecs: USE THE BINARY. Do not make it a Cargo dependency. (2026-08-06)
 
-**This is a real defect in `zencodecs`, not a squintly problem, and it is the
-reason the migration is stalled.** Traced by attempting the dependency properly
-(path dep + the sanctioned `[patch.crates-io]` compose-unreleased-siblings
-pattern) rather than assumed:
+**`~/work/zen/zenpipe/target/release/zencodecs` — build it there, shell out to
+it.** `cargo build --release -p zencodecs-cli` inside zenpipe takes 33 seconds
+and works. That is the canonical way, and it is already how this project uses
+`zenmetrics` and `cjpegli`.
+
+> **[RETRACTED 2026-08-06]** An earlier version of this section claimed "a real
+> defect in zencodecs — it cannot be depended on from outside zenpipe". That was
+> wrong, and the reasoning was wrong in an instructive way: I insisted on making
+> zencodecs a **Cargo dependency of squintly**, hit a version-requirement knot
+> (`zenjpeg ^0.8.4` with a `recompress` feature only unpublished 0.9.0 has), and
+> blamed the crate. zencodecs builds fine in its own workspace, which resolves
+> its siblings correctly. I manufactured the problem by choosing the wrong
+> integration shape, then documented my mistake as somebody else's bug.
+>
+> Generalise it: **a Rust tool in a sibling repo is a BINARY you build and
+> invoke, not a crate you graft into your dependency graph.** Reach for a Cargo
+> dep only when you need the types in-process. The knot below is real but
+> irrelevant once you stop trying to link it.
+
+**What the CLI gives us, all of which squintly currently hand-rolls or lacks:**
+
+- `convert <IN> <OUT> --format png|jpeg|webp|avif|jxl|gif|bmp --quality N` —
+  encodes every format the builder needs, **including AVIF and JXL** (the
+  library's `avif-decode`/`jxl-decode` features are decode-only; the CLI is not).
+- `--metadata exact|preserve|web|color` — **the canonical ICC fix.** `color`
+  keeps colour+rotation only; `web` strips GPS/camera/timestamps and keeps
+  orientation+colour. One consistent policy across all codecs, instead of the
+  per-encoder disagreement that lost Display P3 on half the corpus and that
+  `load_rgb` currently patches by hand.
+- `--hdr` — "reconstruct the HDR rendition (gain-map HEIC / Ultra-HDR JPEG) to a
+  BT.2100 PQ PNG with cICP+cLLI". **The canonical HDR path**, and it reads the
+  gain-map formats the web actually uses.
+- `--target-quality N` — smallest size meeting a zensim-A score. The same
+  target-a-perceptual-score idea as zenjpeg's `ApproxSsim2`, across formats.
+- `--matte R,G,B` for alpha→opaque, replacing `composite_rgba`.
+
+Superseded knot, kept only so nobody re-derives it while trying to LINK the
+crate:
 
 `~/work/zen/zenpipe/zencodecs/Cargo.toml` requires
 

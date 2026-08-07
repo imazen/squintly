@@ -30,6 +30,19 @@ for a fresh session", ending a turn with a status report when there is obvious
 next work, or asking permission to continue something already asked for. A
 status report is what you write on the way past, not instead of the next step.
 
+**Also forbidden: deferring a piece of work INTO `.workongoing` because context
+is short.** That file is for state a future window needs, not a parking space
+for the step you should be taking now. "Left in `.workongoing` rather than
+starting it badly" is the same pause wearing a hat. Start it; if the window ends
+mid-way, the record you wrote is what carries it.
+
+**What still legitimately stops you** — and none of these are context:
+- another agent's fresh `.workongoing` claim (the 5-minute rule; back off)
+- a destructive or externally-visible step that needs confirmation
+- a measured, verified blocker where proceeding would be unsafe or useless
+
+Say which of those it is, in one line, and continue with everything else.
+
 This is the counterpart to the continuation discipline in the global CLAUDE.md,
 sharpened for the specific failure of treating a shrinking context window as a
 natural stopping point. It is not.

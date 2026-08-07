@@ -662,6 +662,34 @@ Note that switching scorers does NOT fix this: verified 2026-08-06 that
 on an ICC-carrying source, i.e. **neither applies ICC** — they both read raw
 samples. The confound was in the corpus, not the metric.
 
+### The zen-codec migration: what is actually true (2026-08-06)
+
+Three premises worth pinning, because two of them were wrong when checked:
+
+1. **`zencodec` does not encode.** It is "Shared traits and types for zen*
+   image codecs", `#![no_std]` by default. "Move the builder onto zencodec" is
+   really "move it onto `zenjpeg` / `zenwebp` / `zenavif` / `zenpng`, which
+   implement zencodec's traits". Worth knowing before opening that repo looking
+   for a bug.
+2. **The version-skew excuse is STALE.** `Cargo.toml` carries a note dated
+   2026-05 saying zen{jpeg,png,webp,avif} "pin to magetypes/archmage versions
+   that aren't all aligned on crates.io". Re-checked 2026-08-06: zenjpeg 0.8.4,
+   zenwebp 0.4.4 and zenpng 0.1.4 are published and **resolve cleanly** in
+   squintly's graph — added, built, 182 lib tests still green. The note should
+   not be quoted as a reason any more.
+3. **The migration fixes the subsampling confound too, not just ICC.**
+   `zenjpeg`'s API is `EncoderConfig::ycbcr(quality, ChromaSubsampling::Quarter)`
+   with `PixelLayout::Rgb8Srgb` — subsampling is an explicit ARGUMENT and the
+   pixel layout is explicitly sRGB. Today the builder passes no subsampling to
+   anything and each encoder takes its own default (Pillow JPEG is 4:2:0 below
+   q95, WebP is 4:2:0 by format, cjpegli is 4:4:4), which is why the corpus
+   silently mixes them and `EncodingMeta` cannot record it.
+
+**Shape of the remaining work:** the builder is Python, the encoders are Rust,
+so the migration is a small Rust encoder binary the builder shells out to —
+exactly the pattern `cjpegli` already uses in `encode_variants`. Not a rewrite.
+Deps are already added and building; the binary is the next step.
+
 **The right fix for the DUPLICATION is not to patch the hand-rolled paths.** `zenmetrics-cli`
 already does correct decode + colour handling and computes ssim2 (and five other
 metrics) — `squintly-score` re-implemented decoding for PNG/JPEG/WebP/AVIF/JXL

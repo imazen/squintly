@@ -685,6 +685,22 @@ Three premises worth pinning, because two of them were wrong when checked:
    q95, WebP is 4:2:0 by format, cjpegli is 4:4:4), which is why the corpus
    silently mixes them and `EncodingMeta` cannot record it.
 
+4. **`zenjpeg` can target ssim2 DIRECTLY, which supersedes the whole ladder
+   design.** Its quality parameter accepts `Quality::ApproxSsim2(90.0)` (also
+   `ApproxButteraugli`, `ApproxMozjpeg`). The 17-rung q ladder exists only
+   because quality units are not perceptually even — it was built by scoring the
+   old corpus, interpolating the q→ssim2 curve, and picking rungs that come out
+   ~3-5 ssim2 points apart. With `ApproxSsim2` you ask for the ssim2 values you
+   want and get an **evenly spaced perceptual ladder by construction**, no
+   interpolation and no re-derivation when the corpus changes.
+
+   That is strictly better and it is the reason to do this migration, more than
+   ICC or subsampling. Design the next ladder as target ssim2 values —
+   e.g. 40, 45, … 90, 93, 95 — not as q rungs. Keep a q column for provenance.
+   Note it applies to JPEG only for now; the other codecs would still need the
+   measured-curve approach until they grow equivalents, so a mixed corpus needs
+   both paths.
+
 **Shape of the remaining work:** the builder is Python, the encoders are Rust,
 so the migration is a small Rust encoder binary the builder shells out to —
 exactly the pattern `cjpegli` already uses in `encode_variants`. Not a rewrite.

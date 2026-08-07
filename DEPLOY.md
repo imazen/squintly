@@ -419,6 +419,51 @@ PY
 
 `POST /api/curator/manifest` upserts, so re-loading the same slice is a no-op.
 
+## 15a. Building a corpus — use `--encoder sweep`
+
+**The canonical path.** squintly selects sources; `zenmetrics sweep` encodes and
+scores them. One pass yields the blobs AND the metric scores.
+
+```bash
+# 1. Build. Selection is squintly's job; encoding and scoring are the sweep's.
+python3 scripts/build_demo_corpus.py --out demo-corpus --clean \
+    --encoder sweep --metrics ssim2 \
+    --qualities 15 18 22 26 30 38 45 52 60 68 75 82 88 92 95 97 100
+
+# 2. Publish the blobs.
+just publish-corpus imazen26-vN-<label>
+
+# 3. Point the deployment at it.
+railway variables --set "SQUINTLY_COEFFICIENT_HTTP=https://codec-corpus.r2.imazen.org/squintly/demo-corpus/imazen26-vN-<label>"
+
+# 4. Ingest the scores the sweep already computed — no second pass.
+curl -X POST "https://squintly.imazen.org/api/admin/metrics?format=tsv&source=sweep-ssim2&admin_token=$TOK" \
+     --data-binary @demo-corpus/metrics.tsv
+```
+
+Needs `~/work/zen/zenmetrics/target/release/zenmetrics` built with
+`--features sweep`; the script says so if it is missing.
+
+**Useful flags:**
+
+| flag | why |
+|---|---|
+| `--metrics ssim2 butteraugli dssim …` | every metric lands in `metrics.tsv` in the same pass. Ask for what analysis needs — the sweep already decoded each cell, so extra metrics are nearly free. |
+| `--knob-grid '{"subsampling":["420","444"]}'` | makes a codec knob an **explicit swept axis**. This is how chroma subsampling stops being an accident of per-encoder defaults, which is a known confound `EncodingMeta` cannot otherwise express. |
+| `--hdr` | the only working HDR path (zenjxl today). Sources must be 16-bit PQ PNGs. **Do not use `--encoder pillow` or `zencodecs` for HDR** — they silently tone-map to SDR. |
+
+**Timing, measured 2026-08-07** on 168 sources × 2 qualities: zenjpeg and zenwebp
+a few minutes each; **zenavif is by far the slowest** (XL sources dominate) and
+paced the whole run. Budget for it, and expect no files to appear for a codec
+until its sweep finishes — the sweep writes to scratch and the builder copies on
+completion, so a quiet period is normal rather than a hang. `ps -C zenmetrics`
+shows short-lived `jobexec` workers cycling if it is healthy.
+
+**`--encoder pillow` (default) and `--encoder zencodecs` are legacy.** They are
+what the live v7 corpus was built with, so they stay until the sweep path has
+produced a published corpus — but nothing new should be added to them. See
+CLAUDE.md's ROOT CAUSE entry.
+
 ## 15. The imazen-26 demo corpus (hosted on R2)
 
 The rating flow needs a coefficient store. Rather than running one, the corpus

@@ -53,6 +53,7 @@ Then publish it: `just publish-corpus <version>` (scripts/publish_corpus_r2.py).
 from __future__ import annotations
 
 import argparse
+import collections
 import os
 import tempfile
 import io
@@ -696,16 +697,39 @@ def encode_via_sweep(
     Sweep works on a DIRECTORY in batch, not per-source, which is why this runs
     after the selection loop rather than inside it.
     """
-    if not ZENMETRICS_BIN.exists():
-        sys.exit(
-            f"--encoder sweep needs {ZENMETRICS_BIN}\n"
-            "Build it:  cd ~/work/zen/zenmetrics && cargo build --release --features sweep"
+    def _require_zenmetrics() -> None:
+        """Re-checked before EVERY codec, not once at the start.
+
+        A full sweep takes over an hour, and the binary lives in another repo's
+        `target/` — exactly what a disk-cleanup sweep deletes. On 2026-08-08 that
+        happened mid-run: zenjpeg, zenwebp and zenavif each completed 2856/2856
+        cells, then zenjxl died with `unrecognized subcommand 'sweep'` because
+        the binary had been replaced underneath us. A start-of-run check cannot
+        catch that; the failure has to be loud at the point it happens, or a
+        75-minute run quietly yields three codecs out of four.
+        """
+        if not ZENMETRICS_BIN.exists():
+            sys.exit(
+                f"\nFATAL: {ZENMETRICS_BIN} is gone.\n"
+                "It lives in another repo's target/ and disk-cleanup sweeps delete it.\n"
+                "Rebuild:  cd ~/work/zen/zenmetrics && cargo build --release --features sweep"
+            )
+        probe = subprocess.run(
+            [str(ZENMETRICS_BIN), "sweep", "--help"], capture_output=True, text=True
         )
+        if probe.returncode != 0 and "unrecognized subcommand" in (probe.stderr or ""):
+            sys.exit(
+                f"\nFATAL: {ZENMETRICS_BIN} exists but was built WITHOUT `--features sweep`.\n"
+                "Rebuild:  cd ~/work/zen/zenmetrics && cargo build --release --features sweep"
+            )
+
+    _require_zenmetrics()
     enc_dir.mkdir(parents=True, exist_ok=True)
     out: list[EncodingMeta] = []
     scores: dict[str, dict[str, float]] = {}
 
     for study_codec, sweep_codec in SWEEP_CODECS.items():
+        _require_zenmetrics()  # the binary can vanish between codecs — see above
         # dir= is NOT optional: `/tmp` is banned in this workspace (it is a
         # small tmpfs that gets wiped, and a whole-corpus sweep writes hundreds
         # of MB of encoded cells here). Filling it takes the machine's shell
@@ -766,6 +790,17 @@ def encode_via_sweep(
                     }
                     if got:
                         scores[eid] = got
+
+    produced = collections.Counter(e.codec_name for e in out)
+    missing = [c for c in SWEEP_CODECS if not produced.get(c)]
+    if missing:
+        sys.exit(
+            f"\nFATAL: {', '.join(missing)} produced NO encodings.\n"
+            f"Got: {dict(produced)}\n"
+            "A corpus missing a whole codec is not publishable — every pair the "
+            "sampler builds from it would silently exclude that codec. Fix the "
+            "cause and re-run rather than shipping a partial build."
+        )
     return out, scores
 
 

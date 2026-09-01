@@ -128,6 +128,10 @@ fn expected() -> BTreeMap<&'static str, &'static str> {
             "0018_trial_content.sql",
             "bdad7a8ca81a5a952f43dc8599016475afe00eb6eb465baf2f9fc4391692ba89",
         ),
+        (
+            "0027_study_pairs.sql",
+            "08c06d2cb8379e9433395e06171d6038137c1db15de7975d4c9dc8c7281c90f2",
+        ),
     ])
 }
 

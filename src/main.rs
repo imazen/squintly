@@ -16,6 +16,7 @@ use squintly::coefficient::{CoefficientSource, FsCoefficient, HttpCoefficient};
 use squintly::curator;
 use squintly::handlers::{self, AppState};
 use squintly::metrics_api;
+use squintly::pair_manifest_api;
 use squintly::suggestions;
 
 #[derive(RustEmbed)]
@@ -351,6 +352,8 @@ async fn main() -> Result<()> {
         )
         .route("/debrief/pending", get(handlers::debrief_pending))
         .route("/debrief", post(handlers::debrief_submit))
+        .route("/admin/study-pairs", post(pair_manifest_api::ingest))
+        .route("/study-pairs/progress", get(pair_manifest_api::progress))
         .route("/admin/disposition", get(metrics_api::disposition))
         .route("/admin/metrics/encodings", get(metrics_api::for_encodings))
         .route("/curator/backfill-dims", post(curator::backfill_dims))

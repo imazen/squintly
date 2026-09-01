@@ -253,6 +253,54 @@ pub const STUDIES: &[Study] = &[
         },
     },
     Study {
+        id: "zensim-adjudication",
+        label: "Metric adjudication (pre-mined pairs, A/B only)",
+        short_name: "Adjudication",
+        // The plan is the stimulus set, so these are the plan's own size, not
+        // an aspiration: `min_viable` is the disagreement stratum alone (the
+        // clause-deciding arm), `ideal` is the whole registered list.
+        min_viable_ratings: 3200,
+        ideal_ratings: 5400,
+        is_default: false,
+        summary: "Where a candidate quality metric and SSIMULACRA2 disagree about which of \
+                  two encodes is closer to the original, which one is right? Every pair here \
+                  was chosen because the two disagree.",
+        trial_style: "A/B comparisons only, in a fixed pre-registered order.",
+        // ZERO, and it must be. The plan carries its own repeats as rows with
+        // `repeat_of_pair` set, placed at chosen distances from their
+        // originals. A probabilistic re-serve on top would add unplanned
+        // re-exposure to a measurement whose whole job is to be the
+        // denominator of every claim.
+        p_repeat: 0.0,
+        // UNLISTED: this is an operator-run, single-observer study against a
+        // stimulus list staged for one machine. A drive-by visitor picking it
+        // would consume planned rows from the registered sequence — the rows
+        // are keyed to an observer, so a stranger's answers would occupy the
+        // plan's early sequence and the intended observer would never see them.
+        unlisted: true,
+        // A single consistent observer has no peer distribution to be an
+        // outlier against; the screens still run and are still recorded (see
+        // `exclusion.rs`), they are just not acted on. Same reasoning as the
+        // other forced-choice studies, one step further: here n IS 1.
+        exclusion_default: false,
+        sampler: SamplerConfig {
+            p_single: 0.0,
+            p_honeypot: 0.0,
+            p_anchor: 0.0,
+            // The plan names its own stimuli; a content filter on top would
+            // silently drop registered rows and change the set that was
+            // pre-registered.
+            content: ContentFilter::Any,
+            pairing: PairingRule::FromManifest,
+            // Attention checks are planned rows too — the calibration stratum
+            // carries `expected_choice`, which routes into the same
+            // `grading.rs` golden path. A probabilistic injection would insert
+            // pairs that are not in the registered list.
+            p_golden_pair: 0.0,
+            pairwise_only: true,
+        },
+    },
+    Study {
         id: "zensr-dejpeg",
         label: "JPEG artifact removal (zensr)",
         short_name: "Artifact removal",

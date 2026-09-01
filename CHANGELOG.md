@@ -13,6 +13,29 @@
   "desaturated reds" report previously pinned entirely on chroma subsampling.
 
 ### Added
+- **Pre-mined pair lists: `PairingRule::FromManifest` + the `study_pairs` table**
+  (`migrations/0027_study_pairs.sql`, `src/pair_manifest.rs`,
+  `src/pair_manifest_api.rs`). Both existing pairing rules DERIVE a pair at serve
+  time from the manifest, which is right when the question is about the corpus
+  and wrong when it is about two *metrics*: "the pairs where model M and
+  SSIMULACRA2 order two encodes differently" needs both scorers' opinions over
+  every ladder of every reference — an offline mining pass — and the resulting
+  set is a pre-registration, so it must be fixed before the first judgment rather
+  than redrawn per session. Planned rows carry a stratum, an opaque `meta_json`
+  that round-trips to the export, an optional known answer (which makes the row a
+  golden through the existing `grading.rs` path), and `repeat_of_pair` for
+  planned test-retest. Rows flow through the SAME counterbalancing choke point
+  and the same trial insert as every other pair; ASAP is skipped, because active
+  sampling substituting a higher-EIG neighbour would serve a pair the
+  registration does not contain. `trials.study_pair_id` records which planned row
+  a judgment came from — `(source, a, b)` is neither stable (counterbalancing
+  swaps the slots) nor unique (a planned repeat is a second row over the same
+  encodings). Serving is keyed to the OBSERVER, so a multi-session study resumes
+  rather than restarting; a finished plan and an unservable row each fail by
+  name instead of falling back to a sampler-drawn pair.
+- **Study `zensim-adjudication`** (unlisted, forced choice, `p_repeat: 0.0` —
+  repeats are planned rows, not a probability). `POST /api/admin/study-pairs`
+  ingests the list; `GET /api/study-pairs/progress` reports per-stratum progress.
 - **`squintly-score --fs <splitstore-root>`** — score a locally built corpus
   without publishing it first. Uploading 2.7 GB and immediately downloading it
   to find out the ladder missed its target band is the wrong order.

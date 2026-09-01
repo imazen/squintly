@@ -185,6 +185,22 @@ pub enum PairingRule {
         /// Codec-name prefix identifying the restored arm.
         restored_prefix: &'static str,
     },
+    /// Serve a pre-mined, pre-registered pair list in planned order.
+    ///
+    /// The two rules above DERIVE the pair at serve time from the manifest,
+    /// which is right when the question is about the corpus. It is the wrong
+    /// shape when the question is about two *metrics*: "the pairs where model
+    /// M and SSIMULACRA2 disagree" is not a property of any one source's
+    /// ladder, it needs both scorers' opinions over every ladder of every
+    /// reference — an offline mining pass — and the resulting set is part of a
+    /// pre-registration, so it must be fixed before the first judgment rather
+    /// than re-drawn per session.
+    ///
+    /// The rows live in `study_pairs` and are served by
+    /// [`crate::pair_manifest`]. `pick_trial` never returns a plan under this
+    /// rule (it has no database); `handlers::next_trial` takes the manifest
+    /// path before calling the sampler at all.
+    FromManifest,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -598,12 +614,20 @@ pub fn pick_trial(
                     PairingRule::RestorationVsBaseline { restored_prefix } => {
                         try_restoration(restored_prefix)
                     }
+                    PairingRule::FromManifest => None,
                 })
             }
             PairingRule::AdjacentQuality => try_pair(),
             PairingRule::RestorationVsBaseline { restored_prefix } => {
                 try_restoration(restored_prefix)
             }
+            // The plan is in the database and this function is pure. Returning
+            // None here rather than falling back to `try_pair` is the point:
+            // a silent fallback would serve a sampler-drawn pair under a
+            // pre-registered study's label, which is exactly the kind of
+            // substitution that makes a result unreadable after the fact.
+            // `handlers::next_trial` never reaches here for this rule.
+            PairingRule::FromManifest => None,
         };
         let plan = if cfg.pairwise_only {
             pair_fn()
@@ -691,6 +715,47 @@ fn pick_anchor<R: Rng + ?Sized>(
         is_golden: false,
         expected_choice: None,
         held_out,
+    })
+}
+
+/// Turn one planned [`crate::pair_manifest::PairRow`] into a trial plan.
+///
+/// Lives here rather than in `pair_manifest` because resolving a source hash
+/// and two encoding ids against the manifest is a sampler-shaped decision, and
+/// `pair_manifest` is a store. Returns `None` when the manifest cannot resolve
+/// all three — the caller reports which id was missing rather than skipping to
+/// the next row, because silently skipping would let a study run to completion
+/// having served a different set than it registered.
+///
+/// `is_golden` is set from `expected_choice`: a planned row with a known answer
+/// IS an attention check, and marking it so is what routes it into the existing
+/// `grading.rs` `golden_fail` path instead of needing a second mechanism.
+/// The returned plan has NOT been counterbalanced — the caller passes it
+/// through the one choke point in `handlers::next_trial`, exactly like every
+/// other pair, so the expected answer flips with the slots.
+pub fn plan_from_pair(
+    manifest: &Manifest,
+    flags: Option<&SourceFlagMap>,
+    row: &crate::pair_manifest::PairRow,
+) -> Result<TrialPlan, String> {
+    let source = manifest
+        .source(&row.source_hash)
+        .ok_or_else(|| format!("source {} not in manifest", row.source_hash))?;
+    let a = manifest
+        .encoding(&row.a_encoding_id)
+        .ok_or_else(|| format!("encoding {} not in manifest", row.a_encoding_id))?;
+    let b = manifest
+        .encoding(&row.b_encoding_id)
+        .ok_or_else(|| format!("encoding {} not in manifest", row.b_encoding_id))?;
+    Ok(TrialPlan::Pair {
+        source: source.clone(),
+        a: a.clone(),
+        b: b.clone(),
+        is_golden: row.expected_choice.is_some(),
+        expected_choice: row.expected_choice.clone(),
+        held_out: flags
+            .map(|f| f.is_held_out(&row.source_hash))
+            .unwrap_or(false),
     })
 }
 

@@ -614,7 +614,48 @@ pub async fn next_trial(
     let manifest = state.manifest.read().await;
     let anchors = state.anchors.read().await;
     let flags = state.source_flags.read().await;
-    let plan = pick_trial(
+
+    // A pre-registered study serves its own list, in its own order, and never
+    // consults the sampler. Resolved here rather than inside `pick_trial`
+    // because the plan is database state and the sampler is a pure function of
+    // the manifest. The row still flows through every step below — ASAP
+    // excepted — so counterbalancing, the insert and the payload are shared
+    // with every other pair rather than reimplemented.
+    let planned: Option<crate::pair_manifest::PairRow> =
+        if sampler.pairing == crate::sampling::PairingRule::FromManifest {
+            match crate::pair_manifest::next_pair(&state.pool, &study_id, &q.session_id).await? {
+                Some(row) => Some(row),
+                None => {
+                    // Distinguish "finished the plan" from "no trials
+                    // available": an operator seeing the generic message would
+                    // go looking at the corpus, when the answer is that the
+                    // observer has answered every registered pair.
+                    let p = crate::pair_manifest::progress(&state.pool, &study_id, &q.session_id)
+                        .await?;
+                    return Err(AppError::Conflict(format!(
+                        "study {study_id:?} plan complete for this observer: \
+                         {} of {} planned pairs served",
+                        p.served, p.planned
+                    )));
+                }
+            }
+        } else {
+            None
+        };
+
+    let plan = if let Some(row) = &planned {
+        crate::sampling::plan_from_pair(&manifest, Some(&*flags), row).map_err(|e| {
+            // Named, not skipped. Skipping to the next resolvable row would let
+            // the study run to completion having served a different set than it
+            // registered — silently.
+            AppError::Conflict(format!(
+                "planned pair {} (seq {}) cannot be served: {e}. \
+                 Stage its bytes and POST /api/manifest/refresh",
+                row.pair_id, row.seq
+            ))
+        })?
+    } else {
+        pick_trial(
         &manifest,
         &sampler,
         allowed.as_ref(),
@@ -645,13 +686,23 @@ pub async fn next_trial(
             sampler.content.describe(),
             manifest.sources.len(),
         ))
-    })?;
+    })?
+    };
 
     // ASAP active-sampling override: when `pick_trial` returns a non-golden Pair
     // and we have enough prior pair responses on this source to fit BT, replace
     // the random adjacent pair with the highest-EIG adjacent pair. Falls back
     // silently if the fit is under-determined.
-    let plan = enhance_pair_with_asap(&state.pool, &manifest, plan).await;
+    //
+    // NOT applied to a planned pair. Active sampling chooses which comparison to
+    // make; under a pre-registered plan that choice is already made and written
+    // down, and letting the sampler substitute a higher-EIG neighbour would
+    // serve a pair the registration does not contain.
+    let plan = if planned.is_some() {
+        plan
+    } else {
+        enhance_pair_with_asap(&state.pool, &manifest, plan).await
+    };
 
     // Position counterbalancing, applied here and nowhere else: this is the one
     // point every pair passes through, whether it came from `try_pair` or the
@@ -668,7 +719,19 @@ pub async fn next_trial(
     // Done here rather than in the sampler because it needs response history,
     // and the sampler is deliberately a pure function of the manifest.
     let mut repeat_of: Option<String> = None;
-    if study.p_repeat > 0.0 && rand::Rng::random::<f32>(&mut rand::rng()) < study.p_repeat {
+
+    // A PLANNED repeat names its original by pair id, so the trial link is a
+    // lookup rather than a draw. Filling the same `repeat_of_trial_id` column
+    // is what lets the existing export, grading and disposition paths see a
+    // planned repeat exactly as they see a probabilistic one — the consistency
+    // measurement did not need a second mechanism, only a second way of
+    // choosing which pair to repeat.
+    if let Some(row) = &planned {
+        if let Some(orig_pair) = row.repeat_of_pair.as_deref() {
+            repeat_of =
+                crate::pair_manifest::trial_for_pair(&state.pool, &q.session_id, orig_pair).await?;
+        }
+    } else if study.p_repeat > 0.0 && rand::Rng::random::<f32>(&mut rand::rng()) < study.p_repeat {
         let prior: Option<(String, String, String, String)> = sqlx::query_as(
             "SELECT t.id, t.source_hash, t.a_encoding_id, t.b_encoding_id \
              FROM trials t \
@@ -726,8 +789,8 @@ pub async fn next_trial(
                 "INSERT INTO trials (id, session_id, kind, source_hash, a_encoding_id, a_codec, \
                  a_quality, a_bytes, intrinsic_w, intrinsic_h, staircase_target, is_golden, \
                  expected_choice, held_out, served_at, source_corpus, content_class, \
-                 repeat_of_trial_id, source_filename) \
-                 VALUES (?, ?, 'single', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                 repeat_of_trial_id, source_filename, study_pair_id) \
+                 VALUES (?, ?, 'single', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             )
             .bind(&trial_id)
             .bind(&q.session_id)
@@ -750,6 +813,7 @@ pub async fn next_trial(
             .bind(crate::content_class::classify(source.corpus.as_deref()).as_str())
             .bind(repeat_of.as_deref())
             .bind(source.filename.as_deref())
+            .bind(planned.as_ref().map(|r| r.pair_id.as_str()))
             .execute(&state.pool)
             .await?;
 
@@ -796,8 +860,8 @@ pub async fn next_trial(
                 "INSERT INTO trials (id, session_id, kind, source_hash, a_encoding_id, a_codec, \
                  a_quality, a_bytes, b_encoding_id, b_codec, b_quality, b_bytes, intrinsic_w, \
                  intrinsic_h, is_golden, expected_choice, held_out, served_at, source_corpus, \
-                 content_class, repeat_of_trial_id, source_filename) \
-                 VALUES (?, ?, 'pair', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                 content_class, repeat_of_trial_id, source_filename, study_pair_id) \
+                 VALUES (?, ?, 'pair', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             )
             .bind(&trial_id)
             .bind(&q.session_id)
@@ -823,6 +887,7 @@ pub async fn next_trial(
             .bind(crate::content_class::classify(source.corpus.as_deref()).as_str())
             .bind(repeat_of.as_deref())
             .bind(source.filename.as_deref())
+            .bind(planned.as_ref().map(|r| r.pair_id.as_str()))
             .execute(&state.pool)
             .await?;
 

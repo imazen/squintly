@@ -29,6 +29,8 @@ pub mod jpeg_q;
 pub mod licensing;
 pub mod metrics;
 pub mod metrics_api;
+pub mod pair_manifest;
+pub mod pair_manifest_api;
 pub mod sampling;
 pub mod source_label;
 pub mod staircase;

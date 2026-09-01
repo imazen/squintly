@@ -13,6 +13,18 @@
   "desaturated reds" report previously pinned entirely on chroma subsampling.
 
 ### Added
+- **Session-block progress: `Progress::{block_size, answered_in_block,
+  break_recommended}`** (`src/pair_manifest.rs`). The one fatigue norm the
+  literature actually measures (AIC-HDR2025, Testolina et al. 2025,
+  arXiv:2506.12505 — batches of 120 questions, capped at two batches per
+  participant, "to minimize potential fatigue effects on response accuracy"
+  per ITU-R BT.500; see `zensim/benchmarks/squintly_literature_basis_2026-09-01.md`)
+  is now a computed field on `GET /api/study-pairs/progress`:
+  `break_recommended` is true exactly when `answered` lands on a positive
+  multiple of `block_size` (default 120) — the moment to prompt a break, not
+  a running countdown. No paper measures an in-session decay curve, so this
+  is a preventive cap borrowed from the only calibrated number that exists,
+  not a fitted threshold.
 - **Pre-mined pair lists: `PairingRule::FromManifest` + the `study_pairs` table**
   (`migrations/0027_study_pairs.sql`, `src/pair_manifest.rs`,
   `src/pair_manifest_api.rs`). Both existing pairing rules DERIVE a pair at serve

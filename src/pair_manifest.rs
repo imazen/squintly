@@ -18,6 +18,26 @@ use serde::{Deserialize, Serialize};
 
 use crate::handlers::AppError;
 
+/// Trials per session block, for the ONE fatigue norm the literature actually
+/// measures: AIC-HDR2025 (Testolina et al. 2025, arXiv:2506.12505; see
+/// `zensim/benchmarks/squintly_literature_basis_2026-09-01.md` §"2AFC fatigue
+/// norms") ran batches of 120 triplet questions and capped each participant
+/// at two batches per experiment, "to minimize potential fatigue effects on
+/// response accuracy" per ITU-R BT.500. No paper measures an accuracy/RT
+/// decay curve within a session — this is a preventive cap borrowed from the
+/// only calibrated number that exists, not a fitted threshold.
+pub const DEFAULT_BLOCK_SIZE: i64 = 120;
+
+/// `(answered_in_block, break_recommended)` for `answered` total responses
+/// under `block_size`. Pure so the boundary case is unit-testable without
+/// driving 120 real trials through the DB harness: `break_recommended` is
+/// true only exactly ON a positive multiple of `block_size`, never before or
+/// after — see [`Progress::break_recommended`].
+fn block_status(answered: i64, block_size: i64) -> (i64, bool) {
+    let answered_in_block = answered % block_size;
+    (answered_in_block, answered > 0 && answered_in_block == 0)
+}
+
 /// One planned comparison.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PairRow {
@@ -312,6 +332,19 @@ pub struct Progress {
     pub served: i64,
     pub answered: i64,
     pub per_stratum: Vec<StratumProgress>,
+    /// Session-block size this progress was computed against (see
+    /// [`DEFAULT_BLOCK_SIZE`]). Carried on the response so a client never
+    /// hardcodes the number twice.
+    pub block_size: i64,
+    /// How many trials into the CURRENT block this observer has answered.
+    /// `0` right after a block boundary — see `break_recommended`.
+    pub answered_in_block: i64,
+    /// True exactly when `answered` is a positive multiple of `block_size`:
+    /// the observer just finished a block and this is the moment to show the
+    /// mandatory-break prompt, not a running "N to go" countdown. Stays true
+    /// only until the next trial is answered, same as the AIC-HDR2025 design
+    /// it mirrors (a break BETWEEN batches, not a mid-batch pause).
+    pub break_recommended: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -358,6 +391,8 @@ pub async fn progress(
     .bind(study_id)
     .fetch_all(pool)
     .await?;
+    let block_size = DEFAULT_BLOCK_SIZE;
+    let (answered_in_block, break_recommended) = block_status(answered, block_size);
     Ok(Progress {
         study_id: study_id.to_string(),
         planned,
@@ -371,6 +406,9 @@ pub async fn progress(
                 answered,
             })
             .collect(),
+        block_size,
+        answered_in_block,
+        break_recommended,
     })
 }
 
@@ -379,6 +417,23 @@ mod tests {
     use super::*;
 
     const HEAD: &str = "pair_id\tsource_hash\ta_encoding_id\tb_encoding_id\tstratum\tseq";
+
+    /// `break_recommended` fires exactly ON a block boundary, never before or
+    /// after — the moment to show the AIC-HDR2025-style break prompt is
+    /// "just finished trial 120", not "about to start 121" and not "still
+    /// working through the 120s".
+    #[test]
+    fn break_is_recommended_exactly_on_a_block_boundary() {
+        assert_eq!(block_status(0, 120), (0, false)); // nothing answered yet
+        for n in 1..120 {
+            let (in_block, due) = block_status(n, 120);
+            assert_eq!(in_block, n, "n={n}");
+            assert!(!due, "n={n} is mid-block, no break due");
+        }
+        assert_eq!(block_status(120, 120), (0, true)); // block 1 just finished
+        assert_eq!(block_status(121, 120), (1, false)); // block 2 under way
+        assert_eq!(block_status(240, 120), (0, true)); // block 2 just finished
+    }
 
     #[test]
     fn parses_the_minimal_column_set() {

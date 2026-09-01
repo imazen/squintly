@@ -258,9 +258,14 @@ pub const STUDIES: &[Study] = &[
         short_name: "Adjudication",
         // The plan is the stimulus set, so these are the plan's own size, not
         // an aspiration: `min_viable` is the disagreement stratum alone (the
-        // clause-deciding arm), `ideal` is the whole registered list.
-        min_viable_ratings: 3200,
-        ideal_ratings: 5400,
+        // clause-deciding arm, s1_gmad: 2 candidates x 2 directions x 3
+        // quality zones x 100/cell), `ideal` is the whole registered list
+        // (s1_gmad + s1_random_control 400 + s2_ladder 600 + s3_calibration
+        // 120 + 216 repeats). Measured exactly, not estimated: see the mining
+        // manifest cited in
+        // zensim/benchmarks/squintly_adjudication_protocol_2026-09-01.md §4.
+        min_viable_ratings: 1200,
+        ideal_ratings: 2536,
         is_default: false,
         summary: "Where a candidate quality metric and SSIMULACRA2 disagree about which of \
                   two encodes is closer to the original, which one is right? Every pair here \

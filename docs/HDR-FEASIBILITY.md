@@ -1,5 +1,15 @@
 # HDR in squintly — what exists, what is missing, what it would cost
 
+> **[note 2026-09-15] Historical capability assessment; do not implement this
+> document as the current plan.**
+> [Current study readiness](STUDY_READINESS_2026-09-15.md) takes precedence.
+> `dynamic-range: high` is a capability hint, not proof of native HDR display;
+> gain-map SDR fallback does not produce an HDR judgment. Current work uses the
+> existing canonical Rust codec/color/zenmetrics paths, not an extended duplicate
+> `squintly-score` or the external codec suggestions below. August source counts,
+> CLI limitations and response counts are dated findings, not current audits.
+> Phone integer inspection zoom is allowed and must be physically verified.
+
 Assessed 2026-08-06. Nothing here is built; this is the honest inventory before
 anybody starts.
 

@@ -1,5 +1,23 @@
 # Squintly — agent notes
 
+## Controlling priorities — user direction, 2026-09-15
+
+Read [STUDY_READINESS_2026-09-15.md](docs/STUDY_READINESS_2026-09-15.md)
+before study, corpus, presentation or collection work. It and
+[zensim's production priorities](https://github.com/imazen/zensim/blob/main/docs/PRODUCTION_PRIORITIES_2026-09-15.md)
+take precedence over conflicting older local plans and backlogs. Preserve
+higher-priority instructions and explicit later user direction.
+
+The product goal is a Rust-served, public-API-evaluated zensim with reliable
+scalar targeting, useful spatial steering, correct color/native HDR, and a
+bug-only corruption head. Squintly's immediate contribution is the bounded
+study-readiness work packet: phone SDR comparisons with unsmoothed integer
+inspection zoom, correct color/provenance, cross-observer allocation, tested
+exports and a pre-spend pilot. Native HDR needs separate physical-display
+qualification. The September 1 one-observer protocol is historical; **full paid
+collection is not ready**. Do not buy a panel or launch a study merely because
+the old manifest/UI exists. Extend existing owners, not duplicate scorers/apps.
+
 Browser-based psychovisual data collection for zensim. See [SPEC.md](SPEC.md) for the
 design and [README.md](README.md) for the elevator pitch.
 

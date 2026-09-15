@@ -1,5 +1,12 @@
 # Squintly — formal study design & pre-registration
 
+> **[note 2026-09-15] This is the historical main-study registration.** For the
+> new paid phone study, [STUDY_READINESS_2026-09-15.md](STUDY_READINESS_2026-09-15.md)
+> controls readiness, integer inspection zoom, color/HDR qualification and the
+> new cohort design. Keep this registration and its collected data identifiable;
+> do not silently reuse its study ID or treat its preregistration as covering the
+> new experiment.
+
 **Status:** v0.2 protocol — pre-registered for main data collection.
 **Last revised:** 2026-05-28.
 **Cross-refs:** [`SPEC.md`](../SPEC.md), [`docs/methodology.md`](methodology.md),

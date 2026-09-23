@@ -521,6 +521,18 @@ it is a local build artifact, not part of the image.
 
 ### Where the corpus comes from
 
+**[note 2026-09-22] A screened candidate set for the next paid study exists:**
+imazen-26 `variant-sets/squintly-candidates@2026-09-22` (148 train picks for
+development labels, 62 test picks held for confirmation, one per stimulus
+family, graded by eye for appeal; see its `SET.md`). The builder below does
+not consume it, and should not until stimuli render through the imazen route
+(`STUDY_READINESS_2026-09-15.md` §3): `load_rgb` and the resize loop still use
+Pillow (ICC conversion, `LANCZOS` in gamma space). The published
+`imazen26-v5-test-noai` holds 42 distinct images chosen by file size. And
+png-v3 tags ~165 Display-P3 photos as BT.709 (imazen-26
+`benchmarks/color_orientation_audit_2026-09-22.md`), which matters for any
+colour-fidelity claim.
+
 `codec-corpus/imazen-26-png-v3` is the canonical stratified imazen-26: 21
 numbered strata + a `nope/` reject bin, 2639 objects, 15.5 GiB. Its strata
 separate exactly what imazen/squintly#4 needs and the local folder layout lumps

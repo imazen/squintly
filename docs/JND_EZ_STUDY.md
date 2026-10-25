@@ -200,6 +200,47 @@ Per observer:
 7. **Encoder targets.** For each codec, the quality at 0.5, 1 and 2 jnd-ez for each image, with the median and spread
    over images.
 
+## Comparing zen encoders with other encoders
+
+The zen block on its own measures zen encoders only. To say whether they are better, every comparison needs the other
+encoder on the same images, judged by the same observers in the same sessions.
+
+- The other encoders run under their real names and pinned versions.
+- Their outputs are evaluation data only: they never train or tune a zen encoder or a metric.
+- "Better" means fewer bytes at equal perceived quality, so both blocks below report a byte ratio for each image.
+
+1. **At the top: bytes at 0.5 and 1 jnd-ez.** Each zen ladder gets a ladder from the other encoder on the same image,
+   with an equally dense grid.
+   - Each image gives the ratio of the two encoders' bytes at each target. Each codec family gives the median ratio
+     over images, with a bootstrap interval.
+   - **How bytes relate to JND.** On AIC-3's 2023 encodes, halving the bytes near 1 boosted JND adds 1.51 boosted JND
+     for JPEG, 1.52 for AVIF, 1.65 for VVC, 1.86 for JPEG 2000 and 2.05 for JPEG XL. These are medians over the five
+     sources, from zenpapers' `scripts/aic3_bytes_per_jnd.py` on the refit table.
+   - **Precision.** One ladder's ±0.3 jnd-ez is ±11–15% in bytes, and the ratio of two ladders ±15–21% per image. The
+     mean over 12 images is good to ±4–6% (one standard error).
+     - That counts measurement only. Images that favour different encoders add to it, and the per-image ratios show
+       by how much.
+     - Observers more sensitive than AIC-3's boosted crowd do better, since their scale changes faster with bytes.
+2. **Below the top: the byte ratio at equal quality.** Detection saturates above about 3 jnd-ez, which is where most
+   web images sit.
+   - **The trial.** The other encoder is fixed at a quality point. The zen encoder is offered at a log grid of byte
+     ratios, each reached as closely as its quality knob allows, with the achieved ratio recorded. Observers answer
+     "which is closer to the original?"
+   - **What it finds.** A psi selector on the log ratio finds where the observer picks each side half the time: the
+     bytes the zen encoder needs for equal quality.
+   - **Quality points.** Two to four per family, weighted toward low and middle qualities.
+   - **Precision.** With answers near the 50% point, the standard error in log2 bytes is `0.5/√n ÷ (0.2691·s)`, where
+     `s` is the JND lost per halving of bytes at that quality point.
+     - At AIC-3's near-threshold `s` of 1.5–2.05, 100 answers give ±6.5–9%.
+     - `s` at web qualities is not measured. The first sessions measure it.
+3. **Metric validation.** zensim and SSIMULACRA2 score the same pairs. Where the metrics agree with the observers, they
+   carry the comparison to the whole corpus. Where they disagree, the human result stands, and the metric is what
+   needs work.
+
+For one codec family, 6 images and 2 quality points per observer, the comparison takes about 1,800 answers: 480 for
+the other encoder's ladders and 1,200 for the byte ratios, plus null and catch trials. That is 15 blocks, or 8
+sessions. Running one family at a time keeps each step small.
+
 ## What squintly needs
 
 **Already there:** `hold` switching; integer zoom 1–8× with shared pan; DPR and calibration; per-trial data (final
@@ -224,9 +265,12 @@ progress.
    - It holds the AIC-3 PTC images, with attribution, and the zen ladders, all with hashes.
    - Every image must be fetched and decoded before use, with zero unresolved.
 9. **Qualification receipts** for each observer's phone.
+10. **An equal-quality byte-ratio trial** for the encoder comparison. It is a pair trial between two candidates, with
+    the same psi selector working on the log byte ratio, and byte-matched encodes in the manifest.
 
 ## Open decisions
 
 - The unit names: jnd-ez, jnd-ctc and jnd-typ.
 - The plan size (minimal or full) and the number of observers.
 - For the zen block: the encoder versions, the fixed modes and each codec's quality range.
+- Which codec family to compare first, against which other encoder, and at which quality points.

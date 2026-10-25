@@ -1,0 +1,18 @@
+# squintly 6f52ea7 lilith 2026-10-25T00:50:37Z
+# python3 scripts/jnd_ez/sim_smooth_curve.py 
+run-heavy: mem-cap=4G (cgroup, hard) jobs=4/32 avail=9536MiB :: python3 scripts/jnd_ez/sim_smooth_curve.py
+curve fitted to BASE: [ 0.034 12.958  0.434] max error 0.19
+unit factor | design | answers per ladder | SE of values with d<=3 (median) | SE of 1-JND threshold (JND) | SE of 0.5-JND threshold (JND)
+ 1.0 | ladder    |  100 | 0.408 | 0.326 | 0.275
+ 1.0 | ladder    |  200 | 0.349 | 0.289 | 0.235
+ 1.0 | ladder    |  400 | 0.204 | 0.187 | 0.163
+ 1.0 | detection |  100 | 0.380 | 0.260 | 0.244
+ 1.0 | detection |  200 | 0.202 | 0.184 | 0.160
+ 1.0 | detection |  400 | 0.146 | 0.138 | 0.128
+ 1.5 | ladder    |  100 | 0.454 | 0.458 | 0.353
+ 1.5 | ladder    |  200 | 0.326 | 0.336 | 0.240
+ 1.5 | ladder    |  400 | 0.231 | 0.243 | 0.191
+ 1.5 | detection |  100 | 10.940 | 0.313 | 0.245
+ 1.5 | detection |  200 | 0.215 | 0.209 | 0.167
+ 1.5 | detection |  400 | 0.145 | 0.149 | 0.104
+run-heavy: done rc=0 245s | peak-RSS 0.09GiB | min-avail 9394MiB | peak-load 2.11

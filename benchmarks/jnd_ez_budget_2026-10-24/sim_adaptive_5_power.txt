@@ -1,0 +1,21 @@
+# squintly 6f52ea7 lilith 2026-10-25T00:56:14Z
+# python3 scripts/jnd_ez/sim_adaptive.py 5 power
+run-heavy: mem-cap=4G (cgroup, hard) jobs=4/32 avail=9361MiB :: python3 scripts/jnd_ez/sim_adaptive.py 5 power
+factor | design | N | RMSE in JND at d=0.5 | d=1 | d=2 (bias at d=1)
+1.0 | psi, dense grid                    |  40 | 0.197 | 0.306 | 0.729 (-0.034)
+1.0 | psi, dense grid                    |  80 | 0.216 | 0.283 | 0.486 (-0.046)
+1.0 | psi, dense grid                    | 120 | 0.215 | 0.269 | 0.407 (-0.072)
+1.0 | psi, dense grid                    | 200 | 0.183 | 0.218 | 0.295 (+0.006)
+1.0 | fixed, 6 levels in 0.25-3 JND      |  40 | 0.250 | 0.554 | 1.811 (+0.183)
+1.0 | fixed, 6 levels in 0.25-3 JND      |  80 | 0.220 | 0.330 | 1.018 (-0.006)
+1.0 | fixed, 6 levels in 0.25-3 JND      | 120 | 0.201 | 0.247 | 0.650 (-0.031)
+1.0 | fixed, 6 levels in 0.25-3 JND      | 200 | 0.200 | 0.225 | 0.456 (-0.014)
+2.0 | psi, dense grid                    |  40 | 0.193 | 0.315 | 0.754 (-0.055)
+2.0 | psi, dense grid                    |  80 | 0.214 | 0.268 | 0.449 (-0.052)
+2.0 | psi, dense grid                    | 120 | 0.214 | 0.268 | 0.430 (-0.028)
+2.0 | psi, dense grid                    | 200 | 0.194 | 0.225 | 0.287 (-0.025)
+2.0 | fixed, 6 levels in 0.25-3 JND      |  40 | 0.287 | 0.654 | 2.071 (+0.155)
+2.0 | fixed, 6 levels in 0.25-3 JND      |  80 | 0.229 | 0.323 | 1.022 (-0.024)
+2.0 | fixed, 6 levels in 0.25-3 JND      | 120 | 0.207 | 0.251 | 0.680 (-0.055)
+2.0 | fixed, 6 levels in 0.25-3 JND      | 200 | 0.188 | 0.199 | 0.508 (-0.029)
+run-heavy: done rc=0 71s | peak-RSS 0.09GiB | min-avail 9280MiB | peak-load 2.55

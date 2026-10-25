@@ -13,6 +13,7 @@
   "desaturated reds" report previously pinned entirely on chroma subsampling.
 
 ### Added
+- **jnd-ez study design** (`docs/JND_EZ_STUDY.md`): a careful-expert JND for one to three observers on high-DPI phones, using squintly's integer zoom and press-and-hold switching on real pixels, anchored to AIC-3's boosted scale through AIC-3's plain stimuli. Detection triplets with a forced choice plus confidence, a psi selector per ladder, null and catch trials, and the squintly additions it needs. Trial budgets come from three planning simulations (`scripts/jnd_ez/`, `just jnd-ez-budget`; outputs in `benchmarks/jnd_ez_budget_2026-10-24/`): about 80 answers per ladder put one observer's 1-jnd-ez point within about 0.3 jnd-ez, and a free value per level would need 800. Design only; nothing collected.
 - **Session-block progress: `Progress::{block_size, answered_in_block,
   break_recommended}`** (`src/pair_manifest.rs`). The one fatigue norm the
   literature actually measures (AIC-HDR2025, Testolina et al. 2025,

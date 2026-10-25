@@ -123,3 +123,21 @@ publish-corpus version="imazen26-v1":
         --prefix squintly/demo-corpus/{{version}} \
         --public-base https://codec-corpus.r2.imazen.org
     @echo "verify once live:  curl -s https://squintly.imazen.org/api/export/pareto.manifest.json | python3 -c 'import json,sys; print(json.load(sys.stdin)[\"build_commit\"])'"
+
+# Trial budget for the jnd-ez study (docs/JND_EZ_STUDY.md): three planning
+# simulations, run one after another, outputs under benchmarks/jnd_ez_budget_<date>/
+# (.txt: *.log is gitignored).
+# Needs numpy and scipy. About 6 minutes on one core each for the slower two.
+jnd-ez-budget date=`date +%Y-%m-%d`:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    out=benchmarks/jnd_ez_budget_{{date}}
+    mkdir -p "$out"
+    run() { if [ -x "${RUN_HEAVY:-}" ]; then "$RUN_HEAVY" --mem 4G --jobs 4 -- "$@"; else nice -n19 "$@"; fi; }
+    for s in "sim_free_levels" "sim_smooth_curve" "sim_adaptive 5 aic3" "sim_adaptive 5 power"; do
+        set -- $s
+        log="$out/$(echo "$s" | tr ' ' '_').txt"
+        { echo "# squintly $(git rev-parse --short HEAD) $(hostname) $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          echo "# python3 scripts/jnd_ez/$1.py ${*:2}"
+          run python3 "scripts/jnd_ez/$1.py" "${@:2}"; } 2>&1 | tee "$log"
+    done
